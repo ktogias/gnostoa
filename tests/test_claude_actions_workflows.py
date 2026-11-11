@@ -283,6 +283,46 @@ def _prompt_contexts(prompt: str) -> set[str]:
     return contexts
 
 
+def _prompt_clauses(prompt: str) -> list[str]:
+    """Return the prompt's clauses outside expressions.
+
+    Each paragraph is split after every '.' or ';', so the unpunctuated header lines
+    stay out of the paragraph's first clause.
+    """
+    return [
+        clause
+        for paragraph in re.split(r"\n\s*\n", _outside_expressions(prompt))
+        if paragraph.strip()
+        for clause in re.split(r"(?<=[.;])\s+", " ".join(paragraph.split()))
+    ]
+
+
+_REVIEW_REQUEST = ".gnostoa-review-context/request/request"
+
+# A clause that sets the reviewer's reading order. Every one must name the request, so
+# a "Start with AGENTS.md" beside the request-first entry fails, before it or after it.
+_READING_ORDER = re.compile(
+    r"\b(?:first|start(?:ing)?\s+(?:with|by|from)|begin(?:ning)?\s+(?:with|by))\b",
+    re.IGNORECASE,
+)
+
+# A clause about retrieval, the turn budget or limits must carry one of the reviewed
+# completion instructions below. Any other is guidance this test cannot tell from a
+# contradiction ("keep retrieving", "omit the limits"), so it fails until it is
+# reviewed and added. Closed on purpose, like _DISOWNED_ABSENCE.
+_COMPLETION_SUBJECT = re.compile(
+    r"retriev|\bturns?\b|\bbudget\b|\bcap\b|\blimits?\b", re.IGNORECASE
+)
+_COMPLETION_INSTRUCTIONS = (
+    "agentic turns for the entire review",
+    "reserve the final response for findings, examined scope and remaining limits",
+    "stop retrieving before the cap",
+    "state the limits and finish",
+    "unavailable evidence is a review limit",
+    "report any provider-cap or unavailable notice",
+)
+
+
 # Markers that can only be retirement or denial. The set of ways to *assert* that a
 # not-found response means absence is open; this set is closed and this repository
 # controls it, which is the whole reason the guard is shaped this way. Each entry is a
@@ -9521,6 +9561,97 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             ).split()
         )
         self.assertRegex(args, r"--max-turns \d+")
+
+    def test_mention_reviewer_inventory_is_the_granted_read_tools(self) -> None:
+        """A permission allowlist alone leaves other built-ins visible to the model.
+
+        The measured 40-turn failure reported three denials, without their tool
+        identities. This proves the configured inventory, not what caused those
+        particular denials or whether a model will finish within the budget.
+        """
+        args = str(_claude_step(load_yaml(MENTION_WORKFLOW))["with"]["claude_args"])
+        for flag in ("tools", "allowedTools"):
+            with self.subTest(flag=flag):
+                values = re.findall(rf"--{flag}\s+[\"']?([^\s\"']+)", args)
+                self.assertEqual(1, len(values), f"one explicit --{flag} is required")
+                self.assertEqual({"Read", "Grep", "Glob"}, set(values[0].split(",")))
+        self.assertRegex(args, r"--max-turns\s+40(?:\s|$)")
+
+    def _assert_request_first(self, prompt: str) -> None:
+        clauses = _prompt_clauses(prompt)
+        text = " ".join(clauses)
+        self.assertIn(f"First read {_REVIEW_REQUEST}.", clauses)
+        # Nothing before the request names a file or a path to read instead.
+        self.assertNotRegex(text[: text.index(_REVIEW_REQUEST)], r"\w\.\w|/")
+        for clause in clauses:
+            if _READING_ORDER.search(clause):
+                self.assertIn("request/request", clause, "a second reading order")
+        self.assertLess(text.index(_REVIEW_REQUEST), text.index("README.md"))
+        self.assertIn("README.md, then AGENTS.md", text)
+        self.assertIn("only the route needed for this read-only review", text)
+        self.assertIn("Do not perform implementation", text)
+        self.assertIn("unavailable evidence is a review limit", text)
+
+    def test_mention_review_entry_is_request_first_and_task_scoped(self) -> None:
+        """Structural review criterion: one first action, with the declared route.
+
+        The runtime reviewer cannot perform the operational route's provider or
+        implementation work. It must retain that limitation rather than trying
+        unavailable tools or silently treating a partial view as current. A second
+        reading order, before the request or after it, contradicts the first action.
+        """
+        prompt = str(_claude_step(load_yaml(MENTION_WORKFLOW))["with"]["prompt"])
+        self._assert_request_first(prompt)
+        for before, conflict in (
+            ("First read", "Start with AGENTS.md and follow the route it names. "),
+            ("First read", "Read docs/ROUTE.md before anything else. "),
+            ("Report correctness", "Start with README.md before the request. "),
+        ):
+            variant = prompt.replace(before, conflict + before, 1)
+            with self.subTest(conflict=conflict), self.assertRaises(AssertionError):
+                self._assert_request_first(variant)
+
+    def _assert_truthful_completion(self, prompt: str, args: str) -> None:
+        clauses = _prompt_clauses(prompt)
+        # One budget, and it is the session's.
+        self.assertEqual(
+            re.findall(r"--max-turns\s+(\d+)", args),
+            re.findall(r"(\d+) agentic turns", " ".join(clauses)),
+        )
+        for clause in clauses:
+            if _COMPLETION_SUBJECT.search(clause):
+                self.assertTrue(
+                    any(i in clause.lower() for i in _COMPLETION_INSTRUCTIONS),
+                    f"unreviewed completion guidance: {clause}",
+                )
+        for instruction in (
+            "Reserve the final response for findings, examined scope and remaining"
+            " limits;",
+            "stop retrieving before the cap.",
+            "If the budget or evidence is insufficient, state the limits and finish;",
+            "do not claim the unexamined work was reviewed.",
+        ):
+            self.assertIn(instruction, clauses)
+
+    def test_mention_review_reserves_a_truthful_final_response(self) -> None:
+        """Prompt conformance cannot establish actual model turn-budget success.
+
+        Guidance that keeps the reviewer retrieving, hides its limits or states
+        another budget contradicts the reserved final response.
+        """
+        claude = _claude_step(load_yaml(MENTION_WORKFLOW))
+        prompt, args = str(claude["with"]["prompt"]), str(claude["with"]["claude_args"])
+        self._assert_truthful_completion(prompt, args)
+        for conflict in (
+            "Keep retrieving until every changed file is read. ",
+            "Omit the limits from the final response. ",
+            "Budget: 60 agentic turns for the entire review. ",
+        ):
+            variant = prompt.replace(
+                "Report correctness", conflict + "Report correctness", 1
+            )
+            with self.subTest(conflict=conflict), self.assertRaises(AssertionError):
+                self._assert_truthful_completion(variant, args)
 
     def test_a_reviewer_that_never_started_is_still_reported(self) -> None:
         """The publish step was gated on the action having produced an execution file,

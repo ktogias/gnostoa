@@ -1284,6 +1284,9 @@ guardrails:
       - tests/test_current_advisory_restoration_runtime.py
       - tests/test_current_advisory_restoration_publication.py
       - tests/test_claude_actions_workflows.py
+      - tests/test_claude_actions_workflows.py::ClaudeActionsWorkflowTests.test_mention_reviewer_inventory_is_the_granted_read_tools
+      - tests/test_claude_actions_workflows.py::ClaudeActionsWorkflowTests.test_mention_review_entry_is_request_first_and_task_scoped
+      - tests/test_claude_actions_workflows.py::ClaudeActionsWorkflowTests.test_mention_review_reserves_a_truthful_final_response
       - tests/test_agent_review_core.py
       - tests/test_github_rest.py
 

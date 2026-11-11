@@ -1538,6 +1538,22 @@ No new dependency, service or runtime is introduced.
    iterate. The prompt bound of rule 3 limits what the session starts with; this limits
    what it can accumulate while running.
 
+   **Available tools and completion guidance share that budget.** The workflow also
+   restricts the built-in inventory with `--tools "Read,Grep,Glob"`, alongside the
+   existing permission grant. `--allowedTools` alone grants permission; it does not
+   hide other built-ins. The reviewer reads the forwarded request first, then the
+   README/AGENTS route needed for this read-only task. It does not perform the
+   implementation or workflow operations routed for other roles. Missing evidence
+   remains an explicit review limit, not permission to infer current state.
+
+   The budget remains 40 agentic turns. The prompt asks the reviewer to reserve its
+   final response for findings, examined scope and remaining limits, and to stop
+   retrieval before the cap. This is completion guidance, not a guarantee that a
+   model finishes within 40 turns or that it examined every changed file. A turn-limit
+   error remains an unsuccessful run under the existing report contract. This bounded
+   correction follows [#326's measured run and pre-change evidence](https://github.com/ktogias/gnostoa/issues/326#issuecomment-6719196198);
+   the three recorded permission denials do not establish which tools were attempted.
+
 25. **The base-context collection may fail without taking the review with it.** It
    runs before the unified diff is requested, so an unhandled failure inside it used to
    end the step and leave the reviewer no context at all -- not a degraded one, an
