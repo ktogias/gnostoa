@@ -1238,9 +1238,22 @@ class ReadBackTests(unittest.TestCase):
                 self.assertEqual(1, len(provider.patches))
                 url, payload = provider.patches[0]
                 self.assertEqual(f"{CHECK_RUNS}/{written['id']}", url)
+                # The whole body: completed as cancelled, saying why, with the text the
+                # write posted (Claude on #490, part 4).
                 self.assertEqual(
-                    ("completed", "cancelled"),
-                    (payload["status"], payload["conclusion"]),
+                    {
+                        "status": "completed",
+                        "conclusion": "cancelled",
+                        "output": {
+                            "title": "merge-admission: cancelled",
+                            "summary": (
+                                "This run was written but could not be read back, "
+                                "so it was cancelled rather than left pending."
+                            ),
+                            "text": provider.posts[0][1]["output"]["text"],
+                        },
+                    },
+                    payload,
                 )
                 self.assertEqual(
                     ("completed", "cancelled"),
