@@ -1342,6 +1342,57 @@ class ReadBackTests(unittest.TestCase):
                 self.assertIn("nor completed as cancelled", str(raised.exception))
                 self.assertEqual(attempts, patch.call_count)
 
+    def test_a_cancellation_that_fails_names_the_reads_failure(self) -> None:
+        """A cancellation that fails is `UNKNOWN`, since the run's state is unconfirmed,
+        but it names the read's own failure, its kind and reason, and has that failure
+        as its cause; the cancellation's own failure stays its context (Revix on #490,
+        Router 6786681061)."""
+        relay = _relay()
+        newer = {"total_count": 1, "check_runs": [_run(9_000, conclusion="failure")]}
+
+        def no_run(provider: _Provider) -> Any:
+            original = provider.get
+
+            def get(url: str) -> tuple[Any, dict[str, str]]:
+                if url.startswith(f"{CHECK_RUNS}/"):
+                    return [], {}
+                return original(url)
+
+            return get
+
+        def failing(provider: _Provider) -> Any:
+            return _lagging(provider, by_id=[_status(502)] * 4, listed=[None, newer])
+
+        for name, reads, read in (
+            (
+                "a read that answered with no run",
+                no_run,
+                "MISMATCH: the check run reads back as no run",
+            ),
+            (
+                "reads that failed",
+                failing,
+                "UNKNOWN: the check run could not be read back",
+            ),
+        ):
+            with self.subTest(name):
+                provider = _Provider([_run(90)])
+                error = github_rest.GitHubWriteError("GitHub API HTTP 403", status=403)
+                with (
+                    mock.patch.object(provider, "get", side_effect=reads(provider)),
+                    mock.patch.object(provider, "patch", side_effect=error),
+                    self.assertRaises(relay.PublicationError) as raised,
+                ):
+                    self._invalidate(provider)
+                failure = raised.exception
+                self.assertEqual("UNKNOWN", failure.kind)
+                self.assertIn(f"({read})", str(failure))
+                self.assertIn("nor completed as cancelled", str(failure))
+                cause: Any = failure.__cause__
+                self.assertIsInstance(cause, relay.PublicationError)
+                self.assertEqual(read, f"{cause.kind}: {cause}")
+                self.assertIs(error, failure.__context__)
+
     def test_a_cancellation_failing_for_a_while_is_retried(self) -> None:
         """A cancellation not yet found or rate-limited is known not to have landed,
         so it is tried again after the read's pauses; the run is then cancelled
