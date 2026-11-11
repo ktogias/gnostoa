@@ -21,6 +21,8 @@ from the exact comparison, against the protected target's declarations (slice
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import heapq
 import json
 import re
@@ -34,7 +36,7 @@ from typing import Any, NamedTuple
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
-from . import sonarcloud_scope
+from . import archive_members, sonarcloud_scope
 from .analyzer_readback import AnalyzerReadbackError, normalize_repository, parse_bundle
 from .assurance_completeness import (
     RECEIPT_SCHEMA,
@@ -65,12 +67,23 @@ DEFAULT_DECLARATION = Path("policy") / "assurance-evidence.yaml"
 DEFAULT_SUPPRESSION_MARKERS = Path("policy") / "merge-suppression-markers.yaml"
 DEFAULT_TRUST_ROOTS = Path("policy") / "merge-trust-roots.yaml"
 DEFAULT_DEBT_LEDGER = Path("policy") / "analyzer-debt-ledger.yaml"
+DEFAULT_FROZEN_ARCHIVES = Path("policy") / "merge-frozen-archives.yaml"
 _REQUIRED_CHECKS_LABEL = "required checks"
 # The closed, versioned header every merge-evidence declaration shares.
 _DECLARATION_KEYS = frozenset({"schema_version", "id", "version"})
 _MARKERS_LABEL = "suppression markers"
 _ROOTS_LABEL = "trust roots"
 _LEDGER_LABEL = "analyzer debt ledger"
+_ARCHIVES_LABEL = "frozen archives"
+# A frozen-archive entry (Decision 0134, item 1): every key required, and the one
+# format it can declare.
+_ARCHIVE_KEYS = frozenset({"path", "blob", "sha256", "format", "decision"})
+_ARCHIVE_FORMAT = "tar+gzip"
+_ARCHIVE_VALUES = {
+    "blob": re.compile(r"[0-9a-f]{40}", re.ASCII),
+    "sha256": re.compile(r"[0-9a-f]{64}", re.ASCII),
+    "decision": re.compile(r"\d{4}", re.ASCII),
+}
 _CHECK_KEYS = frozenset({"app_id", "name"})
 # The one qualification a check item may declare: its runs must name this pull
 # request in their `details_url`. Only SonarCloud's gate has it, and must, since a
@@ -402,6 +415,49 @@ def parse_debt_ledger(document: object) -> list[dict[str, Any]]:
         raise MergeEvidenceError(f"the {_LEDGER_LABEL} is invalid: {exc}") from exc
 
 
+def _archive_entry(value: object, label: str) -> dict[str, str]:
+    entry = require_mapping(value, label)
+    require_closed_keys(entry, label, _ARCHIVE_KEYS)
+    path = require_text(entry["path"], f"{label} path")
+    try:
+        archive_members.checked_member_name(path)
+    except archive_members.ArchiveError as exc:
+        raise MergeEvidenceError(f"{label} path {path!r} is not a plain path") from exc
+    for key, pattern in _ARCHIVE_VALUES.items():
+        text = entry[key]
+        if not isinstance(text, str) or pattern.fullmatch(text) is None:
+            raise MergeEvidenceError(f"{label} {key} must match {pattern.pattern}")
+    if entry["format"] != _ARCHIVE_FORMAT:
+        raise MergeEvidenceError(f"{label} format must be {_ARCHIVE_FORMAT}")
+    return {key: entry[key] for key in sorted(_ARCHIVE_KEYS)}
+
+
+def parse_frozen_archives(document: object) -> dict[str, dict[str, str]]:
+    """The frozen evidence archives the protected target declares, by path
+    (Decision 0134, item 1): a hunkless file that one names by its path, Git blob
+    and SHA-256 is read whole, as a gzip tar. A non-empty list of closed entries,
+    with no path twice."""
+
+    try:
+        record = _declaration(document, _ARCHIVES_LABEL, "archives")
+        entries = record["archives"]
+        if not isinstance(entries, list) or not entries:
+            raise MergeEvidenceError(
+                f"{_ARCHIVES_LABEL} archives must be a non-empty list"
+            )
+        archives: dict[str, dict[str, str]] = {}
+        for index, value in enumerate(entries):
+            entry = _archive_entry(value, f"{_ARCHIVES_LABEL} archive {index}")
+            if entry["path"] in archives:
+                raise MergeEvidenceError(
+                    f"{_ARCHIVES_LABEL} declare {entry['path']} twice"
+                )
+            archives[entry["path"]] = entry
+    except AssuranceCompletenessError as exc:
+        raise MergeEvidenceError(str(exc)) from exc
+    return archives
+
+
 # SonarCloud's gate, the one check qualified by its pull request (Q-a, #424).
 _QUALIFIED_KEY = (
     f"github-check-run:{sonarcloud_scope.CHECK_APP_ID}:{sonarcloud_scope.CHECK_NAME}"
@@ -475,6 +531,13 @@ def load_trust_roots(path: Path, *, project_root: Path) -> TrustRoots | None:
 def load_debt_ledger(path: Path, *, project_root: Path) -> list[dict[str, Any]] | None:
     document = _load_declaration(path, project_root, _LEDGER_LABEL)
     return None if document is None else parse_debt_ledger(document)
+
+
+def load_frozen_archives(
+    path: Path, *, project_root: Path
+) -> dict[str, dict[str, str]] | None:
+    document = _load_declaration(path, project_root, _ARCHIVES_LABEL)
+    return None if document is None else parse_frozen_archives(document)
 
 
 def _check_status(states: set[tuple[str, str, str | None]]) -> tuple[str, str | None]:
@@ -1057,12 +1120,114 @@ def marker_occurrences(
         }
 
 
+def git_blob_id(data: bytes) -> str:
+    """Git's object id for `data` as a blob, the id a comparison lists for a file's
+    head content. It is `agent_review_base.blob_id`'s rule, not that module: the
+    review agent's modules are not in this entrypoint's source (SB2). SHA-1 is
+    what the id is; it is compared, never trusted to authenticate."""
+
+    header = b"blob %d\0" % len(data)
+    return hashlib.sha1(  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1 -- Git's blob id is SHA-1 by definition; compared, never trusted
+        header + data, usedforsecurity=False
+    ).hexdigest()
+
+
+# A declared archive's bounds (Decision 0134, item 3): those of its gzip stream,
+# decompressed, and of its tar.
+MAX_ARCHIVE_BYTES = 8 * 1024 * 1024
+MAX_ARCHIVE_MEMBERS = 256
+_ARCHIVE_STATUSES = frozenset({"added", "modified"})
+
+
+def _hunkless(item: Mapping[str, Any]) -> bool:
+    """Whether the comparison lists one changed file as it lists a binary: added or
+    modified, with no patch, an uncut one, and 0 additions."""
+
+    additions = item.get("additions")
+    return (
+        item["status"] in _ARCHIVE_STATUSES
+        and type(additions) is int
+        and additions == 0
+        and item.get("patch") is None
+        and item.get("patch_truncated") is False
+    )
+
+
+def _archive_lines(
+    item: Mapping[str, Any], entry: Mapping[str, str]
+) -> list[tuple[str, list[str]]] | None:
+    """Each member of the declared archive one file holds, with its lines, split
+    at line feeds as a patch's are; or None unless the file's listed blob, the
+    blob id of its attached content and that content's SHA-256 are the entry's,
+    and the whole archive reads within its bounds as strict UTF-8 text."""
+
+    content = item.get("content")
+    if not isinstance(content, str):
+        return None
+    try:
+        data = base64.b64decode(content, validate=True)
+    except ValueError:  # binascii.Error, or a character that is not ASCII
+        return None
+    if (item.get("blob"), git_blob_id(data), hashlib.sha256(data).hexdigest()) != (
+        entry["blob"],
+        entry["blob"],
+        entry["sha256"],
+    ):
+        return None
+    try:
+        members = archive_members.gzip_tar_members(
+            data, max_bytes=MAX_ARCHIVE_BYTES, max_members=MAX_ARCHIVE_MEMBERS
+        )
+        return [(name, raw.decode("utf-8").split("\n")) for name, raw in members]
+    except (archive_members.ArchiveError, UnicodeDecodeError):
+        return None
+
+
+def _frozen_records(
+    path: str, members: Sequence[tuple[str, Sequence[str]]], markers: Sequence[str]
+) -> Iterator[dict[str, Any]]:
+    """Every marker occurrence in a read archive's members, in member and then
+    line order, each with its member and the frozen flag."""
+
+    for member, lines in members:
+        for line, text in enumerate(lines, start=1):
+            for record in marker_occurrences(path, line, text, markers):
+                yield {**record, "member": member, "frozen": True}
+
+
+def _file_records(
+    item: Mapping[str, Any],
+    markers: Sequence[str],
+    archives: Mapping[str, Mapping[str, str]],
+) -> Iterator[dict[str, Any]] | None:
+    """Every marker occurrence in what one changed file adds, or None when the
+    comparison does not show it completely. A hunkless file a frozen-archive entry
+    names is read whole, as that archive, or not at all (Decision 0134, item 3)."""
+
+    path = item["path"]
+    entry = archives.get(path)
+    if entry is not None and _hunkless(item):
+        members = _archive_lines(item, entry)
+        return None if members is None else _frozen_records(path, members, markers)
+    added = _file_additions(item)
+    if added is None:
+        return None
+    return (
+        record
+        for line, text in added
+        for record in marker_occurrences(path, line, text, markers)
+    )
+
+
 def _suppressions(
-    files: Sequence[Mapping[str, Any]], markers: Sequence[str] | None
+    files: Sequence[Mapping[str, Any]],
+    markers: Sequence[str] | None,
+    archives: Mapping[str, Mapping[str, str]] | None = None,
 ) -> dict[str, Any]:
-    """M13: each declared marker in a line the comparison adds. A file whose added
-    lines it does not show completely leaves the list PARTIAL, and so does
-    reaching either budget, before the record that would pass it."""
+    """M13: each declared marker in a line the comparison adds, and in each declared
+    frozen archive it adds whole. A file whose added lines it does not show
+    completely leaves the list PARTIAL, and so does reaching either budget, before
+    the record that would pass it."""
 
     if markers is None:
         return {"coverage": "UNAVAILABLE", "found": []}
@@ -1070,20 +1235,16 @@ def _suppressions(
     size = 0
     complete = True
     for item in files:
-        added = _file_additions(item)
-        if added is None:
+        records = _file_records(item, markers, archives or {})
+        if records is None:
             complete = False
             continue
-        for line, text in added:
-            for record in marker_occurrences(item["path"], line, text, markers):
-                cost = suppression_record_bytes(record)
-                if (
-                    len(found) == MAX_SUPPRESSIONS
-                    or size + cost > MAX_SUPPRESSION_BYTES
-                ):
-                    return {"coverage": "PARTIAL", "found": found}
-                found.append(record)
-                size += cost
+        for record in records:
+            cost = suppression_record_bytes(record)
+            if len(found) == MAX_SUPPRESSIONS or size + cost > MAX_SUPPRESSION_BYTES:
+                return {"coverage": "PARTIAL", "found": found}
+            found.append(record)
+            size += cost
     return {"coverage": "COMPLETE" if complete else "PARTIAL", "found": found}
 
 
@@ -1677,11 +1838,12 @@ def evidence_from_snapshot(
     suppression_markers: Sequence[str] | None = None,
     trust_roots: TrustRoots | None = None,
     debt_ledger: Sequence[Mapping[str, Any]] | None = None,
+    frozen_archives: Mapping[str, Mapping[str, str]] | None = None,
 ) -> dict[str, Any]:
     """The evidence document for the pull request the snapshot observed, with the
     authenticated analyzer readback's bundle when one is given. Without the
     protected target's suppression markers, trust roots or debt ledger, what each
-    governs is UNAVAILABLE."""
+    governs is UNAVAILABLE; without its frozen archives, none is declared."""
 
     document = require_mapping(snapshot, "snapshot")
     try:
@@ -1752,7 +1914,7 @@ def evidence_from_snapshot(
         "closing_references": _closing_references(
             provider, commits, commit_coverage, _source(document, "closing_issues")
         ),
-        "suppressions": _suppressions(files, suppression_markers),
+        "suppressions": _suppressions(files, suppression_markers, frozen_archives),
         "trust_root_changes": _trust_root_changes(files, trust_roots),
         "analyzer_findings": analyzer_findings,
         "analyzer_optional": analyzer_optional,
@@ -2293,6 +2455,7 @@ def evidence_for(
     trust_roots: Path = DEFAULT_TRUST_ROOTS,
     change_policy: Path = DEFAULT_CHANGE_POLICY,
     debt_ledger: Path = DEFAULT_DEBT_LEDGER,
+    frozen_archives: Path = DEFAULT_FROZEN_ARCHIVES,
 ) -> dict[str, Any]:
     """The evidence document `knowledge merge-evidence` writes for the snapshot, from
     the protected target's declarations under `project_root`. The command and the
@@ -2328,6 +2491,9 @@ def evidence_for(
         ),
         trust_roots=load_trust_roots(inside(trust_roots), project_root=root),
         debt_ledger=load_debt_ledger(inside(debt_ledger), project_root=root),
+        frozen_archives=load_frozen_archives(
+            inside(frozen_archives), project_root=root
+        ),
     )
 
 
