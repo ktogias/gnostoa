@@ -1390,7 +1390,8 @@ class ReadBackTests(unittest.TestCase):
                 self.assertIn("nor completed as cancelled", str(failure))
                 cause: Any = failure.__cause__
                 self.assertIsInstance(cause, relay.PublicationError)
-                self.assertEqual(read, f"{cause.kind}: {cause}")
+                named = f"{cause.kind}: {cause}"
+                self.assertEqual(read, named)
                 self.assertIs(error, failure.__context__)
 
     def test_a_cancellation_failing_for_a_while_is_retried(self) -> None:
@@ -1463,11 +1464,12 @@ class ReadBackTests(unittest.TestCase):
         with self.subTest("completion"):
             provider = _Provider([_run(90)])
             record = self._invalidate(provider)
+            planned = _planned()
             with (
                 mock.patch.object(provider, "patch", side_effect=redirect),
                 self.assertRaises(relay.PublicationError) as raised,
             ):
-                _publish(provider, _planned(), record)
+                _publish(provider, planned, record)
             self.assertEqual("REFUSED", raised.exception.kind)
 
     def test_an_unknown_write_its_id_cannot_read_is_found_in_the_latest_view(
