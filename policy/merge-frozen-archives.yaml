@@ -1,0 +1,22 @@
+# The frozen evidence archives M13 reads whole (#389; Decision 0134, which amends
+# Decision 0112's M13).
+#
+# `knowledge merge-evidence` reads this from the protected target, never from the
+# candidate. An entry names one archive by its path, its Git blob id and the
+# SHA-256 of its bytes; its one format is a gzip tar, and `decision` is the Decision
+# that chose it, as provenance. A changed file that the comparison lists without
+# hunks, added or modified, at that path, with that blob and those bytes, is read
+# whole within bounds: every marker in its members is listed as frozen evidence for
+# the native approval, and none denies. Anything else at that path is read as
+# before. Without this file no archive is declared. A change to it is a trust-root
+# change (M15), approved by the owner entry by entry.
+schema_version: "1.0"
+id: gnostoa.merge-frozen-archives
+version: "0.1.0"
+archives:
+  # #396's shell-parser evaluation evidence, chosen under #396's option (c).
+  - path: knowledge/assessments/0108-shell-parser-evaluation-evidence/spike-scripts.tar.gz
+    blob: 585d4608efc744818e06d773840ace0806b693a0  # pragma: allowlist secret -- public Git blob id
+    sha256: f682e3bcc1fc12fc843f1bcaaa64905867d5f4782d9f038130d822f7800c3ea3  # pragma: allowlist secret -- public archive digest
+    format: tar+gzip
+    decision: "0134"
