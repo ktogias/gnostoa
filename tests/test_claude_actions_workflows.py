@@ -9607,8 +9607,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             ("First read", "Read docs/ROUTE.md before anything else. "),
             ("Report correctness", "Start with README.md before the request. "),
         ):
+            variant = prompt.replace(before, conflict + before, 1)
             with self.subTest(conflict=conflict), self.assertRaises(AssertionError):
-                self._assert_request_first(prompt.replace(before, conflict + before, 1))
+                self._assert_request_first(variant)
 
     def _assert_truthful_completion(self, prompt: str, args: str) -> None:
         clauses = _prompt_clauses(prompt)
@@ -9646,13 +9647,11 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             "Omit the limits from the final response. ",
             "Budget: 60 agentic turns for the entire review. ",
         ):
+            variant = prompt.replace(
+                "Report correctness", conflict + "Report correctness", 1
+            )
             with self.subTest(conflict=conflict), self.assertRaises(AssertionError):
-                self._assert_truthful_completion(
-                    prompt.replace(
-                        "Report correctness", conflict + "Report correctness", 1
-                    ),
-                    args,
-                )
+                self._assert_truthful_completion(variant, args)
 
     def test_a_reviewer_that_never_started_is_still_reported(self) -> None:
         """The publish step was gated on the action having produced an execution file,
