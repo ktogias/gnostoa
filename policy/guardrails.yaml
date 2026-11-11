@@ -834,6 +834,7 @@ guardrails:
       - ci/review_github_current_state.py
       - knowledge/decisions/0112-admit-merges-through-a-required-provider-neutral-merge-admission-verdict.md
       - knowledge/decisions/0133-coalesce-merge-admission-requests-by-pull-request.md
+      - knowledge/decisions/0135-read-a-written-merge-admission-check-back-within-a-bound.md
       - knowledge/runbooks/operate-the-merge-gate.md
     tests:
       - tests/test_merge_admission_relay.py
