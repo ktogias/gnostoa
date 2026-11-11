@@ -1,7 +1,7 @@
 ---
 type: Source
 title: "Supervisor rulebook, evidence and gates themes"
-description: "Themes 3, 5, 6 and 9 of the supervisor agent's handoff-safe rulebook (47 rules), copied unchanged from the published #325 records and loaded by theme."
+description: "Themes 3, 5, 6 and 9 of the supervisor agent's handoff-safe rulebook (47 rules), copied from the published #325 records with one review correction, and loaded by theme."
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -35,7 +35,7 @@ x-project-knowledge:
 
 # Supervisor rulebook: evidence and gates
 
-Themes 3, 5, 6 and 9 of the supervisor rulebook: 47 rules, copied unchanged from the published records [#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513) and [#325 6805346585](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805346585). R-EVD-11 comes from [#325 6805985258](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805985258) and closes its theme. R-GATE-05 comes from [#325 6805360817](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805360817) and closes its theme. Each theme keeps its published number and each rule its id. Start at the [index](supervisor-rulebook-index.md) for the conventions, the other themes and the manifest of source notes.
+Themes 3, 5, 6 and 9 of the supervisor rulebook: 47 rules, copied unchanged from the published records [#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513) and [#325 6805346585](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805346585). R-EVD-11 comes from [#325 6805985258](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805985258) and closes its theme. R-GATE-05 comes from [#325 6805360817](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805360817) and closes its theme; one of its lines was corrected in review (see the index's [review corrections](supervisor-rulebook-index.md#review-corrections)). Each theme keeps its published number and each rule its id. Start at the [index](supervisor-rulebook-index.md) for the conventions, the other themes and the manifest of source notes.
 
 Owner directions remain authoritative in their linked GitHub records; where a rule here differs from a linked record, the record wins.
 
@@ -346,7 +346,7 @@ Owner directions remain authoritative in their linked GitHub records; where a ru
 ### R-GATE-05 (active): Every supervisor memory rule is also recorded in Gnostoa, and a guard lists any that are not.
 - **Why:** a supervisor's memory lives on one host and is lost at a handoff. The Owner directed that every rule be recorded in Gnostoa (2026-11-11, in English translation): "All the rules you have in your memory must also be recorded in Gnostoa, so that in a future handoff they are not lost."
 - **How to apply:**
-  - Keep the rulebook (this record) and a manifest that maps each memory note, by digest, to its rule ids.
+  - Keep the rulebook (the index and its four theme files) and a manifest that maps each memory note, by digest, to its rule ids.
   - At every check-in, run the memory-export guard. It reports NEW and CHANGED notes.
   - Write each reported rule in English with no host details, append it as an addendum, update the manifest, and publish the addendum.
   - The rulebook is admitted into Gnostoa as a knowledge file linked from AGENTS.md (Ariadne queue row 1).

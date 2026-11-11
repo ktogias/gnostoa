@@ -43,7 +43,7 @@ x-project-knowledge:
 
 # Supervisor rulebook: index and manifest
 
-This is the handoff-safe rulebook of the supervisor agent that runs Gnostoa's agent pilot. It records the operating rules the supervisor learned, so that a new session, runtime or provider does not lose them. It is split by theme so that an agent loads only the theme its task needs. The rule text is copied unchanged from the published records [#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513), [#325 6805346585](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805346585), [#325 6805360817](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805360817) and [#325 6805985258](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805985258). The split follows the Owner's decision [#325 6806047559](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6806047559): thematic files, each well under 64 KiB, one manifest, stable ids and traceability.
+This is the handoff-safe rulebook of the supervisor agent that runs Gnostoa's agent pilot. It records the operating rules the supervisor learned, so that a new session, runtime or provider does not lose them. It is split by theme so that an agent loads only the theme its task needs. The rule text is copied unchanged from the published records [#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513), [#325 6805346585](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805346585), [#325 6805360817](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805360817) and [#325 6805985258](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805985258), except four rules corrected in review (see [Review corrections](#review-corrections)). The split follows the Owner's decision [#325 6806047559](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6806047559): thematic files, each well under 64 KiB, one manifest, stable ids and traceability.
 
 Owner directions remain authoritative in their linked GitHub records; where a rule here differs from a linked record, the record wins.
 
@@ -68,6 +68,17 @@ Owner directions remain authoritative in their linked GitHub records; where a ru
 | 15. Planning and the Ariadne queue | R-PLAN-01 to R-PLAN-03 | 3 | [governance](supervisor-rulebook-governance.md) |
 
 In total there are 143 rules in 15 themes (140 active, 1 superseded, 2 historical): 141 from parts 1 and 2, R-GATE-05 from addendum 1 and R-EVD-11 from addendum 2.
+
+## Review corrections
+
+Review of [PR #493](https://github.com/ktogias/gnostoa/pull/493) found four published lines that are wrong for this file set or for `main`. They are corrected here; every other rule is unchanged from its record. The supervisor's next re-export should carry the same corrections.
+
+| Rule | File | Correction | Reason |
+|---|---|---|---|
+| R-GATE-05 | [evidence-gates](supervisor-rulebook-evidence-gates.md) | "this record" becomes "the index and its four theme files". | The rulebook is now five files, not one record. |
+| R-TST-06 | [testing-analysis](supervisor-rulebook-testing-analysis.md) | Mutants run through the qualified parallel runner of R-TST-07, which runs the baseline first. | `knowledge mutants` (#374) is not on `main`. |
+| R-ANL-05 | [testing-analysis](supervisor-rulebook-testing-analysis.md) | The limit is the patch size that GitHub's comparison still returns; keep each file's patch under 80,000 bytes. | The collector's cap has been 4 MiB since #396; GitHub leaves out larger patches ([#396 6753827825](https://github.com/ktogias/gnostoa/pull/396#issuecomment-6753827825)). |
+| R-ANL-08 | [testing-analysis](supervisor-rulebook-testing-analysis.md) | Ruff's option is described, not named. | Its literal name contains a suppression marker, which merge-admission (M13) reads as an unjustified suppression. |
 
 ## The rulebook's conventions
 

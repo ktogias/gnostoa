@@ -1,7 +1,7 @@
 ---
 type: Source
 title: "Supervisor rulebook, testing and analysis themes"
-description: "Themes 7 and 8 of the supervisor agent's handoff-safe rulebook (27 rules), copied unchanged from the published #325 records and loaded by theme."
+description: "Themes 7 and 8 of the supervisor agent's handoff-safe rulebook (27 rules), copied from the published #325 records with three review corrections, and loaded by theme."
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -35,7 +35,7 @@ x-project-knowledge:
 
 # Supervisor rulebook: testing and analysis
 
-Themes 7 and 8 of the supervisor rulebook: 27 rules, copied unchanged from the published records [#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513) and [#325 6805346585](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805346585). Each theme keeps its published number and each rule its id. Start at the [index](supervisor-rulebook-index.md) for the conventions, the other themes and the manifest of source notes.
+Themes 7 and 8 of the supervisor rulebook: 27 rules, copied unchanged from the published records [#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513) and [#325 6805346585](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805346585), except three rules corrected in review (R-TST-06, R-ANL-05 and R-ANL-08; see the index's [review corrections](supervisor-rulebook-index.md#review-corrections)). Each theme keeps its published number and each rule its id. Start at the [index](supervisor-rulebook-index.md) for the conventions, the other themes and the manifest of source notes.
 
 Owner directions remain authoritative in their linked GitHub records; where a rule here differs from a linked record, the record wins.
 
@@ -68,7 +68,7 @@ Owner directions remain authoritative in their linked GitHub records; where a ru
 
 ### R-TST-06 (active): A mutant kill is evidence only against a passing unmutated baseline in the same copy.
 - **Why:** copies without `.git` broke the tests, and the missing baseline turned the breakage into nine fake kills (#371).
-- **How to apply:** run mutants through `knowledge mutants`, which runs the baseline first and reports NOT RUN on a failing one. Keep the repository's `.git` directory in copies. Read each kill's failure line.
+- **How to apply:** run mutants through a runner that runs the baseline first and reports NOT RUN on a failing one: today the qualified parallel runner (R-TST-07), because `knowledge mutants` (#374) is not on `main` yet. Keep the repository's `.git` directory in copies. Read each kill's failure line.
 - **Origin:** 2026-10-05; #368, #371, #374. Memory: a-kill-needs-a-baseline.
 
 ### R-TST-07 (active): Use the qualified parallel mutant runner until `knowledge mutants` replaces it.
@@ -148,9 +148,9 @@ Owner directions remain authoritative in their linked GitHub records; where a ru
 - **How to apply:** read the class's `applies_to` and required claims in `policy/assurance-evidence.yaml`, and name the failing required claim. Keep M2-M8 completeness apart from M17's finding count.
 - **Origin:** 2026-11-03; #479 6614620697. Memory: gate-cause-from-the-declaration.
 
-### R-ANL-05 (active): Keep every file's patch under the collector's 65,536-byte cap.
-- **Why:** one larger patch makes M13 (suppressions) PARTIAL, which fails, even with zero markers (#441).
-- **How to apply:** measure each file's patch bytes in the PR files API before sealing. Split large test additions, within the admitted paths.
+### R-ANL-05 (active): Keep every file's patch small enough that the provider's comparison returns it.
+- **Why:** a file whose patch the comparison leaves out makes M13 (suppressions) PARTIAL, which fails, even with zero markers. The collector's own cap was 65,536 bytes (#441) and has been 4 MiB since #396; GitHub's comparison returned a patch of 88,723 bytes and left out one of 106,333 bytes ([#396 6753827825](https://github.com/ktogias/gnostoa/pull/396#issuecomment-6753827825)).
+- **How to apply:** measure each file's patch bytes in the PR files API before sealing, and keep each under 80,000 bytes, the pre-push gate of #396. Split large test additions, within the admitted paths.
 - **Origin:** 2026-10-20 to 2026-11-09; #396, #441. Memory: patch-cap-makes-m13-partial.
 
 ### R-ANL-06 (active): Before every push, measure what the gates will count: mypy, the project inventory and Sonar cognitive complexity.
@@ -172,7 +172,7 @@ Owner directions remain authoritative in their linked GitHub records; where a ru
 - **Origin:** 2026-11-03 to 2026-11-11; #478, #481, #483, #490; #389 6598155432. Memory: b105-matches-target-names, sonar-s3415-follows-assignment, measure-resolution-not-syntax, executable-path-analyzer-trilemma.
 
 ### R-ANL-08 (active): Read the producer's exact invocation before offering a suppression or a config change.
-- **Why:** the protected producer runs Ruff with `--ignore-noqa`, so an offered "justified suppression" could never clear a finding (#389; SAS 6425280557).
+- **Why:** the protected producer runs Ruff with the option that ignores inline suppression comments, so an offered "justified suppression" could never clear a finding (#389; SAS 6425280557).
 - **How to apply:** read the producer's command line and profile in protected source. Only an option measured under the unchanged producer is an exit option.
 - **Origin:** 2026-10-26 to 2026-10-27; #389 6424996482. Memory: check-the-producer-before-offering-a-suppression.
 
