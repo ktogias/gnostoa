@@ -43,7 +43,7 @@ x-project-knowledge:
 
 # Supervisor rulebook: index and manifest
 
-This is the handoff-safe rulebook of the supervisor agent that runs Gnostoa's agent pilot. It records the operating rules the supervisor learned, so that a new session, runtime or provider does not lose them. It is split by theme so that an agent loads only the theme its task needs. The rule text is copied unchanged from the published records [#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513), [#325 6805346585](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805346585), [#325 6805360817](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805360817) and [#325 6805985258](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805985258), except six rules corrected in review (see [Review corrections](#review-corrections)). The split follows the Owner's decision [#325 6806047559](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6806047559): thematic files, each well under 64 KiB, one manifest, stable ids and traceability.
+This is the handoff-safe rulebook of the supervisor agent that runs Gnostoa's agent pilot. It records the operating rules the supervisor learned, so that a new session, runtime or provider does not lose them. It is split by theme so that an agent loads only the theme its task needs. The rule text is copied unchanged from the published records [#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513), [#325 6805346585](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805346585), [#325 6805360817](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805360817) and [#325 6805985258](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805985258), except seven rules corrected in review (see [Review corrections](#review-corrections)). The split follows the Owner's decision [#325 6806047559](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6806047559): thematic files, each well under 64 KiB, one manifest, stable ids and traceability.
 
 Owner directions remain authoritative in their linked GitHub records; where a rule here differs from a linked record, the record wins. The [review corrections](#review-corrections) are the exception: each replaces a published line of the rulebook's own source records that review found wrong, so for those lines this file set applies.
 
@@ -71,7 +71,7 @@ In total there are 143 rules in 15 themes (140 active, 1 superseded, 2 historica
 
 ## Review corrections
 
-Review of [PR #493](https://github.com/ktogias/gnostoa/pull/493) found six published lines that are wrong for this file set or for `main`. They are corrected here; every other rule is unchanged from its record. The supervisor's next re-export should carry the same corrections.
+Review of [PR #493](https://github.com/ktogias/gnostoa/pull/493) found seven published lines that are wrong for this file set or for `main`. They are corrected here; every other rule is unchanged from its record. The supervisor's next re-export should carry the same corrections.
 
 | Rule | File | Correction | Reason |
 |---|---|---|---|
@@ -80,6 +80,7 @@ Review of [PR #493](https://github.com/ktogias/gnostoa/pull/493) found six publi
 | R-TST-06 | [testing-analysis](supervisor-rulebook-testing-analysis.md) | Mutants run through the qualified parallel runner of R-TST-07, which runs the baseline first. | `knowledge mutants` (#374) is not on `main`. |
 | R-ANL-05 | [testing-analysis](supervisor-rulebook-testing-analysis.md) | The limit is the patch size that GitHub's comparison still returns; keep each file's patch under 80,000 bytes. | The collector's cap has been 4 MiB since #396; GitHub leaves out larger patches ([#396 6753827825](https://github.com/ktogias/gnostoa/pull/396#issuecomment-6753827825)). |
 | R-ANL-08 | [testing-analysis](supervisor-rulebook-testing-analysis.md) | Ruff's option is described, not named. | Its literal name contains a suppression marker, which merge-admission (M13) reads as an unjustified suppression. |
+| R-RUN-04 | [runtime-architecture](supervisor-rulebook-runtime-architecture.md) | The heavy suites (`extended`, the runtime build with `self-check`, the mutants) run one at a time, not in parallel. | The published line contradicted two later active rules: R-LIVE-04 says not to run heavy suites side by side, and R-RUN-07 allows one heavy job at a time after parallel runs ran the host out of memory. Proposal A (2026-10-05) predates both. |
 | R-SEC-03 | [runtime-architecture](supervisor-rulebook-runtime-architecture.md) | Credential-touching helpers use `python3 -I`; `-P` is kept for probe scripts that need `PYTHONPATH`. | `-P` keeps the script directory off `sys.path` but still reads `PYTHONPATH`, so it does not isolate a helper. The source notes give `-I` for helpers and `-P` for probes. |
 
 ## The rulebook's conventions

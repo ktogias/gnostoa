@@ -1,7 +1,7 @@
 ---
 type: Source
 title: "Supervisor rulebook, runtime and architecture themes"
-description: "Themes 4, 10, 11, 13 and 14 of the supervisor agent's handoff-safe rulebook (47 rules), copied from the published #325 records with one review correction, and loaded by theme."
+description: "Themes 4, 10, 11, 13 and 14 of the supervisor agent's handoff-safe rulebook (47 rules), copied from the published #325 records with two review corrections, and loaded by theme."
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -35,9 +35,9 @@ x-project-knowledge:
 
 # Supervisor rulebook: runtime and architecture
 
-Themes 4, 10, 11, 13 and 14 of the supervisor rulebook: 47 rules, copied unchanged from the published records [#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513) and [#325 6805346585](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805346585), except one rule corrected in review (R-SEC-03; see the index's [review corrections](supervisor-rulebook-index.md#review-corrections)). Each theme keeps its published number and each rule its id. Start at the [index](supervisor-rulebook-index.md) for the conventions, the other themes and the manifest of source notes.
+Themes 4, 10, 11, 13 and 14 of the supervisor rulebook: 47 rules, copied unchanged from the published records [#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513) and [#325 6805346585](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805346585), except two rules corrected in review (R-RUN-04 and R-SEC-03; see the index's [review corrections](supervisor-rulebook-index.md#review-corrections)). Each theme keeps its published number and each rule its id. Start at the [index](supervisor-rulebook-index.md) for the conventions, the other themes and the manifest of source notes.
 
-Owner directions remain authoritative in their linked GitHub records; where a rule here differs from a linked record, the record wins. The review correction named above is the exception: it replaces a published line of the rulebook's own source records that review found wrong, so for that line this file applies.
+Owner directions remain authoritative in their linked GitHub records; where a rule here differs from a linked record, the record wins. The review corrections named above are the exception: each replaces a published line of the rulebook's own source records that review found wrong, so for those lines this file applies.
 
 ## 4. Container-first and runtime
 
@@ -65,10 +65,10 @@ Owner directions remain authoritative in their linked GitHub records; where a ru
   - A bare 40-hex value in YAML trips the secret scanner. Use the repository's allowlist pragma with a reason.
 - **Origin:** 2026-09-26 to 2026-10-10; #320, #329. Memory: gnostoa-candidate-prep-practicalities.
 
-### R-RUN-04 (active): Verify locally in order: prepare, cheap gates, then the heavy suites in parallel; no local regression suite.
+### R-RUN-04 (active): Verify locally in order: prepare, cheap gates, then the heavy suites one at a time; no local regression suite.
 - **Why:** the same tests ran twelve times per round in one serial process, and a late failure cost a whole rerun. The Owner approved "proposal A" (2026-10-05).
 - **How to apply:**
-  - First prepare, and verify the exact prepared tree. Then `policy`, `security-fast` and `smoke`. Then `extended`, the runtime build with `self-check`, and the mutants.
+  - First prepare, and verify the exact prepared tree. Then `policy`, `security-fast` and `smoke`. Then `extended`, the runtime build with `self-check`, and the mutants, one at a time (R-RUN-07, R-LIVE-04).
   - Commit, push and seal only if all pass. Release the receipt either way.
   - The publishing script belongs in the repository, not on the host (R-ARCH-04).
 - **Origin:** 2026-10-05 to 2026-10-12; #369, #370, #371, #374. Memory: verification-process-a.
