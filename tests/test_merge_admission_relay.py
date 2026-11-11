@@ -1363,16 +1363,18 @@ class ReadBackTests(unittest.TestCase):
         def failing(provider: _Provider) -> Any:
             return _lagging(provider, by_id=[_status(502)] * 4, listed=[None, newer])
 
-        for name, reads, read in (
+        for name, reads, kind, reason in (
             (
                 "a read that answered with no run",
                 no_run,
-                "MISMATCH: the check run reads back as no run",
+                "MISMATCH",
+                "the check run reads back as no run",
             ),
             (
                 "reads that failed",
                 failing,
-                "UNKNOWN: the check run could not be read back",
+                "UNKNOWN",
+                "the check run could not be read back",
             ),
         ):
             with self.subTest(name):
@@ -1386,12 +1388,12 @@ class ReadBackTests(unittest.TestCase):
                     self._invalidate(provider)
                 failure = raised.exception
                 self.assertEqual("UNKNOWN", failure.kind)
-                self.assertIn(f"({read})", str(failure))
+                self.assertIn(f"({kind}: {reason})", str(failure))
                 self.assertIn("nor completed as cancelled", str(failure))
                 cause: Any = failure.__cause__
                 self.assertIsInstance(cause, relay.PublicationError)
-                named = f"{cause.kind}: {cause}"
-                self.assertEqual(read, named)
+                self.assertEqual(kind, cause.kind)
+                self.assertEqual(reason, str(cause))
                 self.assertIs(error, failure.__context__)
 
     def test_a_cancellation_failing_for_a_while_is_retried(self) -> None:
