@@ -1,7 +1,7 @@
 ---
 type: Source
 title: "Supervisor rulebook, runtime and architecture themes"
-description: "Themes 4, 10, 11, 13 and 14 of the supervisor agent's handoff-safe rulebook (47 rules), copied unchanged from the published #325 records and loaded by theme."
+description: "Themes 4, 10, 11, 13 and 14 of the supervisor agent's handoff-safe rulebook (47 rules), copied from the published #325 records with one review correction, and loaded by theme."
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -35,9 +35,9 @@ x-project-knowledge:
 
 # Supervisor rulebook: runtime and architecture
 
-Themes 4, 10, 11, 13 and 14 of the supervisor rulebook: 47 rules, copied unchanged from the published records [#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513) and [#325 6805346585](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805346585). Each theme keeps its published number and each rule its id. Start at the [index](supervisor-rulebook-index.md) for the conventions, the other themes and the manifest of source notes.
+Themes 4, 10, 11, 13 and 14 of the supervisor rulebook: 47 rules, copied unchanged from the published records [#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513) and [#325 6805346585](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805346585), except one rule corrected in review (R-SEC-03; see the index's [review corrections](supervisor-rulebook-index.md#review-corrections)). Each theme keeps its published number and each rule its id. Start at the [index](supervisor-rulebook-index.md) for the conventions, the other themes and the manifest of source notes.
 
-Owner directions remain authoritative in their linked GitHub records; where a rule here differs from a linked record, the record wins.
+Owner directions remain authoritative in their linked GitHub records; where a rule here differs from a linked record, the record wins. The review correction named above is the exception: it replaces a published line of the rulebook's own source records that review found wrong, so for that line this file applies.
 
 ## 4. Container-first and runtime
 
@@ -254,7 +254,7 @@ Owner directions remain authoritative in their linked GitHub records; where a ru
 
 ### R-SEC-03 (active): Run credential-touching helpers isolated: `python3 -I`, outside any checkout, with no names that shadow the standard library.
 - **Why:** a helper run from an untrusted PR clone imported the checkout's `json.py` (#400). A probe named `typing.py` shadowed the standard library for 126 modules (#389).
-- **How to apply:** use `python3 -I` (or `-P`), and run from a neutral directory. Test helpers from a directory holding a planted `json.py`. Give helper scripts distinctive names. When many modules fail oddly at once, check the harness first.
+- **How to apply:** use `python3 -I`, and run from a neutral directory. `-P` alone still reads `PYTHONPATH`, so keep it for probe scripts that need `PYTHONPATH`, never for a credential-touching helper. Test helpers from a directory holding a planted `json.py`. Give helper scripts distinctive names. When many modules fail oddly at once, check the harness first.
 - **Origin:** 2026-10-08 to 2026-11-02; #389, #400. Memory: helpers-never-import-from-cwd, scripts-never-shadow-stdlib.
 
 ### R-SEC-04 (active): Exercise a control against its own attack, with a narrow positive control.
