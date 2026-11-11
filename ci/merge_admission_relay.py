@@ -64,6 +64,7 @@ from tools.merge_admission_checks import (
     ours,
     read_run,
     run_id,
+    within_bound,
 )
 from tools.verdict_cli import read_json_file
 
@@ -344,7 +345,9 @@ def _post(
     body = {"name": CHECK_NAME, "head_sha": head, **payload}
     try:
         posted = client.post(client.url(f"repos/{repository}/check-runs"), body)
-    except github_rest.GitHubWriteError as exc:
+    except github_rest.GitHubError as exc:
+        # A refused redirect is raised as itself, not as a write failure, and has no
+        # unknown outcome: it is a refusal like any other (Sourcery on #490).
         if not exc.outcome_unknown:
             raise PublicationError("REFUSED", str(exc)) from exc
         found = app_latest(client, repository, head, app_id)
@@ -355,7 +358,7 @@ def _post(
         # Unchanged evidence gives an older run the same external id, so the run
         # listed is this one only if it carries this run's correlation too, read
         # natively by its id (CodeAnt on #426).
-        listed = read_run(client, repository, int(run_id(found) or 0))
+        listed = _read_back(client, repository, head, app_id, int(run_id(found) or 0))
         if correlation_of(listed) != correlation_of({"output": payload.get("output")}):
             raise PublicationError(
                 "UNKNOWN",
@@ -365,7 +368,85 @@ def _post(
     identifier = run_id(posted)
     if identifier is None:
         raise PublicationError("MISMATCH", "the provider's answer names no check run")
-    return _verified(read_run(client, repository, identifier), head, app_id, expected)
+    # The answer is the run this write created (Decision 0135, item 1).
+    _verified(posted, head, app_id, expected)
+    try:
+        written = _read_back(client, repository, head, app_id, identifier)
+    except PublicationError as unconfirmed:
+        # No read confirmed the run, whether the reads failed or one answered with no
+        # run, so it is cancelled rather than left pending (Decision 0135, item 4).
+        _cancel(client, repository, identifier, payload, unconfirmed)
+        raise
+    return _verified(written, head, app_id, expected)
+
+
+def _read_back(
+    client: Any, repository: str, head: str, app_id: int, identifier: int
+) -> Mapping[str, Any]:
+    """A run of the App, read by its id; or, when no read by its id succeeds within
+    the bound, the App's latest run on the head if it is that run (Decision 0135,
+    item 3)."""
+
+    try:
+        return read_run(client, repository, identifier)
+    except PublicationError as exc:
+        if exc.kind != "UNKNOWN":
+            raise
+        latest = app_latest(client, repository, head, app_id)
+        if latest is None or run_id(latest) != identifier:
+            raise
+        return latest
+
+
+def _unsettled(error: github_rest.GitHubError) -> bool:
+    """Whether a cancellation that is known not to have landed may land if tried
+    again: the provider has not yet found the run, or limits the rate. One whose
+    outcome is unknown may have landed, so it is never made again, whatever its
+    status (Decision 0100; Revix on #490). A refusal, a refused redirect and a
+    request never sent are final (Decision 0135, item 4)."""
+
+    return not error.outcome_unknown and error.status in (404, 429)
+
+
+def _cancel(
+    client: Any,
+    repository: str,
+    identifier: int,
+    payload: Mapping[str, Any],
+    unconfirmed: PublicationError,
+) -> None:
+    """Complete as cancelled a run the provider's answer confirmed but no read can,
+    so it never stays pending. Its text keeps its correlation, so a guarded merge
+    still finds it and refuses. The same PATCH is tried again within the read's
+    bound only while it is known not to have landed. The reads are what failed, so
+    the write is not read back. A cancellation that fails is `UNKNOWN`, naming the
+    read's failure, `unconfirmed`, as its cause (Decision 0135, item 4)."""
+
+    output = payload.get("output")
+    text = output.get("text", "") if isinstance(output, Mapping) else ""
+    url = client.url(f"repos/{repository}/check-runs/{identifier}")
+    cancelled = {
+        "status": "completed",
+        "conclusion": "cancelled",
+        "output": {
+            "title": "merge-admission: cancelled",
+            "summary": (
+                "This run was written but could not be read back, so it was "
+                "cancelled rather than left pending."
+            ),
+            "text": text,
+        },
+    }
+    try:
+        within_bound(lambda: client.patch(url, cancelled), _unsettled)
+    except github_rest.GitHubError:
+        # The run's state is unknown, whatever the read found. The read's own failure
+        # is named and is the cause; the PATCH's stays the context (Revix on #490).
+        raise PublicationError(
+            "UNKNOWN",
+            f"the check run was not confirmed ({unconfirmed.kind}: {unconfirmed}), "
+            "nor completed as cancelled",
+        ) from unconfirmed
 
 
 def _complete(
@@ -387,10 +468,12 @@ def _complete(
     }
     try:
         client.patch(client.url(f"repos/{repository}/check-runs/{identifier}"), payload)
-    except github_rest.GitHubWriteError as exc:
+    except github_rest.GitHubError as exc:
+        # A refused redirect is a refusal here too (Sourcery on #490).
         if not exc.outcome_unknown:
             raise PublicationError("REFUSED", str(exc)) from exc
-    return _verified(read_run(client, repository, identifier), head, app_id, expected)
+    written = _read_back(client, repository, head, app_id, identifier)
+    return _verified(written, head, app_id, expected)
 
 
 def invalidate(
