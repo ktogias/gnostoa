@@ -372,10 +372,10 @@ def _post(
     _verified(posted, head, app_id, expected)
     try:
         written = _read_back(client, repository, head, app_id, identifier)
-    except PublicationError:
+    except PublicationError as unconfirmed:
         # No read confirmed the run, whether the reads failed or one answered with no
         # run, so it is cancelled rather than left pending (Decision 0135, item 4).
-        _cancel(client, repository, identifier, payload)
+        _cancel(client, repository, identifier, payload, unconfirmed)
         raise
     return _verified(written, head, app_id, expected)
 
@@ -409,13 +409,18 @@ def _unsettled(error: github_rest.GitHubError) -> bool:
 
 
 def _cancel(
-    client: Any, repository: str, identifier: int, payload: Mapping[str, Any]
+    client: Any,
+    repository: str,
+    identifier: int,
+    payload: Mapping[str, Any],
+    unconfirmed: PublicationError,
 ) -> None:
     """Complete as cancelled a run the provider's answer confirmed but no read can,
     so it never stays pending. Its text keeps its correlation, so a guarded merge
     still finds it and refuses. The same PATCH is tried again within the read's
     bound only while it is known not to have landed. The reads are what failed, so
-    the write is not read back (Decision 0135, item 4)."""
+    the write is not read back. A cancellation that fails is `UNKNOWN`, naming the
+    read's failure, `unconfirmed`, as its cause (Decision 0135, item 4)."""
 
     output = payload.get("output")
     text = output.get("text", "") if isinstance(output, Mapping) else ""
@@ -434,11 +439,14 @@ def _cancel(
     }
     try:
         within_bound(lambda: client.patch(url, cancelled), _unsettled)
-    except github_rest.GitHubError as exc:
+    except github_rest.GitHubError:
+        # The run's state is unknown, whatever the read found. The read's own failure
+        # is named and is the cause; the PATCH's stays the context (Revix on #490).
         raise PublicationError(
             "UNKNOWN",
-            "the check run could not be read back, nor completed as cancelled",
-        ) from exc
+            f"the check run was not confirmed ({unconfirmed.kind}: {unconfirmed}), "
+            "nor completed as cancelled",
+        ) from unconfirmed
 
 
 def _complete(

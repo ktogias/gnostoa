@@ -91,7 +91,8 @@ routed the repair before #489's guarded merge is retried (source `route`).
    on `_post`'s normal path, when the answer passed item 1. The relay PATCHes the run to
    `completed` and `cancelled` if neither the read by id nor the latest view then confirms it.
    That covers reads that failed and a read that answered with no run at all, which
-   confirms nothing either (Sourcery on #490). It then raises the read's failure as before.
+   confirms nothing either (Sourcery on #490). It then raises the read's failure as before,
+   unless the cancellation fails too, as below.
    The PATCH keeps the run's text, so the correlation still names the workflow run, the
    attempt and any nonce. A guarded merge then finds the run and refuses it at once, because
    it is not a success. The same PATCH is tried again through `within_bound` only while it
@@ -101,7 +102,11 @@ routed the repair before #489's guarded merge is retried (source `route`).
    completion never write again after an unknown outcome either (Revix on #490). A refusal,
    a refused redirect and a request never sent are final. The PATCH is not read back, since
    the reads are what failed. A cancellation that is not known to have landed raises
-   `UNKNOWN` and says so. Nothing is cancelled in these cases (source `red`,
+   `UNKNOWN` and says so, since the run's state is then unconfirmed, whatever the read
+   found. Its message names the read's own failure, its kind and reason, such as
+   "MISMATCH: the check run reads back as no run", and that failure is its cause. The
+   PATCH's failure stays its context (Revix on #490; the Router chose this over raising
+   the read's kind, 6786681061). Nothing is cancelled in these cases (source `red`,
    difference 3):
    - a refused POST;
    - a POST whose outcome is unknown, where no answer named a run;
@@ -137,7 +142,9 @@ routed the repair before #489's guarded merge is retried (source `route`).
   landed after four tries, the run may stay pending, as it did before this change. A PATCH
   with an unknown outcome is neither read back nor made again: the reads are what failed,
   and a write is made once (Revix on #490). The guard still refuses a pending run, because
-  it is not a success, and the head's next evaluation writes a newer latest run.
+  it is not a success, and the head's next evaluation writes a newer latest run. The
+  job's record then keeps the kind `UNKNOWN`, not the read's kind. Its reason names the
+  read's kind, and only the result decides admission.
 
 ## Verification
 
@@ -165,6 +172,10 @@ routed the repair before #489's guarded merge is retried (source `route`).
 - Review round 3 on #490 (Revix) added a RED on the unchanged production code of
   `3ea879b5`. A cancellation with an unknown outcome, failing with 502 and with 404, was
   made four times instead of once: 2 failures, each `1 != 4`. It passes after this change.
+- Review round 4 on #490 (Revix) added a RED on the unchanged production code of
+  `2e909d6d`. A failed cancellation, after a read that answered with no run and after
+  reads that failed, did not name the read's failure: 2 failures, each "not found". It
+  passes after this change.
 - The relay, guard and queue suites stay green.
 
 ## Consequences
