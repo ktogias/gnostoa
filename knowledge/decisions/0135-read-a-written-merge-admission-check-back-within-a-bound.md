@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Read a written merge-admission check back within a bound, and cancel one that no read confirms
-description: "#407, after the guarded merge of #489 refused on 2026-11-10: the relay checks the provider's answer to a check-run write before reading the run back, and the shared read of a run by its id retries a transient failure after 0.5, 1.5 and 3.5 s, or after the client's bounded rate-limit hint, never a refusal. A run that no read by its id finds is taken from the App's latest view when that view holds the same id. A run the answer confirmed but no read confirms is completed as cancelled, keeping its correlation, the cancellation tried again within the same bound, and the failure is still raised. A refused redirect on any relay write is a refusal. The guard keeps failing closed."
+description: "#407, after the guarded merge of #489 refused on 2026-11-10: the relay checks the provider's answer to a check-run write before reading the run back, and the shared read of a run by its id retries a transient failure after 0.5, 1.5 and 3.5 s, or after the client's bounded rate-limit hint, never a refusal. A run that no read by its id finds is taken from the App's latest view when that view holds the same id. A run the answer confirmed but no read confirms is completed as cancelled, keeping its correlation, the cancellation tried again within the same bound only while it is known not to have landed, and the failure is still raised. A refused redirect on any relay write is a refusal. The guard keeps failing closed."
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -94,12 +94,14 @@ routed the repair before #489's guarded merge is retried (source `route`).
    confirms nothing either (Sourcery on #490). It then raises the read's failure as before.
    The PATCH keeps the run's text, so the correlation still names the workflow run, the
    attempt and any nonce. A guarded merge then finds the run and refuses it at once, because
-   it is not a success. The same PATCH is tried again through `within_bound` while it may
-   still land: its outcome is unknown, the run is not yet found (404), or the rate is
-   limited (429) (Sourcery on #490). The PATCH is idempotent, so a repeat changes nothing a
-   first landing did. A refusal, a refused redirect and a request never sent are final. The
-   PATCH is not read back, since the reads are what failed. A cancellation that never lands
-   raises `UNKNOWN` and says so. Nothing is cancelled in these cases (source `red`,
+   it is not a success. The same PATCH is tried again through `within_bound` only while it
+   is known not to have landed: the run is not yet found (404), or the rate is limited (429)
+   (Sourcery on #490). A PATCH whose outcome is unknown may have landed, so it is made once,
+   whatever its status. Decision 0100 makes every write once, and the relay's POST and
+   completion never write again after an unknown outcome either (Revix on #490). A refusal,
+   a refused redirect and a request never sent are final. The PATCH is not read back, since
+   the reads are what failed. A cancellation that is not known to have landed raises
+   `UNKNOWN` and says so. Nothing is cancelled in these cases (source `red`,
    difference 3):
    - a refused POST;
    - a POST whose outcome is unknown, where no answer named a run;
@@ -131,8 +133,10 @@ routed the repair before #489's guarded merge is retried (source `route`).
   guard's 4,800 s deadline bounds its discovery of the admission run and its wait for that
   run (`_discover`, `_await`). The reads after that wait were never bound by it, on `main`
   as here, so this change adds time to them but no new exposure to the deadline.
-- **A cancellation can fail.** If the PATCH is refused, or has not landed after four tries,
-  the run stays pending, as it did before this change. The guard still refuses it, because
+- **A cancellation can fail.** If the PATCH is refused, has an unknown outcome, or has not
+  landed after four tries, the run may stay pending, as it did before this change. A PATCH
+  with an unknown outcome is neither read back nor made again: the reads are what failed,
+  and a write is made once (Revix on #490). The guard still refuses a pending run, because
   it is not a success, and the head's next evaluation writes a newer latest run.
 
 ## Verification
@@ -158,6 +162,9 @@ routed the repair before #489's guarded merge is retried (source `route`).
 
   Two of those tests had pinned the old behaviour, and now assert the intended values. All
   pass after this change.
+- Review round 3 on #490 (Revix) added a RED on the unchanged production code of
+  `3ea879b5`. A cancellation with an unknown outcome, failing with 502 and with 404, was
+  made four times instead of once: 2 failures, each `1 != 4`. It passes after this change.
 - The relay, guard and queue suites stay green.
 
 ## Consequences

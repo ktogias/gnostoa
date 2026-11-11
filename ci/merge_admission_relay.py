@@ -399,11 +399,13 @@ def _read_back(
 
 
 def _unsettled(error: github_rest.GitHubError) -> bool:
-    """Whether a cancellation may land if tried again: its outcome is unknown, or
-    the provider has not yet found the run, or limits the rate. A refusal, a refused
-    redirect and a request never sent are final (Decision 0135, item 4)."""
+    """Whether a cancellation that is known not to have landed may land if tried
+    again: the provider has not yet found the run, or limits the rate. One whose
+    outcome is unknown may have landed, so it is never made again, whatever its
+    status (Decision 0100; Revix on #490). A refusal, a refused redirect and a
+    request never sent are final (Decision 0135, item 4)."""
 
-    return error.outcome_unknown or error.status in (404, 429)
+    return not error.outcome_unknown and error.status in (404, 429)
 
 
 def _cancel(
@@ -412,8 +414,8 @@ def _cancel(
     """Complete as cancelled a run the provider's answer confirmed but no read can,
     so it never stays pending. Its text keeps its correlation, so a guarded merge
     still finds it and refuses. The same PATCH is tried again within the read's
-    bound while it may still land. The reads are what failed, so the write is not
-    read back (Decision 0135, item 4)."""
+    bound only while it is known not to have landed. The reads are what failed, so
+    the write is not read back (Decision 0135, item 4)."""
 
     output = payload.get("output")
     text = output.get("text", "") if isinstance(output, Mapping) else ""
