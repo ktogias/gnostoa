@@ -9,6 +9,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
@@ -40,11 +41,20 @@ def _initialize_git(root: Path) -> tuple[str, str]:
     return _git(root, "rev-parse", "HEAD"), _git(root, "rev-parse", "HEAD^{tree}")
 
 
-def _fact(identity: str, text: str, source: str = "provider") -> dict[str, object]:
+def _fact(identity: str, text: str, source: str = "provider") -> dict[str, Any]:
     return {"id": identity, "text": text, "source_ids": [source]}
 
 
-def _snapshot(root: Path) -> dict[str, object]:
+# The expected inline form of fact text: each Markdown control character is
+# backslash-escaped. Kept here as the tests' own expected value.
+MARKDOWN_CONTROL = frozenset("\\`*_{}[]()#+!|>~-")
+
+
+def _markdown_escaped(text: str) -> str:
+    return "".join(f"\\{char}" if char in MARKDOWN_CONTROL else char for char in text)
+
+
+def _snapshot(root: Path) -> dict[str, Any]:
     local = root / "source.md"
     local.write_text("source\n", encoding="utf-8")
     digest = "sha256:" + hashlib.sha256(local.read_bytes()).hexdigest()
@@ -116,7 +126,7 @@ class OrientationTests(unittest.TestCase):
             facts = values if isinstance(values, list) else [values]
             for fact in facts:
                 self.assertIn(fact["id"], markdown)
-                self.assertIn(orientation._markdown(fact["text"]), markdown)
+                self.assertIn(_markdown_escaped(fact["text"]), markdown)
                 for source_id in fact["source_ids"]:
                     self.assertIn(source_id, markdown)
         self.assertIn(manifest["manifest_digest"], markdown)
@@ -143,8 +153,8 @@ class OrientationTests(unittest.TestCase):
             manifest = orientation.build_manifest(snapshot, root, NOW)
             markdown = orientation.render_markdown(manifest)
         self.assertEqual("CONFLICTING", manifest["evaluation"]["status"])
-        self.assertIn(orientation._markdown("Issue #14"), markdown)
-        self.assertIn(orientation._markdown("Issue #237"), markdown)
+        self.assertIn(_markdown_escaped("Issue #14"), markdown)
+        self.assertIn(_markdown_escaped("Issue #237"), markdown)
 
     def test_zero_current_is_valid_only_with_complete_fresh_sources(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -244,10 +254,12 @@ class OrientationTests(unittest.TestCase):
     def test_local_source_path_traversal_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
+            snapshot = _snapshot(root)
+            snapshot["sources"][0]["locator"] = "../outside.txt"
             with self.assertRaisesRegex(
                 orientation.OrientationError, "local source escapes repository root"
             ):
-                orientation._within_root(root, "../outside.txt")
+                orientation.build_manifest(snapshot, root, NOW)
 
     def test_local_source_symlink_escape_is_rejected(self) -> None:
         with (
@@ -258,10 +270,12 @@ class OrientationTests(unittest.TestCase):
             outside = Path(outside_directory).resolve() / "outside.txt"
             outside.write_text("outside\n", encoding="utf-8")
             (root / "escape-link").symlink_to(outside)
+            snapshot = _snapshot(root)
+            snapshot["sources"][0]["locator"] = "escape-link"
             with self.assertRaisesRegex(
                 orientation.OrientationError, "local source escapes repository root"
             ):
-                orientation._within_root(root, "escape-link")
+                orientation.build_manifest(snapshot, root, NOW)
 
     def test_required_groups_and_fact_source_references_are_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -309,7 +323,9 @@ class OrientationTests(unittest.TestCase):
             root = Path(directory)
             snapshot = _snapshot(root)
             manifest = orientation.build_manifest(snapshot, root, NOW)
-            baseline = len(orientation._render_full_markdown(manifest))
+            # Within the budget, the public renderer returns the full view.
+            self.assertEqual("CURRENT", manifest["evaluation"]["status"])
+            baseline = len(orientation.render_markdown(manifest))
             padding = 5000 - baseline
             self.assertGreater(padding, 0)
             snapshot["facts"]["blockers"][0]["text"] += "é" * padding
