@@ -192,6 +192,10 @@ class OrientationTests(unittest.TestCase):
                 snapshot["sources"][1]["status"] = source_status
                 manifest = orientation.build_manifest(snapshot, root, NOW)
                 self.assertEqual(expected, manifest["evaluation"]["status"])
+                self.assertIn(
+                    _markdown_escaped("Full Phase D has not run."),
+                    orientation.render_markdown(manifest),
+                )
 
     def test_stale_future_and_invalid_times_do_not_establish_current(self) -> None:
         cases = (
