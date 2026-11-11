@@ -139,8 +139,10 @@ _WORK_ITEM_RULES = frozenset({"optional", "required-follow-up", "required"})
 _COVERAGE_KEYS = frozenset({"coverage"})
 _SUPPRESSION_KEYS = frozenset({"path", "marker", "justified"})
 # Where the suppression is and its literal same-line reason (#407, slice
-# 1b.3b-4): optional, so an older input stays valid; the adapter gives both.
-_SUPPRESSION_OPTIONAL_KEYS = frozenset({"line", "reason"})
+# 1b.3b-4): optional, so an older input stays valid; the adapter gives both. A
+# marker in a declared frozen archive also has its member and the frozen flag
+# (Decision 0134, item 5).
+_SUPPRESSION_OPTIONAL_KEYS = frozenset({"line", "reason", "member", "frozen"})
 _REFERENCE_KEYS = frozenset({"surface", "reference"})
 _FINDING_KEYS = frozenset({"item", "id", "message"})
 _FINDING_OPTIONAL_KEYS = frozenset(
@@ -369,25 +371,31 @@ def _closing_references(evidence: Mapping[str, Any]) -> dict[str, Any]:
 
 def _suppressions(
     evidence: Mapping[str, Any],
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    """M13, the justified suppressions, and the frozen ones: a marker in a declared
+    frozen archive is listed for the approval and never denies (Decision 0134,
+    item 5)."""
+
     # A coverage, so "not read" cannot pass as "none found" (#407, slice 1b.3a).
     record = _coverage(evidence["suppressions"], "suppressions", frozenset({"found"}))
     value = record["found"]
     if not isinstance(value, list):
         raise AssuranceCompletenessError("suppressions found must be a list")
-    justified, reasons = [], []
+    justified, frozen, reasons = [], [], []
     if record["coverage"] != "COMPLETE":
         reasons.append(f"suppression coverage is {record['coverage']}")
     for index, item in enumerate(value):
         entry = _suppression(item, f"suppression {index}")
-        if entry["justified"]:
+        if "frozen" in entry:
+            frozen.append(entry)
+        elif entry["justified"]:
             justified.append(entry)
         else:
             location = entry["path"]
             if "line" in entry:
                 location = f"{location}:{entry['line']}"
             reasons.append(f"{entry['marker']} in {location} has no justification")
-    return _criterion("M13", reasons), justified
+    return _criterion("M13", reasons), justified, frozen
 
 
 def _suppression(item: object, label: str) -> dict[str, Any]:
@@ -417,7 +425,21 @@ def _suppression(item: object, label: str) -> dict[str, Any]:
                 f"{label} justified does not match its reason"
             )
         entry["reason"] = reason
+    if "frozen" in suppression or "member" in suppression:
+        _frozen(suppression, entry, label)
     return entry
+
+
+def _frozen(suppression: Mapping[str, Any], entry: dict[str, Any], label: str) -> None:
+    """A frozen record's member and flag (Decision 0134, item 5): the flag only
+    true, only with a member, and both only with a line."""
+
+    if suppression.get("frozen") is not True:
+        raise AssuranceCompletenessError(f"{label} frozen must be true")
+    if "line" not in entry:
+        raise AssuranceCompletenessError(f"{label} is frozen without a line")
+    entry["member"] = require_text(suppression.get("member"), f"{label} member")
+    entry["frozen"] = True
 
 
 def _trust_roots(evidence: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -907,7 +929,7 @@ def evaluate(
         if evidence_verdict["status"] == "COMPLETE"
         else [f"required evidence is {evidence_verdict['status']}"],
     )
-    suppressions, justified = _suppressions(document)
+    suppressions, justified, frozen = _suppressions(document)
     trust_root_criterion, trust_roots = _trust_roots(document)
     optional = _optional_reads(document.get("analyzer_optional", []))
     authority = {
@@ -949,6 +971,7 @@ def evaluate(
         "completeness": evidence_verdict,
         "for_approval": {
             "suppressions": justified,
+            "frozen_suppressions": frozen,
             "trust_root_changes": trust_roots,
             "analyzer_findings": analyzer_findings,
             "inherited_findings": inherited,

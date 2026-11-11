@@ -7,10 +7,12 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from jsonschema.exceptions import SchemaError
 
+from tests.quality_evidence_profile_support import _original
 from tools import review_check
 from tools.review_model import canonical_digest
 from tools.review_policy import (
@@ -23,7 +25,7 @@ from tools.review_policy import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _fixture() -> dict[str, object]:
+def _fixture() -> dict[str, Any]:
     fixture = json.loads(
         (ROOT / "tests" / "fixtures" / "review_check" / "cases.json").read_text(
             encoding="utf-8"
@@ -163,8 +165,30 @@ class ReviewAssuranceIntegrationTests(unittest.TestCase):
         self.assertLess(binding.index(previous), binding.index(path))
         self.assertLess(binding.index(path), binding.index(final))
         self.assertEqual(1, binding.count(path))
-        self.assertIn("sb2.membership=26", binding)
         self.assertNotIn("sb2.membership=25", binding)
+
+    def test_candidate_binding_extends_sb2_with_the_archive_member_reader(
+        self,
+    ) -> None:
+        """`knowledge merge-evidence` now imports the bounded archive-member reader
+        for a declared frozen archive, so it joins SB2 after the SonarCloud
+        helper's block (Decision 0035; #389, Decision 0134)."""
+        workflow = (ROOT / ".github" / "workflows" / "verification.yml").read_text(
+            encoding="utf-8"
+        )
+        binding = workflow.split("- name: Bind the exact PR executable candidate", 1)[1]
+        previous = 'test "$(wc -l < "${sb2_paths_file}")" -eq 26'
+        final = 'test "$(wc -l < "${sb2_paths_file}")" -eq 27'
+        path = "tools/archive_members.py"
+        self.assertIn(final, binding)
+        self.assertIn(
+            'test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 27', binding
+        )
+        self.assertLess(binding.index(previous), binding.index(path))
+        self.assertLess(binding.index(path), binding.index(final))
+        self.assertEqual(1, binding.count(path))
+        self.assertIn("sb2.membership=27", binding)
+        self.assertNotIn("sb2.membership=26", binding)
 
     def test_fast_suite_runs_the_pre_registered_review_assurance_oracle(self) -> None:
         verify = (ROOT / "ci" / "verify").read_text(encoding="utf-8")
@@ -226,23 +250,21 @@ class ReviewAssuranceIntegrationTests(unittest.TestCase):
             }
         )
 
-        policy_issue = review_check._current_advisory_bootstrap_issue(
+        bootstrap_issue = _original(review_check, "_current_advisory_bootstrap_issue")
+        is_protected = _original(review_check, "_is_protected_current_advisory")
+        policy_issue = bootstrap_issue(
             input_document,
             Path("candidate-weakened-policy.yaml"),
         )
         self.assertIsNotNone(policy_issue)
         self.assertIn("caller-selected --policy", str(policy_issue))
 
-        self.assertIsNone(
-            review_check._current_advisory_bootstrap_issue(input_document, None)
-        )
-        self.assertTrue(review_check._is_protected_current_advisory(input_document))
+        self.assertIsNone(bootstrap_issue(input_document, None))
+        self.assertTrue(is_protected(input_document))
 
         context["judge_relation"] = "candidate_under_test"
-        self.assertIsNone(
-            review_check._current_advisory_bootstrap_issue(input_document, None)
-        )
-        self.assertFalse(review_check._is_protected_current_advisory(input_document))
+        self.assertIsNone(bootstrap_issue(input_document, None))
+        self.assertFalse(is_protected(input_document))
 
     def test_shared_evaluator_cannot_self_authorize_current_advisory_pass(self) -> None:
         fixture = _fixture()
@@ -266,7 +288,7 @@ class ReviewAssuranceIntegrationTests(unittest.TestCase):
         self.assertEqual(3, code)
         self.assertEqual("INCOMPLETE", payload["outcome"])
         self.assertEqual("BOOTSTRAP_PROTECTED_AUTHORITY_UNAVAILABLE", payload["reason"])
-        self.assertIs(payload["binding"], False)
+        self.assertIs(False, payload["binding"])
 
     def test_exact_duplicate_observation_is_idempotent(self) -> None:
         fixture = _fixture()

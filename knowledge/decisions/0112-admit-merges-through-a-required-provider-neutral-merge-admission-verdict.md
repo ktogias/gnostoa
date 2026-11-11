@@ -445,7 +445,15 @@ provider-neutral public change-governance contract of
       `PARTIAL`. So does a file without hunks, unless it is a removal or its head
       blob is Git's empty blob, since only then can nothing have been added; and
       such a file whose patch keeps any head-side line, context included,
-      contradicts itself and is `PARTIAL` too. A comparison yields at most 1,000
+      contradicts itself and is `PARTIAL` too. A hunkless file that the protected
+      target's frozen-archive declaration names by its path, blob and SHA-256 is
+      read whole instead (Decision 0134): L1 attaches its verified bytes, and its
+      gzip tar is read within bounds. Every marker occurrence in its members is
+      listed, with its member and line, as frozen evidence, which is shown for the
+      native approval and denies nothing. Any mismatch, exceeded bound or
+      unreadable member leaves the suppressions `PARTIAL`, and an undeclared
+      binary stays `PARTIAL`; the declaration ships with #396's archive. A
+      comparison yields at most 1,000
       suppressions and 1 MiB of them as the command writes them, each charged
       its serialized size. Past either budget the list keeps what it holds and is
       `PARTIAL`, since a reason is the rest of its line and a line packed with
