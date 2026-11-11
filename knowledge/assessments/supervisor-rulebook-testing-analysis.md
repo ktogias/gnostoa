@@ -37,7 +37,7 @@ x-project-knowledge:
 
 Themes 7 and 8 of the supervisor rulebook: 27 rules, copied unchanged from the published records [#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513) and [#325 6805346585](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805346585), except four rules corrected in review (R-TST-05, R-TST-06, R-ANL-05 and R-ANL-08; see the index's [review corrections](supervisor-rulebook-index.md#review-corrections)). Each theme keeps its published number and each rule its id. Start at the [index](supervisor-rulebook-index.md) for the conventions, the other themes and the manifest of source notes.
 
-Owner directions remain authoritative in their linked GitHub records; where a rule here differs from a linked record, the record wins.
+Owner directions remain authoritative in their linked GitHub records; where a rule here differs from a linked record, the record wins. The review corrections named above are the exception: each replaces a published line of the rulebook's own source records that review found wrong, so for those lines this file applies.
 
 ## 7. Tests and mutation
 

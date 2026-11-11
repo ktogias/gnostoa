@@ -45,7 +45,7 @@ x-project-knowledge:
 
 This is the handoff-safe rulebook of the supervisor agent that runs Gnostoa's agent pilot. It records the operating rules the supervisor learned, so that a new session, runtime or provider does not lose them. It is split by theme so that an agent loads only the theme its task needs. The rule text is copied unchanged from the published records [#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513), [#325 6805346585](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805346585), [#325 6805360817](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805360817) and [#325 6805985258](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805985258), except five rules corrected in review (see [Review corrections](#review-corrections)). The split follows the Owner's decision [#325 6806047559](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6806047559): thematic files, each well under 64 KiB, one manifest, stable ids and traceability.
 
-Owner directions remain authoritative in their linked GitHub records; where a rule here differs from a linked record, the record wins.
+Owner directions remain authoritative in their linked GitHub records; where a rule here differs from a linked record, the record wins. The [review corrections](#review-corrections) are the exception: each replaces a published line of the rulebook's own source records that review found wrong, so for those lines this file set applies.
 
 ## Load by theme
 
@@ -83,7 +83,7 @@ Review of [PR #493](https://github.com/ktogias/gnostoa/pull/493) found five publ
 
 ## The rulebook's conventions
 
-Copied unchanged from part 1 ([#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513)); part 2 repeats them. Its counts are those of parts 1 and 2; the two addenda add one rule and one source note each.
+Copied unchanged from part 1 ([#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513)); part 2 repeats them. Its counts are those of parts 1 and 2; the two addenda add one rule and one source note each. Its Authority line does not restore the published lines that the [review corrections](#review-corrections) replace.
 
 - **Purpose:** a handoff-safe rulebook. It records the operating rules the supervisor agent learned while running Gnostoa, so that a future handoff (a new session, runtime or provider) does not lose them.
 - **Source:** the supervisor's memory as of 2026-11-11: 197 memory notes. One was excluded as host-only; the other 196 are merged into 141 rules. The manifest lists every note with its digest and rule ids.

@@ -37,7 +37,7 @@ x-project-knowledge:
 
 Themes 3, 5, 6 and 9 of the supervisor rulebook: 47 rules, copied unchanged from the published records [#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513) and [#325 6805346585](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805346585). R-EVD-11 comes from [#325 6805985258](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805985258) and closes its theme. R-GATE-05 comes from [#325 6805360817](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805360817) and closes its theme; one of its lines was corrected in review (see the index's [review corrections](supervisor-rulebook-index.md#review-corrections)). Each theme keeps its published number and each rule its id. Start at the [index](supervisor-rulebook-index.md) for the conventions, the other themes and the manifest of source notes.
 
-Owner directions remain authoritative in their linked GitHub records; where a rule here differs from a linked record, the record wins.
+Owner directions remain authoritative in their linked GitHub records; where a rule here differs from a linked record, the record wins. The review correction named above is the exception: it replaces a published line of the rulebook's own source records that review found wrong, so for that line this file applies.
 
 ## 3. Records, language and publication
 

@@ -47,7 +47,8 @@ Start with `README.md`. Load only the route required by the task.
 - Agent operating lessons for Gnostoa-self work (the supervisor rulebook): start
   at [`knowledge/assessments/supervisor-rulebook-index.md`](knowledge/assessments/supervisor-rulebook-index.md)
   and load only the theme file the task needs. It is a draft digest; where it
-  differs from a linked record, the record wins.
+  differs from a linked record, the record wins, except for the review
+  corrections its index lists.
 - Gnostoa version-bound source-and-OCI release series: after the ordinary
   self-hosted route, read
   `knowledge/runbooks/publish-version-bound-source-and-oci-release.md`.
