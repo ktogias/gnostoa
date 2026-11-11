@@ -461,7 +461,10 @@ class OrientationTests(unittest.TestCase):
         snapshot = json.loads(
             (ROOT / "tasks/issue-14-orientation.json").read_text(encoding="utf-8")
         )
-        manifest = orientation.build_manifest(snapshot, ROOT, "2026-09-11T10:55:00Z")
+        manifest = orientation.build_manifest(
+            snapshot, ROOT, snapshot["projection"]["observed_at"]
+        )
+        self.assertIn(manifest["evaluation"]["status"], {"CURRENT", "STALE"})
         markdown = orientation.render_markdown(manifest)
         self.assertIn("Open questions and task-specific blockers", markdown)
         self.assertIn("Neither is a prerequisite for D14\\-O2", markdown)
