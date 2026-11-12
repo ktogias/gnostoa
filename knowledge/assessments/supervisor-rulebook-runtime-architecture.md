@@ -65,10 +65,11 @@ Owner directions remain authoritative in their linked GitHub records; where a ru
   - A bare 40-hex value in YAML trips the secret scanner. Use the repository's allowlist pragma with a reason.
 - **Origin:** 2026-09-26 to 2026-10-10; #320, #329. Memory: gnostoa-candidate-prep-practicalities.
 
-### R-RUN-04 (active): Verify locally in order: prepare, cheap gates, then the heavy suites concurrently, with at most one internally parallel suite at a time; no local regression suite.
+### R-RUN-04 (active): Verify locally in order: prepare, cheap gates, then the heavy stage, with at most one internally parallel run at a time; no local regression suite.
 - **Why:** the same tests ran twelve times per round in one serial process, and a late failure cost a whole rerun. The Owner approved "proposal A" (2026-10-05).
 - **How to apply:**
-  - First prepare, and verify the exact prepared tree. Then `policy`, `security-fast` and `smoke`. Then, concurrently, `extended`, the runtime build with `self-check`, and the mutants: at most one internally parallel suite (`extended` or parity) at a time (R-LIVE-04, R-RUN-07).
+  - First prepare, and verify the exact prepared tree. Then `policy`, `security-fast` and `smoke`. Then the heavy stage, with at most one internally parallel run at a time (#454, R-LIVE-04): `extended`, a test-running `self-check` and the mutant workers run one after another. Without `--skip-tests`, `self-check` runs the whole suite in parallel processes too.
+  - The runtime build with `self-check --skip-tests`, the install and cwd check that proposal A runs it for, may overlap `extended`. Run one qualification round at a time (R-RUN-07).
   - Commit, push and seal only if all pass. Release the receipt either way.
   - The publishing script belongs in the repository, not on the host (R-ARCH-04).
 - **Origin:** 2026-10-05 to 2026-10-12; #369, #370, #371, #374. Memory: verification-process-a.
@@ -143,7 +144,7 @@ Owner directions remain authoritative in their linked GitHub records; where a ru
 - **How to apply:**
   - Prepare in the background from the review results already available. A newly material finding supersedes the preparation.
   - Record a stalled reviewer as stalled; never make "all reviewers reported" a mandatory wait (Router 6397228124).
-  - Run mypy at GREEN. Run at most one internally parallel suite (`extended` or parity) at a time, and one qualification round at a time (#454). Never time stages from commit dates.
+  - Run mypy at GREEN. Keep to one internally parallel run at a time (`extended`, a test-running `self-check`, the mutant workers or parity), and one qualification round at a time (#454). Never time stages from commit dates.
   - End every handoff with a `next:` line: either the authorized next step, started in the same turn, or one pending-task record (actor, subject, authority, next action, completion predicate).
 - **Origin:** 2026-10-25 to 2026-10-29; #460; #325 6396981523, 6399318182, 6498368703. Memory: cycle-time-rules.
 
