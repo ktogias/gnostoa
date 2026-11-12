@@ -162,6 +162,7 @@ inherited, copied or loaded by adopting projects.
 - [Supervisor rulebook, evidence and gates themes](assessments/supervisor-rulebook-evidence-gates.md)
 - [Supervisor rulebook, testing and analysis themes](assessments/supervisor-rulebook-testing-analysis.md)
 - [Supervisor rulebook, runtime and architecture themes](assessments/supervisor-rulebook-runtime-architecture.md)
+- [Supervisor lessons ledger: each lesson and incident with its guard against recurrence and its status](assessments/supervisor-lessons-ledger.md)
 - [Issues 309/313 analyzer-readback RED-first execution contract](assessments/309-313-analyzer-readback-red-contract.md)
 - [B2/P1 streamlined self-hosting measurements](assessments/b2-p1-streamlined-self-hosting-measurements.md)
 - [B2/P2 fresh-session resume and effect-authority findings](assessments/b2-p2-fresh-session-and-effect-authority-findings.md)
