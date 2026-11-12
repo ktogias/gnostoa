@@ -1,7 +1,7 @@
 ---
 type: Source
 title: "Supervisor rulebook, runtime and architecture themes"
-description: "Themes 4, 10, 11, 13 and 14 of the supervisor agent's handoff-safe rulebook (47 rules), copied from the published #325 records with two review corrections, and loaded by theme."
+description: "Themes 4, 10, 11, 13 and 14 of the supervisor agent's handoff-safe rulebook (47 rules), copied from the published #325 records with five review corrections, and loaded by theme."
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -35,7 +35,7 @@ x-project-knowledge:
 
 # Supervisor rulebook: runtime and architecture
 
-Themes 4, 10, 11, 13 and 14 of the supervisor rulebook: 47 rules, copied unchanged from the published records [#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513) and [#325 6805346585](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805346585), except two rules corrected in review (R-RUN-04 and R-SEC-03; see the index's [review corrections](supervisor-rulebook-index.md#review-corrections)). Each theme keeps its published number and each rule its id. Start at the [index](supervisor-rulebook-index.md) for the conventions, the other themes and the manifest of source notes.
+Themes 4, 10, 11, 13 and 14 of the supervisor rulebook: 47 rules, copied unchanged from the published records [#325 6805345513](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805345513) and [#325 6805346585](https://github.com/ktogias/gnostoa/issues/325#issuecomment-6805346585), except five rules corrected in review (R-RUN-04, R-RUN-07, R-LIVE-01, R-LIVE-04 and R-SEC-03; see the index's [review corrections](supervisor-rulebook-index.md#review-corrections)). Each theme keeps its published number and each rule its id. Start at the [index](supervisor-rulebook-index.md) for the conventions, the other themes and the manifest of source notes.
 
 Owner directions remain authoritative in their linked GitHub records; where a rule here differs from a linked record, the record wins. The review corrections named above are the exception: each replaces a published line of the rulebook's own source records that review found wrong, so for those lines this file applies.
 
@@ -65,10 +65,10 @@ Owner directions remain authoritative in their linked GitHub records; where a ru
   - A bare 40-hex value in YAML trips the secret scanner. Use the repository's allowlist pragma with a reason.
 - **Origin:** 2026-09-26 to 2026-10-10; #320, #329. Memory: gnostoa-candidate-prep-practicalities.
 
-### R-RUN-04 (active): Verify locally in order: prepare, cheap gates, then the heavy suites one at a time; no local regression suite.
+### R-RUN-04 (active): Verify locally in order: prepare, cheap gates, then the heavy suites concurrently, with at most one internally parallel suite at a time; no local regression suite.
 - **Why:** the same tests ran twelve times per round in one serial process, and a late failure cost a whole rerun. The Owner approved "proposal A" (2026-10-05).
 - **How to apply:**
-  - First prepare, and verify the exact prepared tree. Then `policy`, `security-fast` and `smoke`. Then `extended`, the runtime build with `self-check`, and the mutants, one at a time (R-RUN-07, R-LIVE-04).
+  - First prepare, and verify the exact prepared tree. Then `policy`, `security-fast` and `smoke`. Then, concurrently, `extended`, the runtime build with `self-check`, and the mutants: at most one internally parallel suite (`extended` or parity) at a time (R-LIVE-04, R-RUN-07).
   - Commit, push and seal only if all pass. Release the receipt either way.
   - The publishing script belongs in the repository, not on the host (R-ARCH-04).
 - **Origin:** 2026-10-05 to 2026-10-12; #369, #370, #371, #374. Memory: verification-process-a.
@@ -88,7 +88,7 @@ Owner directions remain authoritative in their linked GitHub records; where a ru
   - After stopping a docker-backed task, list the running containers with their mounts, and stop any that still mount the tree. Name long runs so they can be stopped by name.
 - **Origin:** 2026-10-01 to 2026-10-17; #423. Memory: never-mount-pwd, taskstop-leaves-containers.
 
-### R-RUN-07 (active): Protect host resources: no scratch on RAM-backed filesystems, one heavy job at a time, prune job copies.
+### R-RUN-07 (active): Protect host resources: no scratch on RAM-backed filesystems, one qualification round at a time, prune job copies.
 - **Why:** clones in a RAM-backed temporary directory crashed the host with out-of-memory errors. Owner (2026-10-09, in English translation): "Clean [the temporary directory] now and don't write anything there! The machine keeps crashing with OOM!" Two parallel preparations were later killed and took unrelated workloads down. Runner job copies filled the disk.
 - **How to apply:**
   - Keep scratch on disk, never in tmpfs or shared-memory mounts. Keep one disposable clone at a time.
@@ -124,7 +124,7 @@ Owner directions remain authoritative in their linked GitHub records; where a ru
 - **Why:** Gnostoa is designed so that a fresh actor resumes from durable records, not from conversation. A handover note can predate the last Implementer turn.
 - **How to apply:**
   - Follow the Decision 0016 resume card: the card, `docs/roadmap.md`, the live issue and PR bodies, then the task envelope. Read every #14 and #15 entry since the last one read.
-  - A provider-body digest is `sha256(body.rstrip("\n") + "\n")`.
+  - A provider-body digest uses the kind its envelope declares. For `github-issue-body-utf8-sha256-v1` it is the SHA-256 of the exact REST `body` string in UTF-8, with no trimming or newline change (`guidance/workflows/resume-bounded-task.md`). Only the older, unversioned `provider-body-sha256` used `sha256(body.rstrip("\n") + "\n")`.
   - After a restart, read the local status, runbook and handover first. Before acting, list the returns and dispatches since the handover, and the newest published round folders.
 - **Origin:** 2026-11-09 to 2026-11-10; #12, #14, #15, #25; #325 6740754876, 6743051836; #389 6767954607. Memory: gnostoa-resume-route, maint-takeover-20261109, handover-may-predate-the-last-turn.
 
@@ -143,7 +143,7 @@ Owner directions remain authoritative in their linked GitHub records; where a ru
 - **How to apply:**
   - Prepare in the background from the review results already available. A newly material finding supersedes the preparation.
   - Record a stalled reviewer as stalled; never make "all reviewers reported" a mandatory wait (Router 6397228124).
-  - Run mypy at GREEN. Do not run heavy suites side by side. Never time stages from commit dates.
+  - Run mypy at GREEN. Run at most one internally parallel suite (`extended` or parity) at a time, and one qualification round at a time (#454). Never time stages from commit dates.
   - End every handoff with a `next:` line: either the authorized next step, started in the same turn, or one pending-task record (actor, subject, authority, next action, completion predicate).
 - **Origin:** 2026-10-25 to 2026-10-29; #460; #325 6396981523, 6399318182, 6498368703. Memory: cycle-time-rules.
 
