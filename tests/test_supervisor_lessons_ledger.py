@@ -1,4 +1,5 @@
-"""The supervisor lessons ledger keeps one fixed table schema (#494, PR #495).
+"""The supervisor lessons ledger keeps one fixed table schema (#494, PR #495) and
+one closure rule that this test owns (#496).
 
 The PAO's acceptance cases for the ledger (#325 6830768656, routed by #325
 6830817025) found that GitHub Flavored Markdown drops every cell beyond a table's
@@ -8,21 +9,36 @@ ledger's own rule requires (P2), and the status words mixed progress with closur
 (P3). These tests read the record's raw table lines, split as GFM splits them, so
 a row wider than its header is counted rather than silently cut. They fail when a
 row's cell count differs from its header's, when a kind, guard state or status
-leaves its vocabulary, when an id repeats or is not a number, when a pilot guard
-lacks its label, or when a row is closed without its guard, English record and
+leaves its vocabulary, when an id repeats or is not a number, or when a pilot
+guard lacks its label.
+
+The Owner's review of PR #495 found the closure check latent but too weak (#496):
+it took any nonempty English record, accepted a `staged` guard, never checked the
+source, and passed a live-repo guard when any cited path existed on disk. So a
+live-repo guard, whatever the row's status, must cite only tracked regular files
+of this repository, read through `tools.repository_scope.candidate_paths`. A row
+is Closed only when the source has closed it, as the pinned witness below records,
+its guard is `live-pilot` or `live-repo`, its English record cites a tracked
+knowledge record other than the ledger, and it cites a guard reference and a
 memory note.
 """
 
 from __future__ import annotations
 
 import re
+import stat
 import tempfile
 import unittest
 from pathlib import Path
 
 from markdown_it import MarkdownIt
 
-from tools.repository_scope import SOURCE_MANIFEST, candidate_paths
+from tools.repository_scope import (
+    SOURCE_MANIFEST,
+    RepositoryScopeError,
+    candidate_paths,
+    scope_error_detail,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 LEDGER_PATH = "knowledge/assessments/supervisor-lessons-ledger.md"
@@ -43,6 +59,7 @@ COLUMNS = (
 )
 KINDS = frozenset({"lesson", "incident", "liveness firing"})
 GUARD_STATES = frozenset({"none", "staged", "live-pilot", "live-repo"})
+LIVE_GUARDS = frozenset({"live-pilot", "live-repo"})
 STATUSES = frozenset({"Open", "Closed"})
 ABSENT = frozenset({"", "—", "none", "none cited"})
 PILOT_LABEL = "pilot tooling (not in this repository)"
@@ -50,6 +67,7 @@ EPISODE = re.compile(r"Liveness episode: [0-9a-f]{16}\b")
 POSITIVE_ID = re.compile(r"[1-9][0-9]*")
 UNESCAPED_PIPE = re.compile(r"(?<!\\)\|")
 CODE_PATH = re.compile(r"`([^`\s]+/[^`\s]*)`")
+UNSAFE_SEGMENTS = frozenset({"", ".", "..", ".git"})
 SOURCE_COLUMNS = ("Record", "Posted", "Body bytes", "SHA-256 of the body")
 SOURCE_COMMENT = "issuecomment-6828048375"
 SOURCE_SHA256 = "cc879bf3ddcdbafb852f73243f9649c6c93a8aa6c556f90bf8f3efda37f41d76"  # pragma: allowlist secret -- public digest of the source record's body
@@ -116,37 +134,129 @@ def _id_problems(ids: list[str]) -> list[str]:
     return problems
 
 
-def _guard_problems(ident: str, fields: dict[str, str], root: Path) -> list[str]:
-    """A pilot guard carries its label; a repository guard cites a path that
-    exists."""
+def _tracked(root: Path) -> tuple[frozenset[str], list[str]]:
+    """The repository's tracked paths as `candidate_paths` reads them: the Git
+    index, or the packaged manifest where there is no `.git`. When neither can be
+    read the set is empty, so every cited path is refused, and the failure is
+    reported by its category alone."""
+
+    try:
+        return frozenset(path.as_posix() for path in candidate_paths(root)), []
+    except RepositoryScopeError as exc:
+        return frozenset(), [scope_error_detail("the tracked set cannot be read", exc)]
+
+
+def _path_problem(path: str, tracked: frozenset[str], root: Path) -> str | None:
+    """Why a cited path is not a tracked regular file of the repository, or None.
+
+    The path is read as written: an absolute path and an empty, `.`, `..` or
+    `.git` segment are refused before the tracked set is consulted. `lstat` does
+    not follow the last segment, and the resolved path must be the written one,
+    so no symlink anywhere on the path counts."""
+
+    if UNSAFE_SEGMENTS.intersection(path.split("/")):
+        return "is not repository-relative"
+    if path not in tracked:
+        return "is not a tracked file"
+    target = root / path
+    try:
+        regular = stat.S_ISREG(target.lstat().st_mode)
+    except OSError:
+        regular = False
+    if not regular:
+        return "is not a regular file"
+    if target.resolve() != root.resolve() / path:
+        return "is reached through a symlink"
+    return None
+
+
+def _guard_problems(
+    ident: str, fields: dict[str, str], tracked: frozenset[str], root: Path
+) -> list[str]:
+    """A pilot guard carries its label, and its paths are outside this repository,
+    so they are not checked against it. A live-repo guard, whatever the row's
+    status, cites at least one path, and every path it cites is a tracked regular
+    file of this repository."""
 
     state, reference = fields["Guard state"], fields["Guard reference"]
     if state in ("staged", "live-pilot") and PILOT_LABEL not in reference:
         return [f"row {ident}: a {state} guard lacks the label {PILOT_LABEL!r}"]
-    if state == "live-repo" and not any(
-        (root / path).exists() for path in CODE_PATH.findall(reference)
-    ):
-        return [f"row {ident}: a live-repo guard cites no repository path that exists"]
-    return []
+    if state != "live-repo":
+        return []
+    paths = CODE_PATH.findall(reference)
+    if not paths:
+        return [f"row {ident}: a live-repo guard cites no repository path"]
+    return [
+        f"row {ident}: live-repo guard path {path!r} {problem}"
+        for path in paths
+        if (problem := _path_problem(path, tracked, root)) is not None
+    ]
 
 
-def _closure_problems(ident: str, fields: dict[str, str]) -> list[str]:
-    """Closed needs a built guard, an English record and a memory note."""
+def _record_problem(path: str, tracked: frozenset[str], root: Path) -> str | None:
+    """Why a cited path is not a tracked Gnostoa knowledge record other than this
+    ledger, or None."""
+
+    problem = _path_problem(path, tracked, root)
+    if problem is None and path == LEDGER_PATH:
+        problem = "is this ledger"
+    elif problem is None and path.split("/")[0] != "knowledge":
+        problem = "is not a knowledge record"
+    return problem
+
+
+def _record_problems(
+    ident: str, record: str, tracked: frozenset[str], root: Path
+) -> list[str]:
+    """A Closed row's English record cites at least one path, and every path it
+    cites is a tracked knowledge record other than this ledger. A GitHub link is
+    provenance and counts for nothing here."""
+
+    paths = CODE_PATH.findall(record)
+    if not paths:
+        return [f"row {ident}: closed without English record"]
+    return [
+        f"row {ident}: English record path {path!r} {problem}"
+        for path in paths
+        if (problem := _record_problem(path, tracked, root)) is not None
+    ]
+
+
+def _closure_problems(
+    ident: str,
+    fields: dict[str, str],
+    tracked: frozenset[str],
+    root: Path,
+    closed_at_source: frozenset[str],
+) -> list[str]:
+    """Closed needs a guard reference, a live guard, an English record that is a
+    tracked knowledge record other than this ledger, a memory note, and the
+    source's own closure as the pinned witness records it."""
 
     if fields["Status"] != "Closed":
         return []
-    missing = [
-        name
-        for name in ("Guard reference", "English record", "Memory note")
+    problems = [
+        f"row {ident}: closed without {name}"
+        for name in ("Guard reference", "Memory note")
         if fields[name] in ABSENT
     ]
-    if fields["Guard state"] == "none":
-        missing.append("Guard state")
-    return [f"row {ident}: closed without {name}" for name in missing]
+    if fields["Guard state"] not in LIVE_GUARDS:
+        problems.append(
+            f"row {ident}: closed without a live guard ({fields['Guard state']})"
+        )
+    problems.extend(_record_problems(ident, fields["English record"], tracked, root))
+    if ident not in closed_at_source:
+        problems.append(f"row {ident}: closed here but not closed at source")
+    return problems
 
 
-def _row_problems(fields: dict[str, str], root: Path) -> list[str]:
-    """One ledger row against the vocabularies, the pilot label and the closure
+def _row_problems(
+    fields: dict[str, str],
+    tracked: frozenset[str],
+    root: Path,
+    closed_at_source: frozenset[str],
+) -> list[str]:
+    """One ledger row against the vocabularies, the guard rules and the closure
     rule."""
 
     ident = fields["Id"]
@@ -164,8 +274,8 @@ def _row_problems(fields: dict[str, str], root: Path) -> list[str]:
             f"row {ident}: a liveness firing names no 'Liveness episode: <id>'"
         )
     if fields["Guard state"] in GUARD_STATES:
-        problems.extend(_guard_problems(ident, fields, root))
-    problems.extend(_closure_problems(ident, fields))
+        problems.extend(_guard_problems(ident, fields, tracked, root))
+    problems.extend(_closure_problems(ident, fields, tracked, root, closed_at_source))
     return problems
 
 
@@ -175,28 +285,39 @@ def ledger_problems(
     closed_at_source: frozenset[str] = CLOSED_AT_SOURCE,
 ) -> list[str]:
     """Every way the text breaks the ledger schema; empty when it holds.
-
-    RED seam for #496: `closed_at_source` is accepted and not yet used, which is
-    the unchanged behaviour (the source's closure is prose only)."""
+    `closed_at_source` is the set of ids the source record has closed."""
 
     tables = _tables(markdown)
     problems = _width_problems(tables)
     ledgers = [table for table in tables if tuple(table[0]) == COLUMNS]
     if len(ledgers) != 1:
         return [*problems, f"{len(ledgers)} tables carry the ledger header, not 1"]
+    tracked, unreadable = _tracked(root)
+    problems.extend(unreadable)
     rows = [row for row in ledgers[0][1:] if len(row) == len(COLUMNS)]
     problems.extend(_id_problems([row[0] for row in rows]))
     for row in rows:
-        problems.extend(_row_problems(dict(zip(COLUMNS, row, strict=True)), root))
+        fields = dict(zip(COLUMNS, row, strict=True))
+        problems.extend(_row_problems(fields, tracked, root, closed_at_source))
     return problems
 
 
 def source_witness_problems(markdown: str, digest: str = SOURCE_SHA256) -> list[str]:
-    """RED seam for #496: nothing checks the ledger's source digest yet, which is
-    the unchanged behaviour."""
+    """The ledger's derivation table cites exactly one digest for the source
+    record, and it is the digest this test pins. This checks the ledger against a
+    pinned witness, not the live source comment: a source edit needs a reviewed
+    change to the ledger, `SOURCE_SHA256` and `CLOSED_AT_SOURCE` together."""
 
-    del markdown, digest
-    return []
+    cited = [
+        row[3].strip("`")
+        for table in _tables(markdown)
+        if tuple(table[0]) == SOURCE_COLUMNS
+        for row in table[1:]
+        if len(row) == len(SOURCE_COLUMNS) and SOURCE_COMMENT in row[0]
+    ]
+    if cited == [digest]:
+        return []
+    return [f"the ledger cites source digests {cited}; the pinned witness is {digest}"]
 
 
 def _table(*rows: tuple[str, ...]) -> str:
@@ -232,11 +353,11 @@ def _row(ident: str = "1", **changes: str) -> tuple[str, ...]:
 
 def _repository(parent: Path) -> Path:
     """A packaged checkout under `parent`, without Git metadata, so its tracked set
-    is its manifest. The manifest lists a guard file, a knowledge record, a
-    directory (as a gitlink would appear) and three symlinks: one to a listed file,
-    one to a file outside the checkout, and one directory link. The checkout also
-    holds an unlisted file and a nested `.git` directory, and `parent` holds a file
-    outside the checkout."""
+    is its manifest. The manifest lists a guard file, a file missing from the
+    checkout, a directory (as a gitlink would appear) and three symlinks: one to a
+    listed file, one to a file outside the checkout, and one through a directory
+    link. The checkout also holds an unlisted file, an unlisted directory and a
+    nested `.git` directory, and `parent` holds a file outside the checkout."""
 
     root = parent / "checkout"
     for directory in ("tests/fixtures", "tests/.git", "knowledge/failure-modes"):
@@ -245,7 +366,6 @@ def _repository(parent: Path) -> Path:
         "tests/test_guard.py",
         "tests/untracked_guard.py",
         "tests/.git/config",
-        "knowledge/failure-modes/a-record.md",
     ):
         (root / name).write_text("x\n", encoding="utf-8")
     (parent / "outside.py").write_text("x\n", encoding="utf-8")
@@ -254,7 +374,7 @@ def _repository(parent: Path) -> Path:
     (root / "guards").symlink_to("tests", target_is_directory=True)
     listed = (
         "guards/test_guard.py",
-        "knowledge/failure-modes/a-record.md",
+        "tests/deleted_guard.py",
         "tests/external_guard.py",
         "tests/fixtures",
         "tests/linked_guard.py",
@@ -324,9 +444,6 @@ class LedgerCheckReplayTests(unittest.TestCase):
             ["row 1: closed without Memory note"],
         )
 
-    def test_a_closed_row_with_all_three_passes(self) -> None:
-        self.assertEqual(ledger_problems(_table(_row(Status="Closed"))), [])
-
     def test_a_closed_row_with_all_four_passes(self) -> None:
         # The control of the #496 rule: closed at source, a live guard, a tracked
         # knowledge record other than the ledger, and a memory note.
@@ -349,7 +466,7 @@ class LedgerCheckReplayTests(unittest.TestCase):
         row = _row(Status="Closed", Guard_state="none", English_record=RECORD)
         self.assertEqual(
             ledger_problems(_table(row), closed_at_source=CLOSED),
-            ["row 1: closed without Guard state"],
+            ["row 1: closed without a live guard (none)"],
         )
 
     def test_a_closed_row_with_a_staged_guard_is_refused(self) -> None:
@@ -457,15 +574,22 @@ class LedgerCheckReplayTests(unittest.TestCase):
         reference = f"{PILOT_LABEL}: `publish-gate/prior_art_gate.py`"
         self.assertEqual(ledger_problems(_table(_row(Guard_reference=reference))), [])
 
-    def test_a_repository_guard_must_cite_an_existing_path(self) -> None:
+    def test_a_repository_guard_must_cite_a_tracked_path(self) -> None:
+        # Through this checkout's own tracked set; LedgerGuardPathTests replays
+        # each way a cited path can fail.
         missing = _row(Guard_state="live-repo", Guard_reference="`publish-gate/x.py`")
+        unnamed = _row(Guard_state="live-repo", Guard_reference="a gate")
         present = _row(
             Guard_state="live-repo",
             Guard_reference="`tests/test_supervisor_lessons_ledger.py`",
         )
         self.assertEqual(
             ledger_problems(_table(missing)),
-            ["row 1: a live-repo guard cites no repository path that exists"],
+            ["row 1: live-repo guard path 'publish-gate/x.py' is not a tracked file"],
+        )
+        self.assertEqual(
+            ledger_problems(_table(unnamed)),
+            ["row 1: a live-repo guard cites no repository path"],
         )
         self.assertEqual(ledger_problems(_table(present)), [])
 
@@ -537,6 +661,10 @@ class LedgerGuardPathTests(unittest.TestCase):
     def test_an_untracked_file_is_refused(self) -> None:
         # Failure mode 4: the check read the worktree, not the tracked set.
         self.assert_refused({"tests/untracked_guard.py": "is not a tracked file"})
+
+    def test_a_tracked_file_missing_from_the_checkout_is_refused(self) -> None:
+        # Listed in the tracked set but absent: nothing on disk guards anything.
+        self.assert_refused({"tests/deleted_guard.py": "is not a regular file"})
 
     def test_a_symlink_is_refused(self) -> None:
         # Failure mode 5: exists() follows links, inside or outside the checkout.
