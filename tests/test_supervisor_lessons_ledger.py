@@ -21,6 +21,13 @@ is Closed only when the source has closed it, as the pinned witness below record
 its guard is `live-pilot` or `live-repo`, its English record cites a tracked
 knowledge record other than the ledger, and it cites a guard reference and a
 memory note.
+
+The review of PR #497 (Sourcery, 5883695641) found four places where the check
+still took less than its rule asks. So a Closed row's English record must be a
+record of the knowledge bundle, not any file under knowledge/; its live-pilot guard
+must name the guard and link a #325 pilot record; each memory note it names must
+be in the rulebook manifest; and the source digest counts only in a row whose link
+leads to the source record itself.
 """
 
 from __future__ import annotations
@@ -29,10 +36,13 @@ import re
 import stat
 import tempfile
 import unittest
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from markdown_it import MarkdownIt
 
+from tools.knowledge_common import RESERVED_NAMES, parse_markdown
 from tools.repository_scope import (
     SOURCE_MANIFEST,
     RepositoryScopeError,
@@ -74,6 +84,12 @@ SOURCE_SHA256 = "cc879bf3ddcdbafb852f73243f9649c6c93a8aa6c556f90bf8f3efda37f41d7
 CLOSED_AT_SOURCE: frozenset[str] = frozenset()
 SOURCE_URL = f"https://github.com/ktogias/gnostoa/issues/325#{SOURCE_COMMENT}"
 RULEBOOK_INDEX = "knowledge/assessments/supervisor-rulebook-index.md"
+MANIFEST_COLUMNS = ("Rule", "Status", "Source notes")
+PILOT_RECORD = re.compile(
+    r"https://github\.com/ktogias/gnostoa/issues/325#issuecomment-[0-9]+"
+)
+WORD = re.compile(r"\w")
+NOTE_SEPARATOR = re.compile(r"[;,]")
 RECORD = "`knowledge/failure-modes/container-first-verification-routing-bypass.md`"
 CLOSED = frozenset({"1"})
 NOTE = "close-lessons-with-a-guard"
@@ -141,6 +157,72 @@ def _id_problems(ids: list[str]) -> list[str]:
     return problems
 
 
+@dataclass(frozen=True)
+class _Evidence:
+    """What a row's cells are checked against: the repository root and its tracked
+    set, the ids the source has closed, the note names of the rulebook manifest,
+    and the document's link reference definitions."""
+
+    root: Path
+    tracked: frozenset[str]
+    closed_at_source: frozenset[str]
+    notes: frozenset[str]
+    definitions: dict[str, Any]
+
+
+def _link_definitions(markdown: str) -> dict[str, Any]:
+    """The document's link reference definitions, in the parser's environment, so
+    that a reference-style link in a cell resolves to its destination."""
+
+    definitions: dict[str, Any] = {}
+    MarkdownIt("commonmark").enable("table").parse(markdown, definitions)
+    return definitions
+
+
+def _inline_links(text: str, definitions: dict[str, Any]) -> tuple[list[str], str]:
+    """A cell's inline Markdown, read by the parser: the destination of every link,
+    inline or reference-style, and the cell's text outside its links."""
+
+    tokens = MarkdownIt("commonmark").parseInline(text, dict(definitions))
+    targets: list[str] = []
+    outside: list[str] = []
+    depth = 0
+    for child in (child for token in tokens for child in token.children or []):
+        if child.type == "link_open":
+            targets.append(str(child.attrs["href"]))
+            depth += 1
+        elif child.type == "link_close":
+            depth -= 1
+        elif depth == 0:
+            outside.append(child.content)
+    return targets, "".join(outside)
+
+
+def _link_targets(text: str, definitions: dict[str, Any]) -> list[str]:
+    """The destination of every link in a cell; a link's text counts for
+    nothing."""
+
+    return _inline_links(text, definitions)[0]
+
+
+def _manifest_notes(root: Path) -> frozenset[str]:
+    """The memory note names the rulebook manifest lists; none when it cannot be
+    read."""
+
+    try:
+        text = (root / RULEBOOK_INDEX).read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return frozenset()
+    return frozenset(
+        name.strip()
+        for table in _tables(text)
+        if tuple(table[0]) == MANIFEST_COLUMNS
+        for row in table[1:]
+        if len(row) == len(MANIFEST_COLUMNS)
+        for name in row[2].split(",")
+    )
+
+
 def _tracked(root: Path) -> tuple[frozenset[str], list[str]]:
     """The repository's tracked paths as `candidate_paths` reads them: the Git
     index, or the packaged manifest where there is no `.git`. When neither can be
@@ -200,6 +282,29 @@ def _guard_problems(
     ]
 
 
+def _knowledge_problem(path: str, root: Path) -> str | None:
+    """Why a tracked regular file is not a record of the knowledge bundle, or None.
+    The bundle's own reader parses it: a record is a Markdown file under
+    knowledge/, not an index or a log, whose frontmatter carries a
+    project-knowledge id. Its language is the project's rule for every record and
+    a reviewer's check; this test does not judge it."""
+
+    parts = path.split("/")
+    if (
+        parts[0] != "knowledge"
+        or parts[-1] in RESERVED_NAMES
+        or parts[-1][-3:] != ".md"
+    ):
+        return "is not a knowledge record"
+    try:
+        document = parse_markdown(root / path, root)
+    except ValueError:  # malformed frontmatter, or bytes that are not UTF-8
+        return "is not a knowledge record"
+    if document.concept_id is None:
+        return "is not a knowledge record"
+    return None
+
+
 def _record_problem(path: str, tracked: frozenset[str], root: Path) -> str | None:
     """Why a cited path is not a tracked Gnostoa knowledge record other than this
     ledger, or None."""
@@ -207,8 +312,8 @@ def _record_problem(path: str, tracked: frozenset[str], root: Path) -> str | Non
     problem = _path_problem(path, tracked, root)
     if problem is None and path == LEDGER_PATH:
         problem = "is this ledger"
-    elif problem is None and path.split("/")[0] != "knowledge":
-        problem = "is not a knowledge record"
+    elif problem is None:
+        problem = _knowledge_problem(path, root)
     return problem
 
 
@@ -229,16 +334,46 @@ def _record_problems(
     ]
 
 
-def _closure_problems(
-    ident: str,
-    fields: dict[str, str],
-    tracked: frozenset[str],
-    root: Path,
-    closed_at_source: frozenset[str],
+def _pilot_problems(
+    ident: str, reference: str, definitions: dict[str, Any]
 ) -> list[str]:
-    """Closed needs a guard reference, a live guard, an English record that is a
-    tracked knowledge record other than this ledger, a memory note, and the
-    source's own closure as the pinned witness records it."""
+    """A Closed row's live-pilot guard names its guard beside the label and links
+    at least one #325 pilot record. Whether that record shows the guard live is a
+    reviewer's check, so this stays the weaker witness."""
+
+    problems = []
+    targets, outside = _inline_links(reference, definitions)
+    if not WORD.search(outside.replace(PILOT_LABEL, "")):
+        problems.append(
+            f"row {ident}: a closed live-pilot guard names no guard beside its label"
+        )
+    if not any(PILOT_RECORD.fullmatch(target) for target in targets):
+        problems.append(
+            f"row {ident}: a closed live-pilot guard links no #325 pilot record"
+        )
+    return problems
+
+
+def _note_problems(ident: str, note: str, notes: frozenset[str]) -> list[str]:
+    """Each memory note a Closed row names is one the rulebook manifest lists."""
+
+    if note in ABSENT:
+        return []
+    return [
+        f"row {ident}: memory note {name!r} is not in the rulebook manifest"
+        for name in (part.strip() for part in NOTE_SEPARATOR.split(note))
+        if name not in notes
+    ]
+
+
+def _closure_problems(
+    ident: str, fields: dict[str, str], evidence: _Evidence
+) -> list[str]:
+    """Closed needs a guard reference, a live guard (a labelled pilot guard also
+    names the guard and links its #325 pilot record), an English record that is a
+    tracked knowledge record other than this ledger, memory notes the
+    rulebook manifest lists, and the source's own closure as the pinned witness
+    records it."""
 
     if fields["Status"] != "Closed":
         return []
@@ -247,22 +382,23 @@ def _closure_problems(
         for name in ("Guard reference", "Memory note")
         if fields[name] in ABSENT
     ]
-    if fields["Guard state"] not in LIVE_GUARDS:
-        problems.append(
-            f"row {ident}: closed without a live guard ({fields['Guard state']})"
+    state, reference = fields["Guard state"], fields["Guard reference"]
+    if state not in LIVE_GUARDS:
+        problems.append(f"row {ident}: closed without a live guard ({state})")
+    elif state == "live-pilot" and PILOT_LABEL in reference:
+        problems.extend(_pilot_problems(ident, reference, evidence.definitions))
+    problems.extend(
+        _record_problems(
+            ident, fields["English record"], evidence.tracked, evidence.root
         )
-    problems.extend(_record_problems(ident, fields["English record"], tracked, root))
-    if ident not in closed_at_source:
+    )
+    problems.extend(_note_problems(ident, fields["Memory note"], evidence.notes))
+    if ident not in evidence.closed_at_source:
         problems.append(f"row {ident}: closed here but not closed at source")
     return problems
 
 
-def _row_problems(
-    fields: dict[str, str],
-    tracked: frozenset[str],
-    root: Path,
-    closed_at_source: frozenset[str],
-) -> list[str]:
+def _row_problems(fields: dict[str, str], evidence: _Evidence) -> list[str]:
     """One ledger row against the vocabularies, the guard rules and the closure
     rule."""
 
@@ -281,8 +417,8 @@ def _row_problems(
             f"row {ident}: a liveness firing names no 'Liveness episode: <id>'"
         )
     if fields["Guard state"] in GUARD_STATES:
-        problems.extend(_guard_problems(ident, fields, tracked, root))
-    problems.extend(_closure_problems(ident, fields, tracked, root, closed_at_source))
+        problems.extend(_guard_problems(ident, fields, evidence.tracked, evidence.root))
+    problems.extend(_closure_problems(ident, fields, evidence))
     return problems
 
 
@@ -301,26 +437,37 @@ def ledger_problems(
         return [*problems, f"{len(ledgers)} tables carry the ledger header, not 1"]
     tracked, unreadable = _tracked(root)
     problems.extend(unreadable)
+    evidence = _Evidence(
+        root,
+        tracked,
+        closed_at_source,
+        _manifest_notes(root),
+        _link_definitions(markdown),
+    )
     rows = [row for row in ledgers[0][1:] if len(row) == len(COLUMNS)]
     problems.extend(_id_problems([row[0] for row in rows]))
     for row in rows:
         fields = dict(zip(COLUMNS, row, strict=True))
-        problems.extend(_row_problems(fields, tracked, root, closed_at_source))
+        problems.extend(_row_problems(fields, evidence))
     return problems
 
 
 def source_witness_problems(markdown: str, digest: str = SOURCE_SHA256) -> list[str]:
     """The ledger's derivation table cites exactly one digest for the source
-    record, and it is the digest this test pins. This checks the ledger against a
-    pinned witness, not the live source comment: a source edit needs a reviewed
-    change to the ledger, `SOURCE_SHA256` and `CLOSED_AT_SOURCE` together."""
+    record, and it is the digest this test pins. A row counts only when its Record
+    cell links to the source record itself: the comment id in the cell's text, or
+    in an unrelated link, does not. This checks the ledger against a pinned
+    witness, not the live source comment: a source edit needs a reviewed change to
+    the ledger, `SOURCE_SHA256` and `CLOSED_AT_SOURCE` together."""
 
+    definitions = _link_definitions(markdown)
     cited = [
         row[3].strip("`")
         for table in _tables(markdown)
         if tuple(table[0]) == SOURCE_COLUMNS
         for row in table[1:]
-        if len(row) == len(SOURCE_COLUMNS) and SOURCE_COMMENT in row[0]
+        if len(row) == len(SOURCE_COLUMNS)
+        and _link_targets(row[0], definitions) == [SOURCE_URL]
     ]
     if cited == [digest]:
         return []
