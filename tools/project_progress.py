@@ -304,13 +304,18 @@ def source_changes(
     current = {r.pointer: r for r in fresh}
     for before in captured:
         after = current.get(before.pointer)
-        if after is None or not after.current or not after.complete:
+        if (
+            not before.current
+            or not before.complete
+            or after is None
+            or not after.current
+            or not after.complete
+        ):
             return "SOURCE_PENDING", before.pointer
-        attributes = dict(after.attributes)
         if (
             before.digest != after.digest
             or before.ref != after.ref
-            or any(attributes.get(k) != v for k, v in before.attributes)
+            or dict(before.attributes) != dict(after.attributes)
         ):
             return "REPAIR_PENDING", before.pointer
     return None

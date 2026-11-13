@@ -266,3 +266,91 @@ exact-head human merge review remain open, so the canonical PR is a draft.
 Trusted-parent candidate preparation, full repository verification, final tree,
 publication head and provider readback are recorded with the exact candidate in
 the PR after they occur; this document does not predict their success.
+
+
+## Review correction scope and chronology
+
+The first prepared/published candidate was113e60a0d8756a3bf5c7d26e7b0834cf1e7b6668,
+protected base94e6e98b170fb9a73e63e37a85975b5bd2ed6391. Its Development Container
+policy, security-fast, fast, regression, smoke and extended checks passed; extended
+ran3559 tests with21 conditional skips and84.90% coverage. The exact runtime full
+self-check passed3559 tests with75 environment-conditional skips. These results
+remain historical evidence for that candidate and do not qualify later changes.
+
+Source-bound external review identified the same selected progress invariant at a
+missing migration boundary: resolving an unbound obligation into an existing
+DISCHARGED owner must rearm it. Reopen-only is insufficient across duplicate facts,
+cap holds and restart. The existing source ledger therefore carries one truthful
+binding-resolution fact, keyed by the old obligation identity. The existing
+migrated_from history plus that fact proves adoption, so replay completes its
+source tombstone without recopying requests or resetting budgets. The existing
+atomic persistence pass saves the adopted owner before its MIGRATED tombstone.
+No new store, queue, transaction journal, admission rule or operation identity is
+introduced. This extends the same source/rearm and atomic-storage responsibilities
+from the original exact-base lineage; it does not establish a second owner.
+
+Concrete pre-change RED also covers missing captured evidence, tracked authority
+attribute additions and malformed retained CURRENT metadata. Native/provider
+normalization requires affirmative body completeness, a nonempty opaque digest
+and finite numeric observation time; boolean citations cannot alias numeric time.
+Missing captured evidence is pending, never silently dropped or repaired by a
+fresh source presented as old proof. Full tracked-attribute changes require renewed
+judgment. The established reader's absence-of-_coverage sentinel still means no
+references were omitted; that protocol and conservative clock-rollback budgets
+remain unchanged.
+
+The isolated corrective core cut passed28 focused tests plus direct native egress
+control, Ruff and strict typing before primary integration. Its original RED,
+failed intermediate evidence and exact five-file receipt are retained separately.
+Full caller/consumer rebinding, additional test-typing dispositions and final
+candidate preparation are pending at this recorded step. The raw original incident
+fixture is preserved; any old synthetic positive control missing completeness
+metadata must acquire a new complete read through the existing reader rather than
+relabel historical evidence. Later exact-head evidence in the PR owns final results.
+Live caseI and human exact-head review remain open.
+
+
+## Corrective consumer verification
+
+The corrected private production modules are bound to these source digests:
+
+| Source | SHA-256 |
+| --- | --- |
+| tools/project_progress.py | 85c8e16bcd6cf810c4fef5c2b6ac2d862c8cf54d81c797beabf996055850a934 |
+| tools/project_progress_native.py | 67ad3452e515021aa8649cb0a5010bb2e42a56b9553fe9edd8c59bcb74db3c7c |
+| tools/project_progress_github.py | 65ac67d709924d871e1a142ace7ed172f36fe8a3b9db3f6fff45604bf2f21ba5 |
+
+The exact isolated core plus three canonical test modules passed28 test methods
+on container and host. Strict typing of all six modules and Ruff passed. Test
+strengthening covers distinct opaque scope/target evidence, actual HOLD actions
+and foreign PR/head rejection. Failed pre-change evidence is preserved.
+
+The newly rebound actual pilot consumer passed122 focused tests and194 relevant
+legacy tests, both with unchanged exact inputs and zero vendor CLI guard calls.
+The focused set includes the previous100 scenarios, nine runtime ownership/origin
+controls, four passive-publication cases, seven migration/replay/crash cases and
+two explicit old-source/new-read controls. These executions use the corrected
+canonical module bytes above and preserve the existing protected delivery owner.
+The host-only temporary path binding remains development evidence, requiring a
+separately sealed protected-artifact binding before production activation.
+
+The raw original incident fixture remains unchanged. Strict-source RED first
+exposed six expected failures among14 cases because old synthetic positive
+controls supplied incomplete retained metadata. Positive controls now obtain a
+NEW complete bounded snapshot through the existing authenticated-reader boundary
+with fake provider bytes; they do not mark the old source complete. The retained
+incomplete read still requires REFRESH and cannot justify QUIESCENT.
+
+A real replay cut also required caller correction: completing an already-adopted
+source tombstone does not make unchanged destination input new. The native caller
+compares its existing progress fingerprint before and after migration rather
+than marking every replay touched. The current typed answer can therefore account
+its actual owner once; new binding input still rearms and survives a cap/restart.
+All persistence and ingress effects retain their original owners.
+
+All57 captured first-head review findings have separate source attribution,
+per-ID disposition and evidence. Accepted corrections and justified caller-based
+declines are not interchangeable with a reviewer's approval. Final successor
+head, preparation, checks and any remaining review observations are recorded in
+the PR. Live caseI remains NOT PROVEN under the real daily Router cap; no offline
+or prototype result is relabeled as that exit evidence.

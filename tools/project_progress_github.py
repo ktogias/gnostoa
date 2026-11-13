@@ -8,6 +8,7 @@ explicit Any boundary; the neutral owner receives typed opaque references/reads.
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -61,13 +62,21 @@ def observation(value: Any) -> Observation:
 
 
 def read_source(pointer: str, held: Mapping[str, Any]) -> Read:
+    digest = held.get("body_sha256")
+    observed = held.get("observed_at")
+    valid_observed = type(observed) is int or (
+        isinstance(observed, float) and math.isfinite(observed)
+    )
     return Read(
         pointer,
         read_ref(pointer, held),
-        str(held.get("body_sha256") or ""),
-        observation(held.get("observed_at")),
-        held.get("coverage") == "CURRENT",
-        held.get("body_complete") is not False,
+        digest if isinstance(digest, str) else "",
+        observation(observed),
+        held.get("coverage") == "CURRENT"
+        and isinstance(digest, str)
+        and bool(digest)
+        and valid_observed,
+        held.get("body_complete") is True,
         tuple(
             (k, json.dumps(held[k], sort_keys=True)) for k in _ATTRIBUTES if k in held
         ),
@@ -84,6 +93,7 @@ def citations(evidence: Any) -> tuple[tuple[Citation, ...], bool]:
             or set(entry) != {"source", "digest", "observed_at"}
             or not isinstance(entry["source"], str)
             or not isinstance(entry["digest"], str)
+            or type(entry["observed_at"]) is bool
         ):
             return (), False
         result.append(

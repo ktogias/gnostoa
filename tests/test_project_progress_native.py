@@ -12,12 +12,12 @@ from tools import project_progress_native as n
 class NativeProgressTests(unittest.TestCase):
     def setUp(self) -> None:
         self.now = 1_800_000_000.0
-        self.scope = {"kind": "work_item", "ref": "issue:496"}
+        self.scope: n.Native = {"kind": "work_item", "ref": "issue:496"}
         self.row = n.progress_row(
             self.scope, [{"kind": "operation", "delivery_key": "old-step"}]
         )
-        self.frontier = {"coverage": "COMPLETE", "rows": [self.row]}
-        self.reads = {
+        self.frontier: n.Native = {"coverage": "COMPLETE", "rows": [self.row]}
+        self.reads: dict[str, n.Native] = {
             f"https://github.com/ktogias/gnostoa/issues/{number}": {
                 "kind": "work_item",
                 "number": number,
@@ -28,14 +28,14 @@ class NativeProgressTests(unittest.TestCase):
             }
             for number in (496, 325)
         }
-        self.job = {
+        self.job: n.Native = {
             "authority_context": self.reads,
             "continuation_contract": {"frontier_sha256": "lineage"},
         }
-        self.decoded = {
+        self.decoded: n.Native = {
             "assignments": [{"operation": {"operation_target": "issue:325"}}]
         }
-        self.claim = {
+        self.claim: n.Native = {
             "id": self.row["id"],
             "disposition": "ASSIGNED",
             "assignment_index": 0,
@@ -45,7 +45,7 @@ class NativeProgressTests(unittest.TestCase):
             ],
         }
 
-    def validate(self, claim: dict | None = None) -> None:
+    def validate(self, claim: n.Native | None = None) -> None:
         value = self.claim if claim is None else claim
         n.validate_progress(
             self.job, self.frontier, self.row, value, self.decoded, [value]
@@ -92,18 +92,18 @@ class NativeProgressTests(unittest.TestCase):
         original = self.reads[pointers[0]]
         original["source_binding_sha256"] = "original-provider-object"
         fresh[pointers[0]]["source_binding_sha256"] = "changed-provider-object"
-        self.assertEqual(
-            n.source_changes(self.reads, fresh, pointers)[0], "REPAIR_PENDING"
-        )
+        changed = n.source_changes(self.reads, fresh, pointers)
+        assert changed is not None
+        self.assertEqual(changed[0], "REPAIR_PENDING")
         fresh.pop(pointers[0])
-        self.assertEqual(
-            n.source_changes(self.reads, fresh, pointers)[0], "SOURCE_PENDING"
-        )
+        missing = n.source_changes(self.reads, fresh, pointers)
+        assert missing is not None
+        self.assertEqual(missing[0], "SOURCE_PENDING")
 
     def test_migration_keeps_tombstone_request_identity_and_budget_attribution(
         self,
     ) -> None:
-        store = {}
+        store: n.Native = {}
         unbound, _ = n.open_obligation(
             store, {"kind": "work_item", "ref": None}, [], "old", self.now
         )
@@ -127,7 +127,7 @@ class NativeProgressTests(unittest.TestCase):
         self.assertIsNone(n.request_budget(store, bound, self.now + 10, daily_cap=2))
 
     def test_migration_retains_each_overlapping_request_record(self) -> None:
-        store = {}
+        store: n.Native = {}
         old, _ = n.open_obligation(
             store, {"kind": "work_item", "ref": None}, [], "old", self.now
         )
@@ -166,7 +166,7 @@ class NativeProgressTests(unittest.TestCase):
 
     def test_exact_owner_review_resume_needs_new_native_time_and_subject(self) -> None:
         head = "a" * 40
-        row = {
+        row: n.Native = {
             "id": "gate",
             "kind": "HUMAN_MERGE",
             "source_kind": "canonical_criterion",
@@ -174,7 +174,7 @@ class NativeProgressTests(unittest.TestCase):
             "source_sha256": "captured",
             "canonical": {"criterion": "M16"},
         }
-        claim = {
+        claim: n.Native = {
             "id": "gate",
             "disposition": "WAITING",
             "owner": "human:ktogias",
@@ -183,8 +183,9 @@ class NativeProgressTests(unittest.TestCase):
         }
         gate = n.gate_binding({}, row, claim)
         self.assertIsNotNone(gate)
+        assert gate is not None
         gate["at"] = self.now
-        record = {
+        record: n.Native = {
             "kind": "review",
             "number": 600,
             "material_id": "one-material",
@@ -198,7 +199,7 @@ class NativeProgressTests(unittest.TestCase):
                 }
             },
         }
-        fact = {"head": head, "provider_id": 90}
+        fact: n.Native = {"head": head, "provider_id": 90}
         self.assertEqual(
             n.gate_resume(gate, record, fact, self.now + 2, owner_review=True),
             "OWNER_REVIEW",
@@ -213,6 +214,20 @@ class NativeProgressTests(unittest.TestCase):
                 seen=["one-material"],
             )
         )
+        for mismatch in ("number", "head"):
+            wrong_record = copy.deepcopy(record)
+            wrong_fact = copy.deepcopy(fact)
+            if mismatch == "number":
+                wrong_record["number"] = 601
+            else:
+                wrong_record["payload"]["item"]["commit_id"] = "b" * 40
+                wrong_fact["head"] = "b" * 40
+            with self.subTest(mismatch=mismatch):
+                self.assertIsNone(
+                    n.gate_resume(
+                        gate, wrong_record, wrong_fact, self.now + 2, owner_review=True
+                    )
+                )
         record["payload"]["item"]["submitted_at"] = datetime.fromtimestamp(
             self.now - 1, UTC
         ).isoformat()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from tools.agent_review_model import Ref
@@ -58,27 +59,25 @@ class ProgressOwnerTests(unittest.TestCase):
         )
 
     def test_pending_refresh_and_actual_source_owner_have_no_added_grace(self) -> None:
-        state = dict(
+        state = p.Transition(
             has_request=True, changed=True, fate="HOLD", reason="PENDING_INGRESS"
         )
+        self.assertEqual(p.decide_transition(state).action, "REFRESH_PENDING")
         self.assertEqual(
-            p.decide_transition(p.Transition(**state)).action, "REFRESH_PENDING"
-        )
-        self.assertEqual(
-            p.decide_transition(p.Transition(**state, pending_refreshed=True)).action,
+            p.decide_transition(replace(state, pending_refreshed=True)).action,
             "REFRESHED",
         )
         self.assertEqual(
-            p.decide_transition(p.Transition(**state, pending_refreshed=False)).action,
+            p.decide_transition(replace(state, pending_refreshed=False)).action,
             "REQUEST",
         )
+        source_hold = p.decide_transition(p.Transition(source_open=True))
         self.assertEqual(
-            p.decide_transition(p.Transition(source_open=True)).reason,
-            "SOURCE_OWNER_OPEN",
+            (source_hold.action, source_hold.reason), ("HOLD", "SOURCE_OWNER_OPEN")
         )
+        return_hold = p.decide_transition(p.Transition(return_open=True))
         self.assertEqual(
-            p.decide_transition(p.Transition(return_open=True)).reason,
-            "SOURCE_RETURN_OPEN",
+            (return_hold.action, return_hold.reason), ("HOLD", "SOURCE_RETURN_OPEN")
         )
 
     def test_rolling_identity_and_daily_budget_preserve_real_reset(self) -> None:
@@ -89,7 +88,8 @@ class ProgressOwnerTests(unittest.TestCase):
         carried = tuple(p.RequestStamp(str(n), now - n, True) for n in (1, 2, 3))
         self.assertIsNone(p.request_budget((), carried, now, daily_cap=1))
 
-    def evaluation(self) -> p.Evaluation:
+    @staticmethod
+    def evaluation() -> p.Evaluation:
         ref = Ref("ticket", "opaque-A")
         read = p.Read("source-A", ref, "digest-A", 20.0, True, True)
         return p.Evaluation(ref, (read,), (ref,), (), True, True)
@@ -102,6 +102,36 @@ class ProgressOwnerTests(unittest.TestCase):
             assignment_index=0,
         )
         p.validate_result(evaluation, result)
+        scope = Ref("ticket", "scope/opaque-A")
+        target = Ref("ticket", "target/opaque-B")
+        distinct = p.Evaluation(
+            scope,
+            (
+                p.Read("scope-source", scope, "scope-digest", 20.0, True, True),
+                p.Read("target-source", target, "target-digest", 20.0, True, True),
+            ),
+            (target,),
+            (),
+            True,
+            True,
+        )
+        bound = p.Result(
+            "ASSIGNED",
+            assignment_index=0,
+            evidence=(
+                p.Citation("scope-source", "scope-digest", 20.0),
+                p.Citation("target-source", "target-digest", 20.0),
+            ),
+        )
+        p.validate_result(distinct, bound)
+        for missing in ("scope", "target"):
+            # The remaining citation is valid and captured; only this binding is absent.
+            evidence = bound.evidence[1:] if missing == "scope" else bound.evidence[:1]
+            with (
+                self.subTest(missing=missing),
+                self.assertRaisesRegex(p.ProgressError, "scope_binding"),
+            ):
+                p.validate_result(distinct, replace(bound, evidence=evidence))
         with self.assertRaisesRegex(p.ProgressError, "scope_binding"):
             p.validate_result(
                 p.Evaluation(evaluation.scope, (), evaluation.targets, (), True, True),
@@ -131,9 +161,13 @@ class ProgressOwnerTests(unittest.TestCase):
     def test_changed_or_missing_egress_source_cannot_reuse_the_plan(self) -> None:
         before = self.evaluation().reads[0]
         self.assertIsNone(p.source_changes((before,), (before,)))
-        self.assertEqual(p.source_changes((before,), ())[0], "SOURCE_PENDING")
+        missing = p.source_changes((before,), ())
+        assert missing is not None
+        self.assertEqual(missing[0], "SOURCE_PENDING")
         changed = p.Read("source-A", before.ref, "other", 30.0, True, True)
-        self.assertEqual(p.source_changes((before,), (changed,))[0], "REPAIR_PENDING")
+        difference = p.source_changes((before,), (changed,))
+        assert difference is not None
+        self.assertEqual(difference[0], "REPAIR_PENDING")
 
     def test_core_has_no_host_provider_or_executor_dependencies(self) -> None:
         source = (

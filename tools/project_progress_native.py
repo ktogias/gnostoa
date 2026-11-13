@@ -144,27 +144,45 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
     oid = scope_identity(scope)
     bound = obligations.get(oid) or new_obligation(oid, scope, now)
     obligations[oid] = bound
+    binding = {
+        "kind": "scope_binding",
+        "key": "binding-resolved:" + unbound["id"],
+        "from": unbound["id"],
+        "scope_ref": scope.get("ref"),
+    }
+    carried_before = unbound["id"] in bound.get("migrated_from", [])
+    if carried_before and binding in bound["sources"]:
+        # The bound record survived a crash before the old tombstone. Its input
+        # and complete request history are already durable; finish only the tombstone.
+        unbound.update(status="MIGRATED", superseded_by=oid, migrated_at=_iso(now))
+        return bound
     created, _ = p.opening(str(bound["status"]), False)
     if created:
         bound["status"] = "OPEN"
     merge_sources(bound, unbound["sources"])
     _merge_chains(bound, unbound.get("chains") or {})
-    carried = [dict(r, carried_from=unbound["id"]) for r in unbound["requests"]]
-    # Native serialization retains every original request field and stable key.
-    ordered = p.migrate_requests(
-        tuple(_stamp(r) for r in carried), tuple(_stamp(r) for r in bound["requests"])
-    )
-    remaining = [(_stamp(r), r) for r in carried + bound["requests"]]
-    preserved = []
-    for stamp in ordered:
-        index = next(
-            i for i, (candidate, _) in enumerate(remaining) if candidate == stamp
+    if not carried_before:
+        carried = [dict(r, carried_from=unbound["id"]) for r in unbound["requests"]]
+        # Native serialization retains every original request field and stable key.
+        ordered = p.migrate_requests(
+            tuple(_stamp(r) for r in carried),
+            tuple(_stamp(r) for r in bound["requests"]),
         )
-        _, raw = remaining.pop(index)
-        preserved.append(raw)
-    bound["requests"] = preserved
-    bound.setdefault("migrated_from", []).append(unbound["id"])
-    bound["rearmed_at"] = _iso(now)
+        remaining = [(_stamp(r), r) for r in carried + bound["requests"]]
+        preserved = []
+        for stamp in ordered:
+            index = next(
+                i for i, (candidate, _) in enumerate(remaining) if candidate == stamp
+            )
+            _, raw = remaining.pop(index)
+            preserved.append(raw)
+        bound["requests"] = preserved
+        bound.setdefault("migrated_from", []).append(unbound["id"])
+    if unbound["status"] == "OPEN":
+        merge_sources(bound, [binding])
+        reopen(bound, now, "BINDING_RESOLVED")
+    else:
+        bound["rearmed_at"] = _iso(now)
     unbound.update(status="MIGRATED", superseded_by=oid, migrated_at=_iso(now))
     return bound
 
@@ -345,6 +363,12 @@ def source_changes(
     held: Native, fresh: Native, pointers: Iterable[str]
 ) -> tuple[str, str] | None:
     sources = tuple(pointers)
+    for pointer in sources:
+        if pointer not in held:
+            return (
+                "SOURCE_PENDING",
+                "captured source is missing or incomplete: " + pointer,
+            )
     result = p.source_changes(
         tuple(provider.read_source(k, held[k]) for k in sources),
         tuple(provider.read_source(k, fresh[k]) for k in sources if k in fresh),
