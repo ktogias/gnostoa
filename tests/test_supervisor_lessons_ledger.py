@@ -1048,5 +1048,53 @@ class LedgerEnglishRecordTests(unittest.TestCase):
                 )
 
 
+class LedgerManifestNoteTests(unittest.TestCase):
+    """The rulebook manifest's Source notes cell splits into names as a row's
+    Memory note cell does, with `NOTE_SEPARATOR`, on commas and on semicolons
+    (Revix on #497, 4562745388). Each case runs against a manifest cell in each
+    form. The checkout here has no `.git`, so its tracked set is its packaged
+    manifest."""
+
+    maxDiff = None
+    CELLS = ("note-a, note-b", "note-a; note-b")
+
+    def setUp(self) -> None:
+        parent = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.root = _knowledge_repository(parent)
+
+    def problems(self, cell: str, status: str, note: str) -> list[str]:
+        (self.root / RULEBOOK_INDEX).write_text(
+            "| Rule | Status | Source notes |\n|---|---|---|\n"
+            f"| R-GATE-04 | active | {cell} |\n",
+            encoding="utf-8",
+        )
+        row = _row(
+            Status=status,
+            English_record="`knowledge/failure-modes/a-lesson.md`",
+            Memory_note=note,
+        )
+        return ledger_problems(_table(row), self.root, CLOSED)
+
+    def test_a_closed_row_may_name_each_note_of_the_cell(self) -> None:
+        for cell in self.CELLS:
+            for note in ("note-a", "note-b", "note-b; note-a", "note-b, note-a"):
+                with self.subTest(cell=cell, note=note):
+                    self.assertEqual(self.problems(cell, "Closed", note), [])
+
+    def test_a_closed_row_naming_a_note_the_cell_lacks_is_refused(self) -> None:
+        unknown = "row 1: memory note 'note-c' is not in the rulebook manifest"
+        for cell in self.CELLS:
+            for note in ("note-c", "note-a; note-c", "note-a, note-c"):
+                with self.subTest(cell=cell, note=note):
+                    self.assertEqual(self.problems(cell, "Closed", note), [unknown])
+
+    def test_an_open_row_is_not_held_to_the_manifest(self) -> None:
+        # The control: the manifest check is part of closure only.
+        for cell in self.CELLS:
+            for note in ("note-a", "note-c"):
+                with self.subTest(cell=cell, note=note):
+                    self.assertEqual(self.problems(cell, "Open", note), [])
+
+
 if __name__ == "__main__":
     unittest.main()
