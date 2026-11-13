@@ -206,8 +206,8 @@ def _link_targets(text: str, definitions: dict[str, Any]) -> list[str]:
 
 
 def _manifest_notes(root: Path) -> frozenset[str]:
-    """The memory note names the rulebook manifest lists; none when it cannot be
-    read."""
+    """The memory note names the rulebook manifest lists, its cells split as a
+    row's Memory note cell is; none when it cannot be read."""
 
     try:
         text = (root / RULEBOOK_INDEX).read_text(encoding="utf-8")
@@ -219,7 +219,7 @@ def _manifest_notes(root: Path) -> frozenset[str]:
         if tuple(table[0]) == MANIFEST_COLUMNS
         for row in table[1:]
         if len(row) == len(MANIFEST_COLUMNS)
-        for name in row[2].split(",")
+        for name in NOTE_SEPARATOR.split(row[2])
     )
 
 
