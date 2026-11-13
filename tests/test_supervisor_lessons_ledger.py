@@ -81,7 +81,8 @@ UNSAFE_SEGMENTS = frozenset({"", ".", "..", ".git"})
 SOURCE_COLUMNS = ("Record", "Posted", "Body bytes", "SHA-256 of the body")
 SOURCE_COMMENT = "issuecomment-6828048375"
 SOURCE_SHA256 = "cc879bf3ddcdbafb852f73243f9649c6c93a8aa6c556f90bf8f3efda37f41d76"  # pragma: allowlist secret -- public digest of the source record's body
-CLOSED_AT_SOURCE: frozenset[str] = frozenset()
+# The ids whose status cell the source record labels Closed: rows 11 and 13.
+CLOSED_AT_SOURCE: frozenset[str] = frozenset({"11", "13"})
 SOURCE_URL = f"https://github.com/ktogias/gnostoa/issues/325#{SOURCE_COMMENT}"
 RULEBOOK_INDEX = "knowledge/assessments/supervisor-rulebook-index.md"
 MANIFEST_COLUMNS = ("Rule", "Status", "Source notes")
