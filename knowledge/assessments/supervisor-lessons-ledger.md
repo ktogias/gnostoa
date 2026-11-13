@@ -22,6 +22,12 @@ sources:
   - id: router-acceptance-dispatch
     resource: https://github.com/ktogias/gnostoa/issues/325#issuecomment-6830817025
     title: "Router dispatch: apply the PAO ledger acceptance cases"
+  - id: closure-evidence-successor
+    resource: https://github.com/ktogias/gnostoa/issues/496
+    title: "Harden supervisor lessons-ledger closure evidence before any Closed row (#495 successor)"
+  - id: router-closure-guard-dispatch
+    resource: https://github.com/ktogias/gnostoa/issues/15#issuecomment-6836650888
+    title: "Router dispatch: the admitted #496 successor, closure guard tests and prose"
 x-project-knowledge:
   id: kit.assessment.supervisor-lessons-ledger
   owners:
@@ -57,7 +63,7 @@ The digest identifies the source record's body as the GitHub REST API returned i
 - **One table (P1, P7).** The record's four tables, with four, five and six columns, become one table with the twelve columns defined below. A test, `tests/test_supervisor_lessons_ledger.py`, fails when a row has more or fewer cells than the header.
 - **Row 26 (P4).** The record's correction row 26-corr is merged into row 26 as revision 1. Row 26's original cause and fix are marked superseded, and one open item remains.
 - **Status (P2, P3).** Each row's status is Open or Closed, with the guard state in its own column. The record's status words (Live, In progress, Staging, Mitigated and the like) are not copied. Rows 11 and 13, Closed in the record, are Open here: no memory note recording their lessons is cited.
-- **Evidence (P2).** Each row cites its guard, its English record and its memory note.
+- **Evidence (P2).** Each row has a column for its guard, its English record and its memory note.
 - **Pilot guards (P5).** Every guard outside this repository is labelled "pilot tooling (not in this repository)". No path under `publish-gate/`, and none of the pilot modules the rows name, is in this repository.
 - **Privacy (P6).** Row 18's two host interpreter version numbers read "a patch release". Row 22 no longer names the affected accounts, their ages or the account owner who objected. Rows 25, 27 and 31 give the Owner's quota figures in generic words. These follow the Owner's host-privacy direction of 2026-11-09.
 - **Revision notes (P7).** A correction stays on its row as a revision note in the Notes column. Each note names the edit, and the evidence where a later record changes a guard state.
@@ -76,7 +82,14 @@ The record's rule: a lesson counts as **closed** only when it has all three of:
 
 A lesson with memory alone stays **open**. The same rule is [R-GATE-04](supervisor-rulebook-evidence-gates.md) of the supervisor rulebook.
 
-This file applies the rule as a necessary condition. A row is Closed here only when its guard, English record and memory note are all cited and its guard state is not `none`, and the test above refuses any other Closed row. This file never closes a row that its record leaves open: a closure is made in the supervisor's record first. Every row is Open in this revision.
+This file applies the rule as a necessary condition. Its mechanical form is owned by the test `tests/test_supervisor_lessons_ledger.py`, which refuses any other Closed row; this section only states it. A row is Closed here only when all of these hold:
+
+1. **The source has closed it.** A closure is made in the supervisor's record first, and this file never closes a row that its record leaves open. The test pins the source record's body digest, the one in the table above, and the set of ids the source has closed: rows 11 and 13 in this revision. Neither is closure-admissible here, because neither cites a memory note or a qualifying knowledge record. It refuses a Closed row whose id is not in that set, and a digest in this file that differs from the pinned one. It reads that digest only from a row whose link leads to the source record itself; the comment id in a row's text does not count. This is a pinned witness, not a live source check: the test checks this file against the pinned values, not against the source comment, so a source edit needs a reviewed change to this file and the test together.
+2. **Its guard is live.** Its guard state is `live-pilot` or `live-repo`. A `staged` guard is lawful on an Open row but does not close one, and neither does `none`. A `live-pilot` guard's reference names the guard and links its #325 pilot record, as the Columns section says.
+3. **Its English record is in Gnostoa.** It cites a tracked Gnostoa knowledge record other than this file, as the Columns section defines it.
+4. **It cites its guard reference and its memory note.** Each memory note it names is in the manifest of the [rulebook index](supervisor-rulebook-index.md).
+
+Every row is Open in this revision.
 
 ## Columns
 
@@ -84,9 +97,9 @@ This file applies the rule as a necessary condition. A row is Closed here only w
 - **Kind:** `lesson`, `incident` or `liveness firing`. A liveness firing names its episode as "Liveness episode: <id>", the form the supervisor's liveness check looks for.
 - **Item, Timeline, Root cause, Fix and mechanical guard:** the record's text. A dash marks a cell that the record's table for that row did not have.
 - **Guard state:** how far the row's mechanical guard has got, as the record states it unless a revision note cites a later pilot record. `none`: no guard is built yet, only a candidate fix or an open decision. `staged`: a guard is being built or staged in a named pilot change. `live-pilot`: a guard is live in pilot or supervisor tooling, outside this repository. `live-repo`: a guard is in this repository, at a cited path. Where a row names several guards, the most advanced one is given.
-- **Guard reference:** where the guard lives. Pilot guards carry the label "pilot tooling (not in this repository)".
-- **English record:** the GitHub record of the row. Every row is in the source record; some also have a record of their own.
-- **Memory note:** the name of the supervisor memory note that records the lesson, as the rulebook manifest names notes, or "none cited".
+- **Guard reference:** where the guard lives. Pilot guards carry the label "pilot tooling (not in this repository)". Their paths are outside this repository, and the test does not check them against it. For a `live-pilot` guard the test checks that label on every row. On a Closed row it also requires the reference to name the guard beside the label and to link at least one #325 pilot record, inline or by a reference definition; whether that record shows the guard live is checked by a reviewer. That is a weaker witness than the `live-repo` check. A `live-repo` guard, whatever the row's status, cites each guard file by its repository path in backticks, and the test requires every cited path to be a tracked regular file: no absolute path, no `.`, `..` or `.git` segment, no directory and no symlink.
+- **English record:** a tracked Gnostoa knowledge record other than this file, cited by its repository path in backticks. The test requires a record of the knowledge bundle, as the bundle's reader parses it: a Markdown file under `knowledge/`, not an index or a log, whose frontmatter carries a project-knowledge id. Records are in English by the project's rule; the test does not check a record's language. GitHub links may appear as provenance, but they do not satisfy closure. In this revision the column holds GitHub links only: every row is in the source record, and some also have a record of their own on GitHub. No row cites a Gnostoa knowledge record yet.
+- **Memory note:** the name of the supervisor memory note that records the lesson, as the rulebook manifest names notes, or "none cited". Several names are separated by semicolons. On a Closed row the test requires every name to be in that manifest; an Open row may name a note newer than the manifest.
 - **Status:** `Open` or `Closed`.
 - **Notes:** revision notes, links to related failure modes, and the record's remarks that are not part of the guard.
 

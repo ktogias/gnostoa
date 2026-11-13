@@ -1,4 +1,5 @@
-"""The supervisor lessons ledger keeps one fixed table schema (#494, PR #495).
+"""The supervisor lessons ledger keeps one fixed table schema (#494, PR #495) and
+one closure rule that this test owns (#496).
 
 The PAO's acceptance cases for the ledger (#325 6830768656, routed by #325
 6830817025) found that GitHub Flavored Markdown drops every cell beyond a table's
@@ -8,21 +9,50 @@ ledger's own rule requires (P2), and the status words mixed progress with closur
 (P3). These tests read the record's raw table lines, split as GFM splits them, so
 a row wider than its header is counted rather than silently cut. They fail when a
 row's cell count differs from its header's, when a kind, guard state or status
-leaves its vocabulary, when an id repeats or is not a number, when a pilot guard
-lacks its label, or when a row is closed without its guard, English record and
+leaves its vocabulary, when an id repeats or is not a number, or when a pilot
+guard lacks its label.
+
+The Owner's review of PR #495 found the closure check latent but too weak (#496):
+it took any nonempty English record, accepted a `staged` guard, never checked the
+source, and passed a live-repo guard when any cited path existed on disk. So a
+live-repo guard, whatever the row's status, must cite only tracked regular files
+of this repository, read through `tools.repository_scope.candidate_paths`. A row
+is Closed only when the source has closed it, as the pinned witness below records,
+its guard is `live-pilot` or `live-repo`, its English record cites a tracked
+knowledge record other than the ledger, and it cites a guard reference and a
 memory note.
+
+The review of PR #497 (Sourcery, 5883695641) found four places where the check
+still took less than its rule asks. So a Closed row's English record must be a
+record of the knowledge bundle, not any file under knowledge/; its live-pilot guard
+must name the guard and link a #325 pilot record; each memory note it names must
+be in the rulebook manifest; and the source digest counts only in a row whose link
+leads to the source record itself.
 """
 
 from __future__ import annotations
 
 import re
+import stat
+import tempfile
 import unittest
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from markdown_it import MarkdownIt
 
+from tools.knowledge_common import RESERVED_NAMES, parse_markdown
+from tools.repository_scope import (
+    SOURCE_MANIFEST,
+    RepositoryScopeError,
+    candidate_paths,
+    scope_error_detail,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
-LEDGER = ROOT / "knowledge" / "assessments" / "supervisor-lessons-ledger.md"
+LEDGER_PATH = "knowledge/assessments/supervisor-lessons-ledger.md"
+LEDGER = ROOT / LEDGER_PATH
 COLUMNS = (
     "Id",
     "Kind",
@@ -39,6 +69,7 @@ COLUMNS = (
 )
 KINDS = frozenset({"lesson", "incident", "liveness firing"})
 GUARD_STATES = frozenset({"none", "staged", "live-pilot", "live-repo"})
+LIVE_GUARDS = frozenset({"live-pilot", "live-repo"})
 STATUSES = frozenset({"Open", "Closed"})
 ABSENT = frozenset({"", "—", "none", "none cited"})
 PILOT_LABEL = "pilot tooling (not in this repository)"
@@ -46,6 +77,27 @@ EPISODE = re.compile(r"Liveness episode: [0-9a-f]{16}\b")
 POSITIVE_ID = re.compile(r"[1-9][0-9]*")
 UNESCAPED_PIPE = re.compile(r"(?<!\\)\|")
 CODE_PATH = re.compile(r"`([^`\s]+/[^`\s]*)`")
+UNSAFE_SEGMENTS = frozenset({"", ".", "..", ".git"})
+SOURCE_COLUMNS = ("Record", "Posted", "Body bytes", "SHA-256 of the body")
+SOURCE_COMMENT = "issuecomment-6828048375"
+SOURCE_SHA256 = "cc879bf3ddcdbafb852f73243f9649c6c93a8aa6c556f90bf8f3efda37f41d76"  # pragma: allowlist secret -- public digest of the source record's body
+# The ids whose status cell the source record labels Closed: rows 11 and 13.
+CLOSED_AT_SOURCE: frozenset[str] = frozenset({"11", "13"})
+SOURCE_URL = f"https://github.com/ktogias/gnostoa/issues/325#{SOURCE_COMMENT}"
+RULEBOOK_INDEX = "knowledge/assessments/supervisor-rulebook-index.md"
+MANIFEST_COLUMNS = ("Rule", "Status", "Source notes")
+PILOT_RECORD = re.compile(
+    r"https://github\.com/ktogias/gnostoa/issues/325#issuecomment-[0-9]+"
+)
+WORD = re.compile(r"\w")
+NOTE_SEPARATOR = re.compile(r"[;,]")
+RECORD = "`knowledge/failure-modes/container-first-verification-routing-bypass.md`"
+CLOSED = frozenset({"1"})
+NOTE = "close-lessons-with-a-guard"
+PILOT_RECORD_URL = (
+    "https://github.com/ktogias/gnostoa/issues/325#issuecomment-6804764204"
+)
+PILOT_REFERENCE = f"{PILOT_LABEL}: a gate ([#325 6804764204]({PILOT_RECORD_URL}))"
 
 
 def _cells(line: str) -> list[str]:
@@ -106,37 +158,249 @@ def _id_problems(ids: list[str]) -> list[str]:
     return problems
 
 
-def _guard_problems(ident: str, fields: dict[str, str], root: Path) -> list[str]:
-    """A pilot guard carries its label; a repository guard cites a path that
-    exists."""
+@dataclass(frozen=True)
+class _Evidence:
+    """What a row's cells are checked against: the repository root and its tracked
+    set, the ids the source has closed, the note names of the rulebook manifest,
+    and the document's link reference definitions."""
+
+    root: Path
+    tracked: frozenset[str]
+    closed_at_source: frozenset[str]
+    notes: frozenset[str]
+    definitions: dict[str, Any]
+
+
+def _link_definitions(markdown: str) -> dict[str, Any]:
+    """The document's link reference definitions, in the parser's environment, so
+    that a reference-style link in a cell resolves to its destination."""
+
+    definitions: dict[str, Any] = {}
+    MarkdownIt("commonmark").enable("table").parse(markdown, definitions)
+    return definitions
+
+
+def _inline_links(text: str, definitions: dict[str, Any]) -> tuple[list[str], str]:
+    """A cell's inline Markdown, read by the parser: the destination of every link,
+    inline or reference-style, and the cell's text outside its links."""
+
+    tokens = MarkdownIt("commonmark").parseInline(text, dict(definitions))
+    targets: list[str] = []
+    outside: list[str] = []
+    depth = 0
+    for child in (child for token in tokens for child in token.children or []):
+        if child.type == "link_open":
+            targets.append(str(child.attrs["href"]))
+            depth += 1
+        elif child.type == "link_close":
+            depth -= 1
+        elif depth == 0:
+            outside.append(child.content)
+    return targets, "".join(outside)
+
+
+def _link_targets(text: str, definitions: dict[str, Any]) -> list[str]:
+    """The destination of every link in a cell; a link's text counts for
+    nothing."""
+
+    return _inline_links(text, definitions)[0]
+
+
+def _manifest_notes(root: Path) -> frozenset[str]:
+    """The memory note names the rulebook manifest lists, its cells split as a
+    row's Memory note cell is; none when it cannot be read."""
+
+    try:
+        text = (root / RULEBOOK_INDEX).read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return frozenset()
+    return frozenset(
+        name.strip()
+        for table in _tables(text)
+        if tuple(table[0]) == MANIFEST_COLUMNS
+        for row in table[1:]
+        if len(row) == len(MANIFEST_COLUMNS)
+        for name in NOTE_SEPARATOR.split(row[2])
+    )
+
+
+def _tracked(root: Path) -> tuple[frozenset[str], list[str]]:
+    """The repository's tracked paths as `candidate_paths` reads them: the Git
+    index, or the packaged manifest where there is no `.git`. When neither can be
+    read the set is empty, so every cited path is refused, and the failure is
+    reported by its category alone."""
+
+    try:
+        return frozenset(path.as_posix() for path in candidate_paths(root)), []
+    except RepositoryScopeError as exc:
+        return frozenset(), [scope_error_detail("the tracked set cannot be read", exc)]
+
+
+def _path_problem(path: str, tracked: frozenset[str], root: Path) -> str | None:
+    """Why a cited path is not a tracked regular file of the repository, or None.
+
+    The path is read as written: an absolute path and an empty, `.`, `..` or
+    `.git` segment are refused before the tracked set is consulted. `lstat` does
+    not follow the last segment, and the resolved path must be the written one,
+    so no symlink anywhere on the path counts."""
+
+    if UNSAFE_SEGMENTS.intersection(path.split("/")):
+        return "is not repository-relative"
+    if path not in tracked:
+        return "is not a tracked file"
+    target = root / path
+    try:
+        regular = stat.S_ISREG(target.lstat().st_mode)
+    except OSError:
+        regular = False
+    if not regular:
+        return "is not a regular file"
+    if target.resolve() != root.resolve() / path:
+        return "is reached through a symlink"
+    return None
+
+
+def _guard_problems(
+    ident: str, fields: dict[str, str], tracked: frozenset[str], root: Path
+) -> list[str]:
+    """A pilot guard carries its label, and its paths are outside this repository,
+    so they are not checked against it. A live-repo guard, whatever the row's
+    status, cites at least one path, and every path it cites is a tracked regular
+    file of this repository."""
 
     state, reference = fields["Guard state"], fields["Guard reference"]
     if state in ("staged", "live-pilot") and PILOT_LABEL not in reference:
         return [f"row {ident}: a {state} guard lacks the label {PILOT_LABEL!r}"]
-    if state == "live-repo" and not any(
-        (root / path).exists() for path in CODE_PATH.findall(reference)
+    if state != "live-repo":
+        return []
+    paths = CODE_PATH.findall(reference)
+    if not paths:
+        return [f"row {ident}: a live-repo guard cites no repository path"]
+    return [
+        f"row {ident}: live-repo guard path {path!r} {problem}"
+        for path in paths
+        if (problem := _path_problem(path, tracked, root)) is not None
+    ]
+
+
+def _knowledge_problem(path: str, root: Path) -> str | None:
+    """Why a tracked regular file is not a record of the knowledge bundle, or None.
+    The bundle's own reader parses it: a record is a Markdown file under
+    knowledge/, not an index or a log, whose frontmatter carries a
+    project-knowledge id. Its language is the project's rule for every record and
+    a reviewer's check; this test does not judge it."""
+
+    parts = path.split("/")
+    if (
+        parts[0] != "knowledge"
+        or parts[-1] in RESERVED_NAMES
+        or parts[-1][-3:] != ".md"
     ):
-        return [f"row {ident}: a live-repo guard cites no repository path that exists"]
-    return []
+        return "is not a knowledge record"
+    try:
+        document = parse_markdown(root / path, root)
+    except ValueError:  # malformed frontmatter, or bytes that are not UTF-8
+        return "is not a knowledge record"
+    if document.concept_id is None:
+        return "is not a knowledge record"
+    return None
 
 
-def _closure_problems(ident: str, fields: dict[str, str]) -> list[str]:
-    """Closed needs a built guard, an English record and a memory note."""
+def _record_problem(path: str, tracked: frozenset[str], root: Path) -> str | None:
+    """Why a cited path is not a tracked Gnostoa knowledge record other than this
+    ledger, or None."""
+
+    problem = _path_problem(path, tracked, root)
+    if problem is None and path == LEDGER_PATH:
+        problem = "is this ledger"
+    elif problem is None:
+        problem = _knowledge_problem(path, root)
+    return problem
+
+
+def _record_problems(
+    ident: str, record: str, tracked: frozenset[str], root: Path
+) -> list[str]:
+    """A Closed row's English record cites at least one path, and every path it
+    cites is a tracked knowledge record other than this ledger. A GitHub link is
+    provenance and counts for nothing here."""
+
+    paths = CODE_PATH.findall(record)
+    if not paths:
+        return [f"row {ident}: closed without English record"]
+    return [
+        f"row {ident}: English record path {path!r} {problem}"
+        for path in paths
+        if (problem := _record_problem(path, tracked, root)) is not None
+    ]
+
+
+def _pilot_problems(
+    ident: str, reference: str, definitions: dict[str, Any]
+) -> list[str]:
+    """A Closed row's live-pilot guard names its guard beside the label and links
+    at least one #325 pilot record. Whether that record shows the guard live is a
+    reviewer's check, so this stays the weaker witness."""
+
+    problems = []
+    targets, outside = _inline_links(reference, definitions)
+    if not WORD.search(outside.replace(PILOT_LABEL, "")):
+        problems.append(
+            f"row {ident}: a closed live-pilot guard names no guard beside its label"
+        )
+    if not any(PILOT_RECORD.fullmatch(target) for target in targets):
+        problems.append(
+            f"row {ident}: a closed live-pilot guard links no #325 pilot record"
+        )
+    return problems
+
+
+def _note_problems(ident: str, note: str, notes: frozenset[str]) -> list[str]:
+    """Each memory note a Closed row names is one the rulebook manifest lists."""
+
+    if note in ABSENT:
+        return []
+    return [
+        f"row {ident}: memory note {name!r} is not in the rulebook manifest"
+        for name in (part.strip() for part in NOTE_SEPARATOR.split(note))
+        if name not in notes
+    ]
+
+
+def _closure_problems(
+    ident: str, fields: dict[str, str], evidence: _Evidence
+) -> list[str]:
+    """Closed needs a guard reference, a live guard (a labelled pilot guard also
+    names the guard and links its #325 pilot record), an English record that is a
+    tracked knowledge record other than this ledger, memory notes the
+    rulebook manifest lists, and the source's own closure as the pinned witness
+    records it."""
 
     if fields["Status"] != "Closed":
         return []
-    missing = [
-        name
-        for name in ("Guard reference", "English record", "Memory note")
+    problems = [
+        f"row {ident}: closed without {name}"
+        for name in ("Guard reference", "Memory note")
         if fields[name] in ABSENT
     ]
-    if fields["Guard state"] == "none":
-        missing.append("Guard state")
-    return [f"row {ident}: closed without {name}" for name in missing]
+    state, reference = fields["Guard state"], fields["Guard reference"]
+    if state not in LIVE_GUARDS:
+        problems.append(f"row {ident}: closed without a live guard ({state})")
+    elif state == "live-pilot" and PILOT_LABEL in reference:
+        problems.extend(_pilot_problems(ident, reference, evidence.definitions))
+    problems.extend(
+        _record_problems(
+            ident, fields["English record"], evidence.tracked, evidence.root
+        )
+    )
+    problems.extend(_note_problems(ident, fields["Memory note"], evidence.notes))
+    if ident not in evidence.closed_at_source:
+        problems.append(f"row {ident}: closed here but not closed at source")
+    return problems
 
 
-def _row_problems(fields: dict[str, str], root: Path) -> list[str]:
-    """One ledger row against the vocabularies, the pilot label and the closure
+def _row_problems(fields: dict[str, str], evidence: _Evidence) -> list[str]:
+    """One ledger row against the vocabularies, the guard rules and the closure
     rule."""
 
     ident = fields["Id"]
@@ -154,24 +418,61 @@ def _row_problems(fields: dict[str, str], root: Path) -> list[str]:
             f"row {ident}: a liveness firing names no 'Liveness episode: <id>'"
         )
     if fields["Guard state"] in GUARD_STATES:
-        problems.extend(_guard_problems(ident, fields, root))
-    problems.extend(_closure_problems(ident, fields))
+        problems.extend(_guard_problems(ident, fields, evidence.tracked, evidence.root))
+    problems.extend(_closure_problems(ident, fields, evidence))
     return problems
 
 
-def ledger_problems(markdown: str, root: Path = ROOT) -> list[str]:
-    """Every way the text breaks the ledger schema; empty when it holds."""
+def ledger_problems(
+    markdown: str,
+    root: Path = ROOT,
+    closed_at_source: frozenset[str] = CLOSED_AT_SOURCE,
+) -> list[str]:
+    """Every way the text breaks the ledger schema; empty when it holds.
+    `closed_at_source` is the set of ids the source record has closed."""
 
     tables = _tables(markdown)
     problems = _width_problems(tables)
     ledgers = [table for table in tables if tuple(table[0]) == COLUMNS]
     if len(ledgers) != 1:
         return [*problems, f"{len(ledgers)} tables carry the ledger header, not 1"]
+    tracked, unreadable = _tracked(root)
+    problems.extend(unreadable)
+    evidence = _Evidence(
+        root,
+        tracked,
+        closed_at_source,
+        _manifest_notes(root),
+        _link_definitions(markdown),
+    )
     rows = [row for row in ledgers[0][1:] if len(row) == len(COLUMNS)]
     problems.extend(_id_problems([row[0] for row in rows]))
     for row in rows:
-        problems.extend(_row_problems(dict(zip(COLUMNS, row, strict=True)), root))
+        fields = dict(zip(COLUMNS, row, strict=True))
+        problems.extend(_row_problems(fields, evidence))
     return problems
+
+
+def source_witness_problems(markdown: str, digest: str = SOURCE_SHA256) -> list[str]:
+    """The ledger's derivation table cites exactly one digest for the source
+    record, and it is the digest this test pins. A row counts only when its Record
+    cell links to the source record itself: the comment id in the cell's text, or
+    in an unrelated link, does not. This checks the ledger against a pinned
+    witness, not the live source comment: a source edit needs a reviewed change to
+    the ledger, `SOURCE_SHA256` and `CLOSED_AT_SOURCE` together."""
+
+    definitions = _link_definitions(markdown)
+    cited = [
+        row[3].strip("`")
+        for table in _tables(markdown)
+        if tuple(table[0]) == SOURCE_COLUMNS
+        for row in table[1:]
+        if len(row) == len(SOURCE_COLUMNS)
+        and _link_targets(row[0], definitions) == [SOURCE_URL]
+    ]
+    if cited == [digest]:
+        return []
+    return [f"the ledger cites source digests {cited}; the pinned witness is {digest}"]
 
 
 def _table(*rows: tuple[str, ...]) -> str:
@@ -193,9 +494,9 @@ def _row(ident: str = "1", **changes: str) -> tuple[str, ...]:
         "Root cause": "—",
         "Fix and mechanical guard": "A guard",
         "Guard state": "live-pilot",
-        "Guard reference": f"{PILOT_LABEL}: a gate",
+        "Guard reference": PILOT_REFERENCE,
         "English record": "[ledger][L]",
-        "Memory note": "a-note",
+        "Memory note": NOTE,
         "Status": "Open",
         "Notes": "—",
     }
@@ -203,6 +504,81 @@ def _row(ident: str = "1", **changes: str) -> tuple[str, ...]:
         {column.replace("_", " "): value for column, value in changes.items()}
     )
     return tuple(fields[column] for column in COLUMNS)
+
+
+def _repository(parent: Path) -> Path:
+    """A packaged checkout under `parent`, without Git metadata, so its tracked set
+    is its manifest. The manifest lists a guard file, a file missing from the
+    checkout, a directory (as a gitlink would appear) and three symlinks: one to a
+    listed file, one to a file outside the checkout, and one through a directory
+    link. The checkout also holds an unlisted file, an unlisted directory and a
+    nested `.git` directory, and `parent` holds a file outside the checkout."""
+
+    root = parent / "checkout"
+    for directory in ("tests/fixtures", "tests/.git", "knowledge/failure-modes"):
+        (root / directory).mkdir(parents=True)
+    for name in (
+        "tests/test_guard.py",
+        "tests/untracked_guard.py",
+        "tests/.git/config",
+    ):
+        (root / name).write_text("x\n", encoding="utf-8")
+    (parent / "outside.py").write_text("x\n", encoding="utf-8")
+    (root / "tests" / "linked_guard.py").symlink_to("test_guard.py")
+    (root / "tests" / "external_guard.py").symlink_to(parent / "outside.py")
+    (root / "guards").symlink_to("tests", target_is_directory=True)
+    listed = (
+        "guards/test_guard.py",
+        "tests/deleted_guard.py",
+        "tests/external_guard.py",
+        "tests/fixtures",
+        "tests/linked_guard.py",
+        "tests/test_guard.py",
+    )
+    (root / SOURCE_MANIFEST).write_bytes(b"".join(f"{n}\0".encode() for n in listed))
+    return root
+
+
+def _concept(body: str) -> str:
+    """A knowledge record as the bundle's reader parses it: frontmatter with a
+    type and a project-knowledge id, then a Markdown body."""
+
+    return (
+        "---\ntype: Failure Mode\ntitle: A lesson\n"
+        "x-project-knowledge:\n  id: kit.failure-mode.a-lesson\n---\n\n"
+        f"# A lesson\n\n{body}\n"
+    )
+
+
+def _knowledge_repository(parent: Path) -> Path:
+    """A packaged checkout under `parent`, without Git metadata, whose manifest
+    lists a knowledge record, a Markdown file without frontmatter, one
+    whose frontmatter has no project-knowledge id, one whose frontmatter is not
+    YAML, a record's text outside the bundle's records (in another directory, under
+    a reserved name, and not as Markdown), and the rulebook index, whose manifest
+    names the note `NOTE`."""
+
+    root = parent / "checkout"
+    lesson = _concept("The lesson, in English.")
+    files = {
+        "knowledge/failure-modes/a-lesson.md": lesson,
+        "guidance/a-lesson.md": lesson,
+        "knowledge/failure-modes/log.md": lesson,
+        "knowledge/failure-modes/a-lesson.txt": lesson,
+        "knowledge/failure-modes/no-frontmatter.md": "# A lesson\n",
+        "knowledge/failure-modes/no-id.md": "---\ntype: Failure Mode\n---\n\n# A lesson\n",
+        "knowledge/failure-modes/bad-yaml.md": "---\ntype: [\n---\n\n# A lesson\n",
+        RULEBOOK_INDEX: (
+            "| Rule | Status | Source notes |\n|---|---|---|\n"
+            f"| R-GATE-04 | active | {NOTE} |\n"
+        ),
+    }
+    for name, text in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text, encoding="utf-8")
+    listed = sorted(files)
+    (root / SOURCE_MANIFEST).write_bytes(b"".join(f"{n}\0".encode() for n in listed))
+    return root
 
 
 class LedgerRecordTests(unittest.TestCase):
@@ -216,10 +592,29 @@ class LedgerRecordTests(unittest.TestCase):
     def test_the_ledger_meets_its_schema_and_closure_rule(self) -> None:
         self.assertEqual(ledger_problems(LEDGER.read_text(encoding="utf-8")), [])
 
+    def test_the_ledger_cites_the_pinned_source_digest(self) -> None:
+        text = LEDGER.read_text(encoding="utf-8")
+        self.assertEqual(source_witness_problems(text), [])
+
+    def test_the_tracked_set_holds_the_ledger_this_test_and_the_record(self) -> None:
+        # A checkout reads its Git index. The runtime image has no `.git`, so the
+        # self-check there reads the packaged manifest: this case shows that the
+        # manifest covers knowledge/ and tests/ (#496, the PAO's open check).
+        tracked = {path.as_posix() for path in candidate_paths(ROOT)}
+        expected = {
+            LEDGER_PATH,
+            "tests/test_supervisor_lessons_ledger.py",
+            RECORD.strip("`"),
+            RULEBOOK_INDEX,
+        }
+        self.assertLessEqual(expected, tracked)
+
 
 class LedgerCheckReplayTests(unittest.TestCase):
     """Each check fails on a replay of the defect it guards, and passes its
     control."""
+
+    maxDiff = None
 
     def test_a_complete_table_passes(self) -> None:
         self.assertEqual(ledger_problems(_table(_row("1"), _row("2"))), [])
@@ -241,19 +636,210 @@ class LedgerCheckReplayTests(unittest.TestCase):
 
     def test_a_closed_row_without_a_memory_note_is_refused(self) -> None:
         # P2: row 13 was marked closed with no memory note cited.
-        markdown = _table(_row(Status="Closed", Memory_note="none cited"))
+        row = _row(Status="Closed", English_record=RECORD, Memory_note="none cited")
         self.assertEqual(
-            ledger_problems(markdown), ["row 1: closed without Memory note"]
+            ledger_problems(_table(row), closed_at_source=CLOSED),
+            ["row 1: closed without Memory note"],
         )
 
-    def test_a_closed_row_with_all_three_passes(self) -> None:
-        self.assertEqual(ledger_problems(_table(_row(Status="Closed"))), [])
+    def test_a_closed_row_with_all_four_passes(self) -> None:
+        # The control of the #496 rule: closed at source, a live guard, a tracked
+        # knowledge record other than the ledger, and a memory note.
+        for state, reference in (
+            ("live-pilot", PILOT_REFERENCE),
+            ("live-repo", "`tests/test_supervisor_lessons_ledger.py`"),
+        ):
+            with self.subTest(state=state):
+                row = _row(
+                    Status="Closed",
+                    Guard_state=state,
+                    Guard_reference=reference,
+                    English_record=RECORD,
+                )
+                self.assertEqual(
+                    ledger_problems(_table(row), closed_at_source=CLOSED), []
+                )
 
     def test_a_closed_row_without_a_built_guard_is_refused(self) -> None:
-        markdown = _table(_row(Status="Closed", Guard_state="none"))
+        row = _row(Status="Closed", Guard_state="none", English_record=RECORD)
         self.assertEqual(
-            ledger_problems(markdown), ["row 1: closed without Guard state"]
+            ledger_problems(_table(row), closed_at_source=CLOSED),
+            ["row 1: closed without a live guard (none)"],
         )
+
+    def test_a_closed_row_with_a_staged_guard_is_refused(self) -> None:
+        # #496 gap (b), test (iii): a guard still being built is not a live guard.
+        row = _row(Status="Closed", Guard_state="staged", English_record=RECORD)
+        self.assertEqual(
+            ledger_problems(_table(row), closed_at_source=CLOSED),
+            ["row 1: closed without a live guard (staged)"],
+        )
+
+    def test_a_closed_row_needs_a_tracked_knowledge_record(self) -> None:
+        # #496 gap (c), tests (i) and (ii): a GitHub-only link, a self-citation of
+        # the ledger, or a cited path that is no tracked knowledge record.
+        missing = "knowledge/assessments/no-such-record.md"
+        escape = "knowledge/../tests/test_supervisor_lessons_ledger.py"
+        cases = {
+            "[ledger][L]": "row 1: closed without English record",
+            f"[ledger][L]; `{LEDGER_PATH}`": (
+                f"row 1: English record path {LEDGER_PATH!r} is this ledger"
+            ),
+            "`tests/test_supervisor_lessons_ledger.py`": (
+                "row 1: English record path "
+                "'tests/test_supervisor_lessons_ledger.py' is not a knowledge record"
+            ),
+            f"`{missing}`": f"row 1: English record path {missing!r} is not a tracked file",
+            "`knowledge/failure-modes`": (
+                "row 1: English record path 'knowledge/failure-modes' "
+                "is not a tracked file"
+            ),
+            f"`{escape}`": (
+                f"row 1: English record path {escape!r} is not repository-relative"
+            ),
+            f"{RECORD}; `{missing}`": (
+                f"row 1: English record path {missing!r} is not a tracked file"
+            ),
+        }
+        for record, problem in cases.items():
+            with self.subTest(record=record):
+                row = _row(Status="Closed", English_record=record)
+                self.assertEqual(
+                    ledger_problems(_table(row), closed_at_source=CLOSED), [problem]
+                )
+
+    def test_a_closed_row_needs_a_knowledge_record_not_a_location(self) -> None:
+        # Sourcery on #497 (4557743754): a tracked file under knowledge/ passed on
+        # its location alone; LedgerEnglishRecordTests replays the record forms.
+        for path in (
+            "knowledge/profile.yaml",
+            "knowledge/index.md",
+            "knowledge/assessments/0108-shell-parser-evaluation.json",
+        ):
+            with self.subTest(path=path):
+                row = _row(Status="Closed", English_record=f"`{path}`")
+                self.assertEqual(
+                    ledger_problems(_table(row), closed_at_source=CLOSED),
+                    [f"row 1: English record path {path!r} is not a knowledge record"],
+                )
+
+    def test_a_closed_pilot_guard_names_its_guard_and_links_a_pilot_record(
+        self,
+    ) -> None:
+        # Sourcery on #497 (4557743762): the pilot label alone passed for a Closed
+        # row. Its witness is the label plus a cited #325 pilot record (#15
+        # 6836650888, item 1).
+        unnamed = "row 1: a closed live-pilot guard names no guard beside its label"
+        unlinked = "row 1: a closed live-pilot guard links no #325 pilot record"
+        other_issue = PILOT_RECORD_URL.replace("/325#", "/324#")
+        cases = {
+            PILOT_LABEL: [unnamed, unlinked],
+            f"{PILOT_LABEL}: a gate": [unlinked],
+            f"{PILOT_LABEL}: a gate, #325 6804764204": [unlinked],
+            f"{PILOT_LABEL}: a gate ([#325 6804764204](https://example.invalid/325))": [
+                unlinked
+            ],
+            f"{PILOT_LABEL}: a gate ([#325 6804764204]({other_issue}))": [unlinked],
+            f"{PILOT_LABEL}: ([#325 6804764204]({PILOT_RECORD_URL}))": [unnamed],
+        }
+        for reference, problems in cases.items():
+            with self.subTest(reference=reference):
+                row = _row(
+                    Status="Closed", Guard_reference=reference, English_record=RECORD
+                )
+                self.assertEqual(
+                    ledger_problems(_table(row), closed_at_source=CLOSED), problems
+                )
+
+    def test_a_pilot_record_may_be_a_reference_style_link(self) -> None:
+        # The ledger's own form (rows 10 to 14): the link's destination is in a
+        # definition below the table.
+        reference = f"{PILOT_LABEL}: S12 ([#325 6788724681][S12])"
+        row = _row(Status="Closed", Guard_reference=reference, English_record=RECORD)
+        definition = "\n[S12]: https://github.com/ktogias/gnostoa/issues/325#issuecomment-6788724681\n"
+        self.assertEqual(
+            ledger_problems(_table(row) + definition, closed_at_source=CLOSED), []
+        )
+
+    def test_a_closed_row_names_memory_notes_from_the_rulebook_manifest(self) -> None:
+        # Sourcery on #497 (4557743769): an invented note name passed. Row 28's
+        # form names two notes.
+        invented = (
+            "row 1: memory note 'an-invented-note' is not in the rulebook manifest"
+        )
+        cases = {
+            "an-invented-note": [invented],
+            f"{NOTE}; an-invented-note": [invented],
+            "headless-lane-bash-shapes; local-permission-denial": [],
+        }
+        for note, problems in cases.items():
+            with self.subTest(note=note):
+                row = _row(Status="Closed", English_record=RECORD, Memory_note=note)
+                self.assertEqual(
+                    ledger_problems(_table(row), closed_at_source=CLOSED), problems
+                )
+
+    def test_an_open_row_may_name_a_note_the_manifest_lacks(self) -> None:
+        # Rows 22, 23, 25, 29 and 31 name notes newer than the manifest; they are
+        # Open, and the manifest check is part of closure only.
+        self.assertEqual(
+            ledger_problems(_table(_row(Memory_note="an-invented-note"))), []
+        )
+
+    def test_a_closed_row_not_closed_at_source_is_refused(self) -> None:
+        # #496 gap (a), test (iv): all evidence cited while the source is Open.
+        row = _row(Status="Closed", English_record=RECORD)
+        self.assertEqual(
+            ledger_problems(_table(row)),
+            ["row 1: closed here but not closed at source"],
+        )
+
+    def test_a_changed_or_missing_source_digest_is_refused(self) -> None:
+        # #496 Required outcome 2: the source digest the ledger cites is the pinned
+        # witness; a source edit needs a reviewed change to both.
+        text = LEDGER.read_text(encoding="utf-8")
+        other = "0" * 64
+        changed = text.replace(SOURCE_SHA256, other)
+        self.assertNotEqual(changed, text)
+        for markdown, cited in ((changed, [other]), ("No table here.\n", [])):
+            with self.subTest(cited=cited):
+                self.assertEqual(
+                    source_witness_problems(markdown),
+                    [
+                        f"the ledger cites source digests {cited}; "
+                        f"the pinned witness is {SOURCE_SHA256}"
+                    ],
+                )
+
+    def test_the_source_digest_counts_only_under_a_link_to_the_source(self) -> None:
+        # Sourcery on #497 (4557743758): the comment id in the Record cell's text
+        # stood in for the link's destination. The PAO's cases (#15 6839573188):
+        # the id on another issue, a longer id with the same digits, and the id as
+        # plain text with no link.
+        text = LEDGER.read_text(encoding="utf-8")
+        link = f"guards]({SOURCE_URL})"
+        self.assertIn(link, text)
+        for replacement in (
+            f"guards](https://example.invalid/{SOURCE_COMMENT})",
+            f"guards {SOURCE_COMMENT}]({PILOT_RECORD_URL})",
+            f"guards](https://github.com/ktogias/gnostoa/issues/999#{SOURCE_COMMENT})",
+            f"guards]({SOURCE_URL}1)",
+            f"guards] {SOURCE_URL}",
+        ):
+            with self.subTest(replacement=replacement):
+                self.assertEqual(
+                    source_witness_problems(text.replace(link, replacement)),
+                    [
+                        "the ledger cites source digests []; "
+                        f"the pinned witness is {SOURCE_SHA256}"
+                    ],
+                )
+
+    def test_a_reference_style_source_link_counts(self) -> None:
+        # The destination decides in either link form; the ledger defines [L].
+        text = LEDGER.read_text(encoding="utf-8")
+        link = f"guards]({SOURCE_URL})"
+        self.assertEqual(source_witness_problems(text.replace(link, "guards][L]")), [])
 
     def test_a_status_outside_open_and_closed_is_refused(self) -> None:
         # P3: "Live" read as done although the lesson was open.
@@ -289,15 +875,27 @@ class LedgerCheckReplayTests(unittest.TestCase):
             [f"row 1: a live-pilot guard lacks the label {PILOT_LABEL!r}"],
         )
 
-    def test_a_repository_guard_must_cite_an_existing_path(self) -> None:
+    def test_a_labelled_pilot_path_is_not_checked_against_the_tree(self) -> None:
+        # Row 15: a pilot path is outside this repository by its label.
+        reference = f"{PILOT_LABEL}: `publish-gate/prior_art_gate.py`"
+        self.assertEqual(ledger_problems(_table(_row(Guard_reference=reference))), [])
+
+    def test_a_repository_guard_must_cite_a_tracked_path(self) -> None:
+        # Through this checkout's own tracked set; LedgerGuardPathTests replays
+        # each way a cited path can fail.
         missing = _row(Guard_state="live-repo", Guard_reference="`publish-gate/x.py`")
+        unnamed = _row(Guard_state="live-repo", Guard_reference="a gate")
         present = _row(
             Guard_state="live-repo",
             Guard_reference="`tests/test_supervisor_lessons_ledger.py`",
         )
         self.assertEqual(
             ledger_problems(_table(missing)),
-            ["row 1: a live-repo guard cites no repository path that exists"],
+            ["row 1: live-repo guard path 'publish-gate/x.py' is not a tracked file"],
+        )
+        self.assertEqual(
+            ledger_problems(_table(unnamed)),
+            ["row 1: a live-repo guard cites no repository path"],
         )
         self.assertEqual(ledger_problems(_table(present)), [])
 
@@ -315,6 +913,260 @@ class LedgerCheckReplayTests(unittest.TestCase):
             ledger_problems("No table here.\n"),
             ["0 tables carry the ledger header, not 1"],
         )
+
+
+class LedgerGuardPathTests(unittest.TestCase):
+    """A live-repo guard cites only tracked regular files of this repository, every
+    one of them (#496 item 1; the PAO's failure modes 1 to 6, #15 6836636966).
+    The checkout here has no `.git`, so its tracked set is its packaged manifest."""
+
+    maxDiff = None
+
+    def setUp(self) -> None:
+        self.parent = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.root = _repository(self.parent)
+
+    def problems(self, reference: str) -> list[str]:
+        row = _row(Guard_state="live-repo", Guard_reference=reference)
+        return ledger_problems(_table(row), self.root)
+
+    def assert_refused(self, cases: dict[str, str]) -> None:
+        for path, reason in cases.items():
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.problems(f"`{path}`"),
+                    [f"row 1: live-repo guard path {path!r} {reason}"],
+                )
+
+    def test_a_tracked_regular_file_passes(self) -> None:
+        self.assertEqual(self.problems("`tests/test_guard.py`"), [])
+
+    def test_a_path_that_is_not_repository_relative_is_refused(self) -> None:
+        # Failure modes 1 and 2: `root / "/abs"` drops the root, and `..` leaves it.
+        reason = "is not repository-relative"
+        self.assert_refused(
+            {
+                f"{self.root}/tests/test_guard.py": reason,
+                "../outside.py": reason,
+                "tests/../../outside.py": reason,
+                "./tests/test_guard.py": reason,
+                "tests/.git/config": reason,
+            }
+        )
+
+    def test_a_directory_is_refused(self) -> None:
+        # Failure mode 3: a directory stood in for a guard file.
+        self.assert_refused(
+            {
+                "tests/": "is not repository-relative",
+                "knowledge/failure-modes": "is not a tracked file",
+                "tests/fixtures": "is not a regular file",
+            }
+        )
+
+    def test_an_untracked_file_is_refused(self) -> None:
+        # Failure mode 4: the check read the worktree, not the tracked set.
+        self.assert_refused({"tests/untracked_guard.py": "is not a tracked file"})
+
+    def test_a_tracked_file_missing_from_the_checkout_is_refused(self) -> None:
+        # Listed in the tracked set but absent: nothing on disk guards anything.
+        self.assert_refused({"tests/deleted_guard.py": "is not a regular file"})
+
+    def test_a_symlink_is_refused(self) -> None:
+        # Failure mode 5: exists() follows links, inside or outside the checkout.
+        self.assert_refused(
+            {
+                "tests/linked_guard.py": "is not a regular file",
+                "tests/external_guard.py": "is not a regular file",
+                "guards/test_guard.py": "is reached through a symlink",
+            }
+        )
+
+    def test_every_cited_path_counts(self) -> None:
+        # Failure mode 6: one real path covered for a bogus one.
+        self.assertEqual(
+            self.problems("`tests/test_guard.py` and `tests/no_such_guard.py`"),
+            [
+                "row 1: live-repo guard path 'tests/no_such_guard.py' is not a tracked file"
+            ],
+        )
+
+    def test_without_git_or_a_manifest_the_check_fails_closed(self) -> None:
+        # Neither a Git index nor a packaged manifest: no path counts as tracked.
+        (self.root / SOURCE_MANIFEST).unlink()
+        self.assertEqual(
+            self.problems("`tests/test_guard.py`"),
+            [
+                "the tracked set cannot be read (scope error: MANIFEST_MISSING)",
+                "row 1: live-repo guard path 'tests/test_guard.py' is not a tracked file",
+            ],
+        )
+
+
+class LedgerEnglishRecordTests(unittest.TestCase):
+    """A Closed row's English record is a record of the knowledge bundle, as the
+    bundle's reader parses it, not any tracked file under knowledge/ (Sourcery on #497,
+    4557743754). The checkout here has no `.git`, so its tracked set is its
+    packaged manifest."""
+
+    maxDiff = None
+
+    def setUp(self) -> None:
+        parent = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.root = _knowledge_repository(parent)
+
+    def problems(self, path: str) -> list[str]:
+        row = _row(Status="Closed", English_record=f"`{path}`")
+        return ledger_problems(_table(row), self.root, CLOSED)
+
+    def test_a_record_in_english_passes(self) -> None:
+        self.assertEqual(self.problems("knowledge/failure-modes/a-lesson.md"), [])
+
+    def test_a_file_the_bundle_does_not_read_as_a_record_is_refused(self) -> None:
+        for path in (
+            "knowledge/failure-modes/no-frontmatter.md",
+            "knowledge/failure-modes/no-id.md",
+            "knowledge/failure-modes/bad-yaml.md",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.problems(path),
+                    [f"row 1: English record path {path!r} is not a knowledge record"],
+                )
+
+    def test_a_record_s_text_outside_the_bundle_s_records_is_refused(self) -> None:
+        # The same frontmatter and text as the passing record, but in another
+        # directory, under a name the bundle reserves, or not as Markdown.
+        for path in (
+            "guidance/a-lesson.md",
+            "knowledge/failure-modes/log.md",
+            "knowledge/failure-modes/a-lesson.txt",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.problems(path),
+                    [f"row 1: English record path {path!r} is not a knowledge record"],
+                )
+
+
+class LedgerManifestNoteTests(unittest.TestCase):
+    """The rulebook manifest's Source notes cell splits into names as a row's
+    Memory note cell does, with `NOTE_SEPARATOR`, on commas and on semicolons
+    (Revix on #497, 4562745388). Each case runs against a manifest cell in each
+    form. The checkout here has no `.git`, so its tracked set is its packaged
+    manifest."""
+
+    maxDiff = None
+    CELLS = ("note-a, note-b", "note-a; note-b")
+
+    def setUp(self) -> None:
+        parent = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.root = _knowledge_repository(parent)
+
+    def problems(self, cell: str, status: str, note: str) -> list[str]:
+        (self.root / RULEBOOK_INDEX).write_text(
+            "| Rule | Status | Source notes |\n|---|---|---|\n"
+            f"| R-GATE-04 | active | {cell} |\n",
+            encoding="utf-8",
+        )
+        row = _row(
+            Status=status,
+            English_record="`knowledge/failure-modes/a-lesson.md`",
+            Memory_note=note,
+        )
+        return ledger_problems(_table(row), self.root, CLOSED)
+
+    def test_a_closed_row_may_name_each_note_of_the_cell(self) -> None:
+        for cell in self.CELLS:
+            for note in ("note-a", "note-b", "note-b; note-a", "note-b, note-a"):
+                with self.subTest(cell=cell, note=note):
+                    self.assertEqual(self.problems(cell, "Closed", note), [])
+
+    def test_a_closed_row_naming_a_note_the_cell_lacks_is_refused(self) -> None:
+        unknown = "row 1: memory note 'note-c' is not in the rulebook manifest"
+        for cell in self.CELLS:
+            for note in ("note-c", "note-a; note-c", "note-a, note-c"):
+                with self.subTest(cell=cell, note=note):
+                    self.assertEqual(self.problems(cell, "Closed", note), [unknown])
+
+    def test_an_open_row_is_not_held_to_the_manifest(self) -> None:
+        # The control: the manifest check is part of closure only.
+        for cell in self.CELLS:
+            for note in ("note-a", "note-c"):
+                with self.subTest(cell=cell, note=note):
+                    self.assertEqual(self.problems(cell, "Open", note), [])
+
+
+class LedgerSourceWitnessTests(unittest.TestCase):
+    """The pinned witness holds the ids the source record itself labels Closed:
+    rows 11 and 13 of #325 6828048375 (the Owner's review of #497, 6851947489,
+    section 2; the PAO's option (a), routed by the Router in #325 6852224788).
+    The source's closure is one condition of four: a row the source has closed is
+    still refused without the other evidence, and no real row qualifies today."""
+
+    maxDiff = None
+
+    def setUp(self) -> None:
+        parent = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.root = _knowledge_repository(parent)
+
+    def test_the_witness_holds_the_ids_the_source_labels_closed(self) -> None:
+        self.assertEqual(CLOSED_AT_SOURCE, frozenset({"11", "13"}))
+
+    def test_every_witnessed_id_is_a_ledger_row(self) -> None:
+        (ledger,) = (
+            table
+            for table in _tables(LEDGER.read_text(encoding="utf-8"))
+            if tuple(table[0]) == COLUMNS
+        )
+        self.assertLessEqual(CLOSED_AT_SOURCE, {row[0] for row in ledger[1:]})
+
+    def test_a_real_row_closed_here_is_refused_for_its_missing_evidence(self) -> None:
+        # Rows 11 and 13, Closed at source, cite no memory note and no knowledge
+        # record, and row 11's pilot guard links no pilot record. Row 14 is Open at
+        # source. Only the named row's Status cell changes.
+        cases = {
+            "11": [
+                "row 11: closed without Memory note",
+                "row 11: a closed live-pilot guard links no #325 pilot record",
+                "row 11: closed without English record",
+            ],
+            "13": [
+                "row 13: closed without Memory note",
+                "row 13: closed without English record",
+            ],
+            "14": [
+                "row 14: closed without English record",
+                "row 14: closed here but not closed at source",
+            ],
+        }
+        lines = LEDGER.read_text(encoding="utf-8").splitlines(keepends=True)
+        for ident, problems in cases.items():
+            with self.subTest(row=ident):
+                changed = [
+                    line.replace("| Open |", "| Closed |")
+                    if line.startswith(f"| {ident} | ")
+                    else line
+                    for line in lines
+                ]
+                self.assertNotEqual(changed, lines)
+                self.assertEqual(ledger_problems("".join(changed)), problems)
+
+    def test_a_complete_row_closes_only_when_the_source_has_closed_it(self) -> None:
+        # A live guard, a bundle knowledge record and a manifest note, under the
+        # default witness.
+        for ident, problems in (
+            ("11", []),
+            ("13", []),
+            ("14", ["row 14: closed here but not closed at source"]),
+        ):
+            with self.subTest(row=ident):
+                row = _row(
+                    ident,
+                    Status="Closed",
+                    English_record="`knowledge/failure-modes/a-lesson.md`",
+                )
+                self.assertEqual(ledger_problems(_table(row), self.root), problems)
 
 
 if __name__ == "__main__":
