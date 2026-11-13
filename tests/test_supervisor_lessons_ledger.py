@@ -1096,5 +1096,77 @@ class LedgerManifestNoteTests(unittest.TestCase):
                     self.assertEqual(self.problems(cell, "Open", note), [])
 
 
+class LedgerSourceWitnessTests(unittest.TestCase):
+    """The pinned witness holds the ids the source record itself labels Closed:
+    rows 11 and 13 of #325 6828048375 (the Owner's review of #497, 6851947489,
+    section 2; the PAO's option (a), routed by the Router in #325 6852224788).
+    The source's closure is one condition of four: a row the source has closed is
+    still refused without the other evidence, and no real row qualifies today."""
+
+    maxDiff = None
+
+    def setUp(self) -> None:
+        parent = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.root = _knowledge_repository(parent)
+
+    def test_the_witness_holds_the_ids_the_source_labels_closed(self) -> None:
+        self.assertEqual(CLOSED_AT_SOURCE, frozenset({"11", "13"}))
+
+    def test_every_witnessed_id_is_a_ledger_row(self) -> None:
+        (ledger,) = (
+            table
+            for table in _tables(LEDGER.read_text(encoding="utf-8"))
+            if tuple(table[0]) == COLUMNS
+        )
+        self.assertLessEqual(CLOSED_AT_SOURCE, {row[0] for row in ledger[1:]})
+
+    def test_a_real_row_closed_here_is_refused_for_its_missing_evidence(self) -> None:
+        # Rows 11 and 13, Closed at source, cite no memory note and no knowledge
+        # record, and row 11's pilot guard links no pilot record. Row 14 is Open at
+        # source. Only the named row's Status cell changes.
+        cases = {
+            "11": [
+                "row 11: closed without Memory note",
+                "row 11: a closed live-pilot guard links no #325 pilot record",
+                "row 11: closed without English record",
+            ],
+            "13": [
+                "row 13: closed without Memory note",
+                "row 13: closed without English record",
+            ],
+            "14": [
+                "row 14: closed without English record",
+                "row 14: closed here but not closed at source",
+            ],
+        }
+        lines = LEDGER.read_text(encoding="utf-8").splitlines(keepends=True)
+        for ident, problems in cases.items():
+            with self.subTest(row=ident):
+                changed = [
+                    line.replace("| Open |", "| Closed |")
+                    if line.startswith(f"| {ident} | ")
+                    else line
+                    for line in lines
+                ]
+                self.assertNotEqual(changed, lines)
+                self.assertEqual(ledger_problems("".join(changed)), problems)
+
+    def test_a_complete_row_closes_only_when_the_source_has_closed_it(self) -> None:
+        # A live guard, a bundle knowledge record and a manifest note, under the
+        # default witness.
+        for ident, problems in (
+            ("11", []),
+            ("13", []),
+            ("14", ["row 14: closed here but not closed at source"]),
+        ):
+            with self.subTest(row=ident):
+                row = _row(
+                    ident,
+                    Status="Closed",
+                    English_record="`knowledge/failure-modes/a-lesson.md`",
+                )
+                self.assertEqual(ledger_problems(_table(row), self.root), problems)
+
+
 if __name__ == "__main__":
     unittest.main()
