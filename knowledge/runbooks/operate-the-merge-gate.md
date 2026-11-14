@@ -417,13 +417,15 @@ Versioning these helpers as repository tools is a follow-up (#398's scope bounda
      retain the readback comment ID and its creation time. Match it to the successful
      `issue_comment` relay run and attempt whose event names that exact comment ID;
      then match the downstream evaluation run and attempt to that relay run and
-     attempt. Record the same-head `gnostoa-merge-admission` App check run correlated
-     to that evaluation. Its check must be on the readback head and complete after
-     the comment, and the evaluation must have started after the comment. An older
-     evaluation finishing after the comment is not fresh evidence. A subjectless
-     coalesced run is not a fresh verdict without demonstrated changed-state digest
-     coverage. Preserve the scheduled sweep and the manual fallback for external
-     human resolution.
+     attempt. Record the same-head `merge-admission` check run from the pinned
+     `gnostoa-ma0` App (ID `5302326`) correlated to that evaluation. Its check must
+     be on the readback head and complete after the comment, and the evaluation
+     must have started after the comment. An older evaluation finishing after the
+     comment is not fresh evidence. Existing consumers do not enforce this complete
+     exact-comment causal contract; a subjectless coalesced run proves nothing
+     unless its digest demonstrably covers the changed state. When a human resolves
+     a thread outside the declarer's operation, no readback is posted; the sweep or
+     a manual run is the fallback.
    - Every fix is a new head, so a new seal and new review requests follow.
    - The pre-merge check and the exact-head analyzer readback must both be clean:
      `BOUND`; every applicable claim of protected `main`'s declaration met; and 0
