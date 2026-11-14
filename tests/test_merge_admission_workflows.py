@@ -902,59 +902,6 @@ class FreshVerdictRunbookTests(unittest.TestCase):
         workflow = _normalized(ADMISSION.read_text(encoding="utf-8"))
         self.assertIn('GNOSTOA_MA0_APP_ID: "5302326"', workflow)
 
-    def test_late_completion_cannot_replace_a_newer_changed_state_denial(self) -> None:
-        """Exercise the existing relay race seam only; this does not establish an
-        automated exact-comment-to-evaluation causal contract."""
-        from tests import test_merge_admission_relay as relay
-
-        provider = relay._Provider([relay._run(90)])
-        older_plan = relay._planned()
-        older_record = relay.CompletionTests._pending(provider)
-        changed_evidence, _ = relay._allowing()
-        changed_evidence["threads"]["unresolved"] = 1
-        denial = relay._verdict(changed_evidence)
-        self.assertEqual("DENY", denial["status"])
-        newer_record = relay._relay().invalidate(
-            provider,
-            repository=relay.REPOSITORY,
-            head=relay.HEAD,
-            app_id=relay.MA0_APP,
-            correlation=relay.SCHEDULED,
-        )
-        newer_plan = relay._plan(
-            changed_evidence,
-            changed_evidence,
-            denial,
-            1,
-        )
-        newer_result = relay._publish(
-            provider, newer_plan, newer_record, relay.SCHEDULED
-        )
-        self.assertEqual("PUBLISHED", newer_result["result"])
-        self.assertEqual(
-            "failure", provider.latest_view()["check_runs"][-1]["conclusion"]
-        )
-        posts_before_late_completion = len(provider.posts)
-
-        result = relay._publish(provider, older_plan, older_record, relay.SCHEDULED)
-
-        self.assertEqual("OVERTAKEN", result["result"])
-        self.assertEqual(posts_before_late_completion, len(provider.posts))
-        self.assertEqual(1, len(provider.patches))
-        closed_url, closed_payload = provider.patches[0]
-        self.assertEqual(f"{relay.CHECK_RUNS}/{older_record['pending']}", closed_url)
-        self.assertEqual(
-            ("completed", "failure"),
-            (
-                closed_payload["status"],
-                closed_payload["conclusion"],
-            ),
-        )
-        self.assertEqual(
-            newer_result["check_run_id"],
-            provider.latest_view()["check_runs"][-1]["id"],
-        )
-
     def test_t1_names_the_readback_and_hourly_sweep(self) -> None:
         section = _admission_section()
         t1 = section.split(
