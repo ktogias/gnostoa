@@ -21,6 +21,10 @@ on:
   workflow_run:
     workflows: ["Merge admission trigger", "Gnostoa verification"]
     types: [completed]
+  # The sweep is a backstop for a change that no event names (#325 6851172499); the
+  # declarer's exact-head readback wakes the relay sooner (runbook, the normal
+  # merge's step 5). A schedule is a request, not a cadence: the hourly one ran with
+  # a median gap of 5.0 hours.
   schedule:
     - cron: "41 * * * *"
   repository_dispatch:
