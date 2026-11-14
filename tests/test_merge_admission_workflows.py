@@ -340,12 +340,11 @@ class AdmissionWorkflowTests(unittest.TestCase):
         self.assertTrue(events["schedule"])
         self.assertIn("pull_number", events["workflow_dispatch"]["inputs"])
 
-    def test_the_sweep_is_scheduled_every_ten_minutes(self) -> None:
+    def test_the_sweep_keeps_the_hourly_schedule(self) -> None:
         """#325 6851172499: the sweep is the backstop for a change that no Actions
         event names; the declarer's exact-head readback (runbook, step 5 of the
-        normal merge) is the prompt route. The hourly request ran with a median gap
-        of 5.0 hours, so the schedule asks for every 10 minutes."""
-        self.assertEqual([{"cron": "*/10 * * * *"}], _load(ADMISSION)["on"]["schedule"])
+        normal merge) is the prompt route. Keep the admitted hourly backstop."""
+        self.assertEqual([{"cron": "41 * * * *"}], _load(ADMISSION)["on"]["schedule"])
 
     def test_the_workflow_token_writes_nothing(self) -> None:
         workflow = _load(ADMISSION)
@@ -874,19 +873,36 @@ class FreshVerdictRunbookTests(unittest.TestCase):
         )
         self.assertIn("never the seal's `Exact review candidate:`", readback)
 
-    def test_a_verdict_read_after_it_is_the_run_it_wakes(self) -> None:
+    def test_verdict_check_and_evaluation_start_follow_comment(self) -> None:
         step = _normalized(_rounds_step())
-        self.assertIn("a `merge-admission` run completed after that comment", step)
+        self.assertIn(
+            "Its check must be on the readback head and complete after the comment",
+            step,
+        )
+        self.assertIn("the evaluation must have started after the comment", step)
 
-    def test_t1_names_the_readback_and_no_hourly_sweep(self) -> None:
+    def test_freshness_binds_the_readback_event_and_same_head_check(self) -> None:
+        step = _normalized(_rounds_step())
+        for part in (
+            "comment ID",
+            "`issue_comment` relay run and attempt",
+            "downstream evaluation run and attempt",
+            "same-head `gnostoa-merge-admission` App check",
+            "started after the comment",
+            "without demonstrated changed-state digest coverage",
+        ):
+            with self.subTest(part=part):
+                self.assertIn(part, step)
+
+    def test_t1_names_the_readback_and_hourly_sweep(self) -> None:
         section = _admission_section()
         t1 = section.split(
             "**A review thread's resolution or reopening wakes nothing", 1
         )[1].split("\n", 1)[0]
         self.assertIn("exact-head readback", t1)
         section = _normalized(section)
-        self.assertNotIn("hourly", section)
-        self.assertIn("a sweep scheduled every 10 minutes", section)
+        self.assertIn("hourly", section)
+        self.assertNotIn("every 10 minutes", section)
 
 
 def _secret_references(node: object) -> set[str | None]:
