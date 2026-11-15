@@ -9,6 +9,7 @@ import unittest
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
+from unittest import mock
 
 from tools import project_progress as core
 from tools import project_progress_github as github
@@ -247,7 +248,10 @@ class CapturedClosedTargetTests(unittest.TestCase):
             ({"state": "CLOSED"}, True),
             ({"state": "merged"}, True),
             ({"state": "open", "merged": True}, True),
-            ({"state": "open", "merge_commit_sha": "c" * 40}, True),
+            ({"state": "closed", "merge_commit_sha": "c" * 40}, True),
+            # The provider sets a test-merge commit on an open PR: that is not closed.
+            ({"state": "open", "merge_commit_sha": "c" * 40}, False),
+            ({"state": "open", "merged": False, "merge_commit_sha": "c" * 40}, False),
         )
         for value, closed in cases:
             expected = (Ref("pr", "600"),) if closed else ()
@@ -266,6 +270,34 @@ class CapturedClosedTargetTests(unittest.TestCase):
 
     def test_a_retained_source_without_a_state_stays_assignable(self) -> None:
         self.assertEqual(github.closed_targets([{"kind": "pr", "pr_number": 600}]), ())
+
+    def test_an_open_retained_source_with_a_test_merge_commit_is_assignable(
+        self,
+    ) -> None:
+        source: n.Native = {
+            "kind": "pr",
+            "pr_number": 600,
+            "head_sha": HEAD,
+            "state": "open",
+            "merged": False,
+            "merge_commit_sha": "c" * 40,
+        }
+        self.row = n.progress_row({"kind": "work_item", "ref": "issue:496"}, [source])
+        self.claim["id"] = self.row["id"]
+        self.validate(self.context)
+        self.row["sources"][0].update(state="closed", merged=True)
+        with self.assertRaisesRegex(ValueError, "never dispatches a closed PR"):
+            self.validate(self.context)
+
+    def test_an_unmapped_core_refusal_keeps_its_code_and_its_kind(self) -> None:
+        refusal = core.ProgressError("future_code")
+        with (
+            mock.patch.object(core, "validate_result", side_effect=refusal),
+            self.assertRaises(ValueError) as raised,
+        ):
+            self.validate(self.context)
+        self.assertEqual(str(raised.exception), "PROJECT_PROGRESS future_code")
+        self.assertIs(raised.exception.__cause__, refusal)
 
 
 class ProviderNumberTests(unittest.TestCase):
@@ -392,7 +424,7 @@ class TransitionTableTests(unittest.TestCase):
         for state, expected in cases:
             decision = core.decide_transition(state)
             with self.subTest(state=state):
-                self.assertEqual((decision.action, decision.reason), expected)
+                self.assertEqual(expected, (decision.action, decision.reason))
 
 
 class BudgetLimitTests(unittest.TestCase):

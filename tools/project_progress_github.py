@@ -104,11 +104,14 @@ def citations(evidence: Any) -> tuple[tuple[Citation, ...], bool]:
 
 
 def pr_closed(value: Mapping[str, Any]) -> bool:
-    """The one closed-PR rule, for a retained source and for a captured read."""
+    """The one closed-PR rule, for a retained source and for a captured read.
+
+    A merge commit alone proves nothing: the provider sets a test-merge commit on
+    an open PR too.
+    """
     return (
         str(value.get("state") or "").lower() in ("closed", "merged")
         or value.get("merged") is True
-        or bool(value.get("merge_commit_sha"))
     )
 
 

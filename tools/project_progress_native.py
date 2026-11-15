@@ -537,7 +537,9 @@ def validate_progress(
             ):
                 raise ValueError("PROJECT_PROGRESS " + _ERRORS["waiting"])
     except p.ProgressError as error:
-        raise ValueError("PROJECT_PROGRESS " + _ERRORS[error.code]) from error
+        # A code without a message still names itself and keeps the kind prefix.
+        message = _ERRORS.get(error.code, error.code)
+        raise ValueError("PROJECT_PROGRESS " + message) from error
 
 
 _INCOMPLETE = "captured source is missing or incomplete: "
