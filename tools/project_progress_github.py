@@ -20,6 +20,7 @@ from tools.project_progress import Citation, Observation, Read
 _TARGET = re.compile(r"(?:issue:[1-9]\d*/)?pr:([1-9]\d*)", re.ASCII)
 _ISSUE = re.compile(r"issue:([1-9]\d*)", re.ASCII)
 _URL_NUMBER = re.compile(r"/(?:issues|pull)/([1-9]\d*)(?:[#?].*)?$", re.ASCII)
+_NUMBER = re.compile(r"[1-9]\d*", re.ASCII)
 _HEAD = re.compile(r"[0-9a-f]{40}")
 _ATTRIBUTES = (
     "source_binding_sha256",
@@ -49,7 +50,7 @@ def target_ref(target: object) -> Ref | None:
 
 def read_ref(pointer: str, held: Mapping[str, Any]) -> Ref | None:
     number = str(held.get("number") or "")
-    if not number.isdigit():
+    if _NUMBER.fullmatch(number) is None:
         match = _URL_NUMBER.search(str(held.get("url") or pointer))
         number = match[1] if match else ""
     kind = held.get("kind")

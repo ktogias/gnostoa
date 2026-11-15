@@ -323,6 +323,23 @@ class ProviderNumberTests(unittest.TestCase):
             )
         )
 
+    def test_a_read_number_is_a_canonical_ascii_provider_number(self) -> None:
+        pull = "https://github.com/ktogias/gnostoa/pull/500"
+        other_script = "5" + chr(0x665)  # ARABIC-INDIC DIGIT FIVE
+        for number in (500, "500"):
+            with self.subTest(number=number):
+                self.assertEqual(
+                    Ref("pr", "500"),
+                    github.read_ref("opaque", {"kind": "pr", "number": number}),
+                )
+        for raw in (other_script, "0500", "0", 0, True, 5.0, -5, " 500"):
+            held: n.Native = {"kind": "pr", "number": raw}
+            with self.subTest(number=raw):
+                # A number that is not canonical names nothing by itself ...
+                self.assertIsNone(github.read_ref("opaque", held))
+                # ... and the read's own URL still decides, as for an absent number.
+                self.assertEqual(Ref("pr", "500"), github.read_ref(pull, held))
+
 
 class SourceChangeResumeTests(unittest.TestCase):
     def setUp(self) -> None:
