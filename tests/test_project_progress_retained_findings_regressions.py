@@ -572,6 +572,8 @@ class MalformedRecordBoundaryTests(unittest.TestCase):
             ("no key", {"at": _iso(NOW)}),
             ("bad time", {"key": "k", "at": "not-a-time"}),
             ("null time", {"key": "k", "at": None}),
+            ("naive time", {"key": "k", "at": "2027-01-15T08:00:00"}),
+            ("naive date", {"key": "k", "at": "2027-01-15"}),
         ):
             with (
                 self.subTest(name),
@@ -590,6 +592,7 @@ class MalformedRecordBoundaryTests(unittest.TestCase):
             ("not a mapping", {"assignments": ["x"]}),
             ("no operation", {"assignments": [{}]}),
             ("operation not a mapping", {"assignments": [{"operation": 7}]}),
+            ("null entry", {"assignments": [None]}),
             ("not a list", {"assignments": None}),
             ("absent", {}),
         ):
@@ -598,6 +601,74 @@ class MalformedRecordBoundaryTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS"),
             ):
                 n.validate_progress({}, frontier, row, claim, decoded, [claim])
+
+
+class InvalidRequestHistoryTests(unittest.TestCase):
+    """An invalid journal request holds every caller before any intent or egress."""
+
+    INVALID = (
+        ("missing time", {"key": "bad", "state": "SENT"}),
+        ("malformed time", {"key": "bad", "state": "SENT", "at": "yesterday"}),
+        ("naive time", {"key": "bad", "state": "SENT", "at": "2027-01-15T08:00:00"}),
+    )
+
+    def setUp(self) -> None:
+        self.scope: n.Native = {"kind": "work_item", "ref": "issue:499"}
+
+    def test_the_budget_and_the_decision_refuse_and_keep_the_journal(self) -> None:
+        for name, record in self.INVALID:
+            obligation = n.new_obligation("opaque-id", self.scope, NOW)
+            obligation["requests"] = [dict(record)]
+            held = copy.deepcopy(obligation)
+            store: n.Native = {"opaque-id": obligation}
+            with self.subTest(name):
+                with self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS a request"):
+                    n.request_budget(store, obligation, NOW + 1)
+                with self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS a request"):
+                    n.controller_decision(
+                        obligation,
+                        fate="DISCHARGE",
+                        reason="ASSIGNED",
+                        touched=True,
+                        linked_open=False,
+                        source_router_open=False,
+                        now=NOW + 1,
+                        obligations=store,
+                        current_input="new",
+                        last_input="old",
+                    )
+                self.assertEqual(obligation, held)
+
+    def test_a_peer_obligations_invalid_history_also_holds_the_budget(self) -> None:
+        good = n.new_obligation("good", self.scope, NOW)
+        peer = n.new_obligation("peer", {"kind": "work_item", "ref": "issue:7"}, NOW)
+        peer["requests"] = [{"key": "bad", "state": "SENT", "at": "yesterday"}]
+        with self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS a request"):
+            n.request_budget({"good": good, "peer": peer}, good, NOW + 1)
+
+    def test_a_migration_refuses_keeps_both_records_and_resumes_when_repaired(
+        self,
+    ) -> None:
+        for name, record in self.INVALID:
+            store: n.Native = {}
+            old, _, _ = n.open_obligation(
+                store, {"kind": "work_item", "ref": None}, [], "old", NOW
+            )
+            old["requests"] = [dict(record)]
+            held = copy.deepcopy(old)
+            with self.subTest(name):
+                with self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS a request"):
+                    n.migrate(store, old, self.scope, NOW + 1)
+                # The unbound obligation is neither tombstoned nor rewritten.
+                self.assertEqual(old, held)
+                self.assertEqual(old["status"], "OPEN")
+                self.assertNotIn("superseded_by", old)
+                # A replay after the record is repaired completes the migration.
+                old["requests"][0]["at"] = _iso(NOW)
+                bound = n.migrate(store, old, self.scope, NOW + 2)
+                self.assertEqual(old["status"], "MIGRATED")
+                self.assertEqual([r["key"] for r in bound["requests"]], ["bad"])
+                self.assertEqual(bound["requests"][0]["carried_from"], old["id"])
 
 
 if __name__ == "__main__":

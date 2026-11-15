@@ -192,13 +192,21 @@ def _absorb(
 
 
 def _stamp(request: Native) -> p.RequestStamp:
+    """A request's key and timezone-aware time, or one named refusal.
+
+    The journal record is never rewritten or dropped here: an invalid one holds
+    the caller before any intent, so budget history cannot be silently reset.
+    """
     try:
+        at = datetime.fromisoformat(str(request["at"]).replace("Z", "+00:00"))
+        if at.tzinfo is None:
+            raise ValueError("a request time must carry its timezone")
         return p.RequestStamp(
-            str(request["key"]), _ts(request["at"]), bool(request.get("carried_from"))
+            str(request["key"]), at.timestamp(), bool(request.get("carried_from"))
         )
-    except (KeyError, TypeError, ValueError) as error:
+    except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise ValueError(
-            "PROJECT_PROGRESS a request record needs its key and an ISO time"
+            "PROJECT_PROGRESS a request record needs its key and a timezone-aware ISO time"
         ) from error
 
 
