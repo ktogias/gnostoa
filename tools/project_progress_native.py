@@ -26,6 +26,10 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
+def _source_fingerprint(value: Mapping[str, Any]) -> str:
+    return _digest({key: item for key, item in value.items() if key != "observed"})
+
+
 def _iso(now: float) -> str:
     return datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -61,24 +65,52 @@ def progress_row(
 
 def _source(value: Native) -> p.Source:
     key = value.get("delivery_key") or value.get("key")
+    observed = value.get("observed")
+    order: p.ObservationOrder = None
+    if isinstance(observed, Mapping):
+        epoch, sequence = observed.get("epoch"), observed.get("seq")
+        if (
+            isinstance(epoch, str)
+            and epoch
+            and isinstance(sequence, int)
+            and not isinstance(sequence, bool)
+            and sequence >= 0
+        ):
+            order = (epoch, sequence)
     return p.Source(
         str(value.get("kind")),
         str(key) if key else None,
-        _digest(value),
+        _source_fingerprint(value),
         str(value.get("generation")) if "generation" in value else None,
         value.get("kind") == "scope",
+        order,
     )
 
 
-def merge_sources(obligation: Native, sources: Iterable[Native]) -> bool:
+def merge_sources(obligation: Native, sources: Iterable[Native]) -> tuple[bool, bool]:
     before = list(obligation["sources"])
     added = list(sources)
-    raw = {_digest(v): v for v in before + added}
-    merged, changed = p.merge_sources(
+    raw: dict[str, list[Native]] = {}
+    for value in before + added:
+        raw.setdefault(_source_fingerprint(value), []).append(value)
+    merged, changed, refresh = p.merge_sources(
         tuple(_source(v) for v in before), tuple(_source(v) for v in added)
     )
-    obligation["sources"] = [raw[s.fingerprint] for s in merged]
-    return changed
+    retained = []
+    for source in merged:
+        candidates = raw[source.fingerprint]
+        retained.append(
+            next(
+                (
+                    value
+                    for value in candidates
+                    if _source(value).observed == source.observed
+                ),
+                candidates[0],
+            )
+        )
+    obligation["sources"] = retained
+    return changed, refresh
 
 
 def new_obligation(oid: str, scope: Native, now: float) -> Native:
@@ -116,13 +148,35 @@ def open_obligation(
     origin: str | None,
     now: float,
     chains: Native | None = None,
-) -> tuple[Native, bool]:
+) -> tuple[Native, bool, str | None]:
     oid = scope_identity(scope, origin)
     obligation = obligations.get(oid)
     previous = str(obligation["status"]) if obligation is not None else None
     if obligation is None:
         obligation = obligations[oid] = new_obligation(oid, scope, now)
-    added = merge_sources(obligation, sources)
+    elif previous == "MIGRATED":
+        successor_id = obligation.get("superseded_by")
+        successor = (
+            obligations.get(str(successor_id)) if successor_id is not None else None
+        )
+        if successor is None or successor.get("status") == "MIGRATED":
+            return obligation, False, "SOURCE_PENDING/REFRESH"
+        successor_previous = str(successor["status"])
+        added, refresh = merge_sources(successor, sources)
+        created, rearmed = p.opening(successor_previous, added)
+        if created:
+            successor.update(
+                status="OPEN", reopened_at=_iso(now), reopened_by="SCOPE_RETURNED"
+            )
+        _merge_chains(successor, chains or {})
+        if rearmed:
+            reopen(successor, now, "NEW_SOURCE")
+        return (
+            successor,
+            created or added,
+            "SOURCE_PENDING/REFRESH" if refresh else None,
+        )
+    added, refresh = merge_sources(obligation, sources)
     created, rearmed = p.opening(previous, added)
     if created and previous is not None:
         obligation.update(
@@ -131,7 +185,11 @@ def open_obligation(
     _merge_chains(obligation, chains or {})
     if rearmed:
         reopen(obligation, now, "NEW_SOURCE")
-    return obligation, created or added
+    return (
+        obligation,
+        created or added,
+        "SOURCE_PENDING/REFRESH" if refresh else None,
+    )
 
 
 def _stamp(request: Native) -> p.RequestStamp:
@@ -290,7 +348,8 @@ def _evaluation(
         provider.closed_targets(row.get("sources") or []),
         frontier.get("coverage") == "COMPLETE",
         isinstance(job.get("authority_context"), dict)
-        and (context.get("_coverage") or {}).get("coverage", "COMPLETE") == "COMPLETE",
+        and isinstance(context.get("_coverage"), dict)
+        and context["_coverage"].get("coverage") == "COMPLETE",
         tuple(gates),
         p.Citation(
             "frontier:" + row["id"],
@@ -300,25 +359,68 @@ def _evaluation(
     )
 
 
-def _result(claim: Native) -> p.Result:
+def _result(claim: Native, row: Native) -> p.Result:
     mode = str(claim.get("disposition") or "")
+    row_id = str(row.get("id") or "")
+    identity_valid = bool(row_id) and claim.get("id") == row_id
     evidence, evidence_valid = provider.citations(claim.get("evidence"))
     index = claim.get("assignment_index")
     need = claim.get("need", [])
+    waiting_base = {"id", "disposition", "owner", "reason", "resume_event"}
+    progress_wait = (
+        row.get("kind") == "PROJECT_PROGRESS"
+        and identity_valid
+        and set(claim) == waiting_base
+        and isinstance(claim.get("resume_event"), str)
+        and claim["resume_event"].startswith("gate:")
+        and bool(claim["resume_event"][len("gate:") :])
+    )
+    waiting_evidence = (
+        set(claim) == waiting_base | {"evidence_sha256"}
+        and isinstance(claim.get("evidence_sha256"), str)
+        and bool(claim.get("evidence_sha256"))
+    )
+    waiting_dependency = (
+        set(claim)
+        == waiting_base
+        | {"evidence_sha256", "dependency_pr_number", "dependency_head_sha"}
+        and isinstance(claim.get("evidence_sha256"), str)
+        and bool(claim.get("evidence_sha256"))
+        and type(claim.get("dependency_pr_number")) is int
+        and claim["dependency_pr_number"] > 0
+        and isinstance(claim.get("dependency_head_sha"), str)
+    )
+    waiting_check = (
+        set(claim) == waiting_base | {"evidence_sha256", "check_run_id"}
+        and isinstance(claim.get("evidence_sha256"), str)
+        and bool(claim.get("evidence_sha256"))
+        and type(claim.get("check_run_id")) is int
+        and claim["check_run_id"] > 0
+    )
     shapes = {
-        "ASSIGNED": set(claim) == {"id", "disposition", "assignment_index", "evidence"}
+        "ASSIGNED": identity_valid
+        and set(claim) == {"id", "disposition", "assignment_index", "evidence"}
         and type(index) is int
         and evidence_valid,
-        "WAITING": set(claim)
-        == {"id", "disposition", "owner", "reason", "resume_event"}
+        "WAITING": (
+            progress_wait
+            or (
+                isinstance(claim.get("id"), str)
+                and bool(claim.get("id"))
+                and (waiting_evidence or waiting_dependency or waiting_check)
+            )
+        )
         and isinstance(claim.get("owner"), str)
         and isinstance(claim.get("reason"), str),
-        "REFRESH": set(claim) - {"need"} == {"id", "disposition", "reason"}
+        "REFRESH": identity_valid
+        and set(claim) - {"need"} == {"id", "disposition", "reason"}
         and isinstance(claim.get("reason"), str)
         and isinstance(need, list)
         and len(need) <= 4
         and all(type(n) is int and n > 0 for n in need),
-        "QUIESCENT": set(claim) == {"id", "disposition", "evidence"} and evidence_valid,
+        "QUIESCENT": identity_valid
+        and set(claim) == {"id", "disposition", "evidence"}
+        and evidence_valid,
     }
     return p.Result(
         mode,
@@ -327,7 +429,13 @@ def _result(claim: Native) -> p.Result:
         index if type(index) is int else None,
         str(claim.get("owner") or ""),
         str(claim.get("reason") or ""),
-        str(claim.get("resume_event") or ""),
+        (
+            str(claim.get("resume_event") or "")
+            if mode == "WAITING" and progress_wait
+            else "gate:" + str(claim.get("id") or "")
+            if mode == "WAITING"
+            else str(claim.get("resume_event") or "")
+        ),
         tuple(str(n) for n in need) if isinstance(need, list) else (),
     )
 
@@ -336,7 +444,7 @@ _ERRORS = {
     "assignment_shape": "assignment needs assignment_index and evidence",
     "closed_target": "never dispatches a closed PR; it is source evidence only",
     "scope_binding": "assignment must bind its scope (its CURRENT complete Work Item read) and the operation's own captured CURRENT target read",
-    "waiting": "wait needs an owner, a reason and resume_event gate:<id> of a real gate this frontier captured, whose own typed wait names the same owner",
+    "waiting": "wait needs a supported exact gate binding captured by this frontier and owned by the named owner",
     "refresh": "refresh is lawful while the scope's own read is not CURRENT or COMPLETE, or naming (need: up to 4 Work Item numbers) the reads it still needs",
     "quiescence": "quiescence needs its own Work Item's CURRENT read, under COMPLETE coverage; other fresh evidence proves no-work for nothing",
     "result_mode": "needs one typed result (ASSIGNED, WAITING, REFRESH or QUIESCENT); prose or another state cannot resolve it",
@@ -353,8 +461,38 @@ def validate_progress(
 ) -> None:
     try:
         p.validate_result(
-            _evaluation(job, frontier, row, decoded, claims), _result(claim)
+            _evaluation(job, frontier, row, decoded, claims),
+            _result(claim, row),
         )
+        if claim.get("disposition") == "WAITING":
+            progress_pointer = (
+                row.get("kind") == "PROJECT_PROGRESS"
+                and claim.get("id") == row.get("id")
+                and isinstance(claim.get("resume_event"), str)
+                and claim["resume_event"].startswith("gate:")
+                and bool(claim["resume_event"][len("gate:") :])
+            )
+            binding_id = (
+                str(claim.get("resume_event") or "")[len("gate:") :]
+                if progress_pointer
+                else str(claim.get("id") or "")
+            )
+            binding_rows = [
+                item
+                for item in frontier["rows"]
+                if isinstance(item, dict) and item.get("id") == binding_id
+            ]
+            binding_claims = [
+                item
+                for item in claims
+                if isinstance(item, dict) and item.get("id") == binding_id
+            ]
+            if (
+                len(binding_rows) != 1
+                or len(binding_claims) != 1
+                or gate_binding(job, binding_rows[0], binding_claims[0]) is None
+            ):
+                raise ValueError("PROJECT_PROGRESS " + _ERRORS["waiting"])
     except p.ProgressError as error:
         raise ValueError("PROJECT_PROGRESS " + _ERRORS[error.code]) from error
 
@@ -365,6 +503,13 @@ def source_changes(
     sources = tuple(pointers)
     for pointer in sources:
         if pointer not in held:
+            return (
+                "SOURCE_PENDING",
+                "captured source is missing or incomplete: " + pointer,
+            )
+        if not isinstance(held[pointer], Mapping) or (
+            pointer in fresh and not isinstance(fresh[pointer], Mapping)
+        ):
             return (
                 "SOURCE_PENDING",
                 "captured source is missing or incomplete: " + pointer,
@@ -493,7 +638,11 @@ def gate_resume(
     """
     resume = gate.get("resume_subject") or {}
     observed = record.get("observed_at")
-    if not provider.valid_subject(resume) or type(observed) not in (int, float):
+    if (
+        not provider.valid_subject(resume)
+        or type(observed) not in (int, float)
+        or type(gate.get("at")) not in (int, float)
+    ):
         return None
     item = (record.get("payload") or {}).get("item") or {}
     selector = gate.get("resume_event")

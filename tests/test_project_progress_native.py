@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import unittest
 from datetime import UTC, datetime
 
@@ -29,7 +30,10 @@ class NativeProgressTests(unittest.TestCase):
             for number in (496, 325)
         }
         self.job: n.Native = {
-            "authority_context": self.reads,
+            "authority_context": {
+                **self.reads,
+                "_coverage": {"coverage": "COMPLETE"},
+            },
             "continuation_contract": {"frontier_sha256": "lineage"},
         }
         self.decoded: n.Native = {
@@ -58,6 +62,128 @@ class NativeProgressTests(unittest.TestCase):
             datetime.fromtimestamp(self.now, UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
 
+    def test_late_older_scope_delivery_after_restart_does_not_rearm(self) -> None:
+        store: n.Native = {}
+        newer = {
+            "kind": "scope",
+            "generation": "g2",
+            "observed": {"epoch": "reader-a", "seq": 2},
+        }
+        obligation, added, refresh = n.open_obligation(
+            store, self.scope, [newer], None, self.now
+        )
+        self.assertTrue(added)
+        self.assertIsNone(refresh)
+        obligation["status"] = "DISCHARGED"
+        store = json.loads(json.dumps(store))
+        older = {
+            "kind": "scope",
+            "generation": "g1",
+            "observed": {"epoch": "reader-a", "seq": 1},
+        }
+        obligation, added, refresh = n.open_obligation(
+            store, self.scope, [older], None, self.now + 1
+        )
+        self.assertFalse(added)
+        self.assertIsNone(refresh)
+        self.assertEqual(obligation["status"], "DISCHARGED")
+        self.assertEqual(obligation["sources"], [newer])
+
+    def test_scope_observation_order_is_not_part_of_source_fingerprint(self) -> None:
+        first = {
+            "kind": "scope",
+            "generation": "g1",
+            "observed": {"epoch": "reader-a", "seq": 1},
+        }
+        later = {
+            "kind": "scope",
+            "generation": "g1",
+            "observed": {"epoch": "reader-a", "seq": 3},
+        }
+        self.assertEqual(n._source(first).fingerprint, n._source(later).fingerprint)
+
+    def test_newer_observation_accepts_digest_reversion(self) -> None:
+        store: n.Native = {}
+        for generation, sequence in (("g1", 1), ("g2", 2), ("g1", 3)):
+            source = {
+                "kind": "scope",
+                "generation": generation,
+                "observed": {"epoch": "reader-a", "seq": sequence},
+            }
+            obligation, added, refresh = n.open_obligation(
+                store, self.scope, [source], None, self.now + sequence
+            )
+            self.assertTrue(added)
+            self.assertIsNone(refresh)
+        self.assertEqual(obligation["sources"], [source])
+
+    def test_duplicate_observation_cannot_rewind_retained_raw_order_after_reload(
+        self,
+    ) -> None:
+        store: n.Native = {}
+        held = {
+            "kind": "scope",
+            "generation": "g1",
+            "observed": {"epoch": "reader-a", "seq": 3},
+        }
+        obligation, added, refresh = n.open_obligation(
+            store, self.scope, [held], None, self.now
+        )
+        self.assertTrue(added)
+        self.assertIsNone(refresh)
+
+        duplicate = {
+            **held,
+            "observed": {"epoch": "reader-a", "seq": 1},
+        }
+        obligation, added, refresh = n.open_obligation(
+            store, self.scope, [duplicate], None, self.now + 1
+        )
+        self.assertFalse(added)
+        self.assertIsNone(refresh)
+        self.assertEqual(obligation["sources"], [held])
+
+        store = json.loads(json.dumps(store))
+        newer_generation = {
+            "kind": "scope",
+            "generation": "g2",
+            "observed": {"epoch": "reader-a", "seq": 2},
+        }
+        obligation, added, refresh = n.open_obligation(
+            store, self.scope, [newer_generation], None, self.now + 2
+        )
+        self.assertFalse(added)
+        self.assertIsNone(refresh)
+        self.assertEqual(obligation["sources"], [held])
+
+    def test_missing_or_different_epoch_keeps_scope_and_requests_refresh(self) -> None:
+        held = {
+            "kind": "scope",
+            "generation": "g2",
+            "observed": {"epoch": "reader-a", "seq": 2},
+        }
+        for incoming in (
+            {"kind": "scope", "generation": "g1"},
+            {
+                "kind": "scope",
+                "generation": "g1",
+                "observed": {"epoch": "reader-b", "seq": 3},
+            },
+        ):
+            with self.subTest(incoming=incoming):
+                store: n.Native = {}
+                obligation, _, _ = n.open_obligation(
+                    store, self.scope, [held], None, self.now
+                )
+                obligation["status"] = "DISCHARGED"
+                obligation, added, refresh = n.open_obligation(
+                    store, self.scope, [incoming], None, self.now + 1
+                )
+                self.assertFalse(added)
+                self.assertEqual(refresh, "SOURCE_PENDING/REFRESH")
+                self.assertEqual(obligation["sources"], [held])
+                self.assertEqual(obligation["status"], "DISCHARGED")
+
     def test_scope_and_distinct_target_bind_to_real_captured_reads(self) -> None:
         self.validate()
         for remove in (0, 1):
@@ -68,6 +194,24 @@ class NativeProgressTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "bind its scope"),
             ):
                 self.validate(claim)
+
+    def test_claim_identity_must_match_the_row_being_validated(self) -> None:
+        for claim_id in ("another-row", None):
+            claim = copy.deepcopy(self.claim)
+            if claim_id is None:
+                claim.pop("id")
+            else:
+                claim["id"] = claim_id
+            with (
+                self.subTest(claim_id=claim_id),
+                self.assertRaises(ValueError),
+            ):
+                self.validate(claim)
+
+    def test_missing_authority_context_coverage_fails_closed(self) -> None:
+        self.job["authority_context"].pop("_coverage")
+        with self.assertRaisesRegex(ValueError, "bind its scope"):
+            self.validate()
 
     def test_same_scope_frontier_token_does_not_replace_the_source(self) -> None:
         self.decoded["assignments"][0]["operation"]["operation_target"] = "issue:496"
@@ -100,11 +244,28 @@ class NativeProgressTests(unittest.TestCase):
         assert missing is not None
         self.assertEqual(missing[0], "SOURCE_PENDING")
 
+    def test_non_mapping_source_entries_remain_source_pending(self) -> None:
+        pointer = next(iter(self.reads))
+        held = {pointer: copy.deepcopy(self.reads[pointer])}
+        fresh = copy.deepcopy(held)
+        invalid_entries: tuple[object, ...] = (None, 17, "invalid", [])
+        for invalid_entry in invalid_entries:
+            with self.subTest(side="held", entry=invalid_entry):
+                result = n.source_changes({pointer: invalid_entry}, fresh, (pointer,))
+                self.assertIsNotNone(result)
+                assert result is not None
+                self.assertEqual(result[0], "SOURCE_PENDING")
+            with self.subTest(side="fresh", entry=invalid_entry):
+                result = n.source_changes(held, {pointer: invalid_entry}, (pointer,))
+                self.assertIsNotNone(result)
+                assert result is not None
+                self.assertEqual(result[0], "SOURCE_PENDING")
+
     def test_migration_keeps_tombstone_request_identity_and_budget_attribution(
         self,
     ) -> None:
         store: n.Native = {}
-        unbound, _ = n.open_obligation(
+        unbound, _, _ = n.open_obligation(
             store, {"kind": "work_item", "ref": None}, [], "old", self.now
         )
         unbound["requests"] = [
@@ -128,10 +289,10 @@ class NativeProgressTests(unittest.TestCase):
 
     def test_migration_retains_each_overlapping_request_record(self) -> None:
         store: n.Native = {}
-        old, _ = n.open_obligation(
+        old, _, _ = n.open_obligation(
             store, {"kind": "work_item", "ref": None}, [], "old", self.now
         )
-        bound, _ = n.open_obligation(store, self.scope, [], None, self.now)
+        bound, _, _ = n.open_obligation(store, self.scope, [], None, self.now)
         at = datetime.fromtimestamp(self.now, UTC).isoformat()
         old["requests"] = [{"key": "same-key", "at": at, "state": "INTENT"}]
         bound["requests"] = [{"key": "same-key", "at": at, "state": "SENT"}]
@@ -214,6 +375,26 @@ class NativeProgressTests(unittest.TestCase):
                 seen=["one-material"],
             )
         )
+        missing_gate_time = copy.deepcopy(gate)
+        missing_gate_time.pop("at")
+        self.assertIsNone(
+            n.gate_resume(
+                missing_gate_time, record, fact, self.now + 2, owner_review=True
+            )
+        )
+        for invalid_at in (None, "not-a-timestamp", True):
+            invalid_gate_time = copy.deepcopy(gate)
+            invalid_gate_time["at"] = invalid_at
+            with self.subTest(invalid_at=invalid_at):
+                self.assertIsNone(
+                    n.gate_resume(
+                        invalid_gate_time,
+                        record,
+                        fact,
+                        self.now + 2,
+                        owner_review=True,
+                    )
+                )
         for mismatch in ("number", "head"):
             wrong_record = copy.deepcopy(record)
             wrong_fact = copy.deepcopy(fact)
@@ -234,6 +415,286 @@ class NativeProgressTests(unittest.TestCase):
         self.assertIsNone(
             n.gate_resume(gate, record, fact, self.now + 2, owner_review=True)
         )
+
+    def test_waiting_claims_bind_to_supported_gate_sources(self) -> None:
+        scope: n.Native = {"kind": "work_item", "ref": "issue:499"}
+        row = n.progress_row(scope, [])
+        subject = {"pr_number": 500, "head_sha": "a" * 40}
+        dependency = {"pr_number": 600, "head_sha": "b" * 40}
+        cases: tuple[tuple[str, n.Native, n.Native, n.Native], ...] = (
+            (
+                "human_review",
+                {
+                    "id": "human-gate",
+                    "kind": "HUMAN_MERGE",
+                    "source_kind": "canonical_criterion",
+                    "subject": subject,
+                    "source_sha256": "human-evidence",
+                    "canonical": {"criterion": "M16"},
+                },
+                {
+                    "id": "human-gate",
+                    "disposition": "WAITING",
+                    "owner": "human:ktogias",
+                    "reason": "Await the exact-head review.",
+                    "resume_event": "native_exact_head_review",
+                    "evidence_sha256": "human-evidence",
+                },
+                {},
+            ),
+            (
+                "dependency",
+                {
+                    "id": "dependency-gate",
+                    "kind": "TECHNICAL",
+                    "subject": subject,
+                    "source_sha256": "dependency-evidence",
+                },
+                {
+                    "id": "dependency-gate",
+                    "disposition": "WAITING",
+                    "owner": "human:ktogias",
+                    "reason": "Await the captured dependency check.",
+                    "resume_event": "native_exact_head_review",
+                    "evidence_sha256": "dependency-evidence",
+                    "dependency_pr_number": 600,
+                    "dependency_head_sha": "b" * 40,
+                },
+                {
+                    "continuation_frontier": {
+                        "dependency_waits": [
+                            {
+                                "subject": subject,
+                                "dependency": dependency,
+                                "evidence_sha256": "dependency-evidence",
+                                "check_run_id": 123,
+                                "protected_revision": "protected",
+                            }
+                        ]
+                    }
+                },
+            ),
+            (
+                "check_run",
+                {
+                    "id": "check-gate",
+                    "kind": "TECHNICAL",
+                    "source_kind": "canonical_criterion",
+                    "subject": subject,
+                    "source_sha256": "check-evidence",
+                    "canonical": {"check_run_id": 456},
+                },
+                {
+                    "id": "check-gate",
+                    "disposition": "WAITING",
+                    "owner": "provider:canonical-gate",
+                    "reason": "Await the exact-head check update.",
+                    "resume_event": "provider_source_changed",
+                    "evidence_sha256": "check-evidence",
+                    "check_run_id": 456,
+                },
+                {
+                    "continuation_frontier": {
+                        "rows": [
+                            {
+                                "id": "check-gate",
+                                "kind": "TECHNICAL",
+                                "source_kind": "canonical_criterion",
+                                "subject": subject,
+                                "source_sha256": "check-evidence",
+                                "canonical": {"check_run_id": 456},
+                            }
+                        ]
+                    }
+                },
+            ),
+        )
+        for name, gate_row, claim, extra_job in cases:
+            with self.subTest(name=name):
+                job: n.Native = {
+                    "authority_context": {
+                        "_coverage": {"coverage": "COMPLETE"},
+                    },
+                    "continuation_contract": {"frontier_sha256": "lineage"},
+                    **extra_job,
+                }
+                frontier = {"coverage": "COMPLETE", "rows": [row, gate_row]}
+                n.validate_progress(
+                    job, frontier, row, claim, {"assignments": []}, [claim]
+                )
+                binding = n.gate_binding(job, gate_row, claim)
+                self.assertIsNotNone(binding)
+                assert binding is not None
+                self.assertEqual(binding["row"], gate_row["id"])
+                self.assertEqual(binding["resume_event"], claim["resume_event"])
+                self.assertEqual(binding["head_sha"], subject["head_sha"])
+                if name == "dependency":
+                    self.assertEqual(binding["resume_subject"], dependency)
+                    self.assertEqual(binding["canonical"]["check_run_id"], 123)
+                elif name == "check_run":
+                    self.assertEqual(binding["canonical"]["check_run_id"], 456)
+                invalid_claims = []
+                if "evidence_sha256" in claim:
+                    invalid_claims.append(
+                        {**claim, "evidence_sha256": "different-evidence"}
+                    )
+                if name == "dependency":
+                    invalid_claims.append({**claim, "dependency_head_sha": "c" * 40})
+                elif name == "check_run":
+                    invalid_claims.append({**claim, "check_run_id": 789})
+                else:
+                    invalid_claims.append(
+                        {**claim, "resume_event": "unsupported_event"}
+                    )
+                for invalid in invalid_claims:
+                    with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                        n.validate_progress(
+                            job,
+                            frontier,
+                            row,
+                            invalid,
+                            {"assignments": []},
+                            [invalid],
+                        )
+
+    def test_progress_claim_keeps_its_identity_and_resolves_distinct_gate_row(
+        self,
+    ) -> None:
+        progress_claim: n.Native = {
+            "id": self.row["id"],
+            "disposition": "WAITING",
+            "owner": "human:ktogias",
+            "reason": "Await the exact-head review.",
+            "resume_event": "gate:gate-G",
+        }
+        head = "a" * 40
+        gate_row: n.Native = {
+            "id": "gate-G",
+            "kind": "HUMAN_MERGE",
+            "source_kind": "canonical_criterion",
+            "subject": {"pr_number": 500, "head_sha": head},
+            "source_sha256": "gate-evidence",
+            "canonical": {"criterion": "M16"},
+        }
+        gate_claim: n.Native = {
+            "id": "gate-G",
+            "disposition": "WAITING",
+            "owner": "human:ktogias",
+            "reason": "Await the exact-head review.",
+            "resume_event": "native_exact_head_review",
+            "evidence_sha256": "gate-evidence",
+        }
+        frontier = {"coverage": "COMPLETE", "rows": [self.row, gate_row]}
+        claims = [progress_claim, gate_claim]
+
+        n.validate_progress(
+            self.job, frontier, self.row, progress_claim, {"assignments": []}, claims
+        )
+        binding = n.gate_binding(self.job, gate_row, gate_claim)
+        self.assertIsNotNone(binding)
+        assert binding is not None
+        self.assertEqual(binding["row"], "gate-G")
+        self.assertEqual(binding["resume_event"], "native_exact_head_review")
+        self.assertEqual(binding["head_sha"], head)
+
+        gate = {**binding, "at": self.now}
+        record = {
+            "kind": "review",
+            "number": 500,
+            "material_id": "review:exact-head",
+            "observed_at": self.now + 1,
+            "payload": {
+                "item": {
+                    "commit_id": head,
+                    "submitted_at": datetime.fromtimestamp(
+                        self.now + 0.5, UTC
+                    ).isoformat(),
+                }
+            },
+        }
+        fact = {"head": head, "provider_id": 123}
+        self.assertEqual(
+            n.gate_resume(gate, record, fact, self.now + 2, owner_review=True),
+            "OWNER_REVIEW",
+        )
+
+        invalid_cases = (
+            ({**progress_claim, "id": "wrong-progress"}, claims, frontier),
+            ({**progress_claim, "resume_event": "gate:missing"}, claims, frontier),
+            (progress_claim, claims, {"coverage": "COMPLETE", "rows": [self.row]}),
+            (
+                progress_claim,
+                claims,
+                {"coverage": "COMPLETE", "rows": [self.row, gate_row, gate_row]},
+            ),
+            (progress_claim, [progress_claim], frontier),
+            (progress_claim, [*claims, gate_claim], frontier),
+            (
+                progress_claim,
+                [
+                    progress_claim,
+                    {**gate_claim, "evidence_sha256": "different-evidence"},
+                ],
+                frontier,
+            ),
+            (
+                progress_claim,
+                [
+                    progress_claim,
+                    {**gate_claim, "resume_event": "unsupported_event"},
+                ],
+                frontier,
+            ),
+        )
+        for invalid_claim, invalid_claims, invalid_frontier in invalid_cases:
+            with (
+                self.subTest(invalid_claim=invalid_claim),
+                self.assertRaises(ValueError),
+            ):
+                n.validate_progress(
+                    self.job,
+                    invalid_frontier,
+                    self.row,
+                    invalid_claim,
+                    {"assignments": []},
+                    invalid_claims,
+                )
+
+    def test_waiting_claims_with_missing_or_mismatched_binding_fail_closed(
+        self,
+    ) -> None:
+        scope: n.Native = {"kind": "work_item", "ref": "issue:499"}
+        row = n.progress_row(scope, [])
+        gate_row: n.Native = {
+            "id": "human-gate",
+            "kind": "HUMAN_MERGE",
+            "source_kind": "canonical_criterion",
+            "subject": {"pr_number": 500, "head_sha": "a" * 40},
+            "source_sha256": "captured-evidence",
+            "canonical": {"criterion": "M16"},
+        }
+        claim: n.Native = {
+            "id": "human-gate",
+            "disposition": "WAITING",
+            "owner": "human:ktogias",
+            "reason": "Await the exact-head review.",
+            "resume_event": "native_exact_head_review",
+            "evidence_sha256": "captured-evidence",
+        }
+        job: n.Native = {
+            "authority_context": {"_coverage": {"coverage": "COMPLETE"}},
+            "continuation_contract": {"frontier_sha256": "lineage"},
+        }
+        frontier = {"coverage": "COMPLETE", "rows": [row, gate_row]}
+        for invalid in (
+            {key: value for key, value in claim.items() if key != "evidence_sha256"},
+            {**claim, "evidence_sha256": "different-evidence"},
+            {**claim, "resume_event": "unsupported_event"},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                n.validate_progress(
+                    job, frontier, row, invalid, {"assignments": []}, [invalid]
+                )
 
 
 if __name__ == "__main__":

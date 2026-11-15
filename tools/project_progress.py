@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from tools.agent_review_model import Ref
 
 Observation = float | int | str | None
+ObservationOrder = tuple[str, int] | None
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,14 @@ class Source:
     fingerprint: str
     generation: str | None = None
     replaces_category: bool = False
+    observed: ObservationOrder = None
+
+
+def newer(candidate: ObservationOrder, held: ObservationOrder) -> bool | None:
+    """Compare acquirer order, returning None when the observations are incomparable."""
+    if candidate is None or held is None or candidate[0] != held[0]:
+        return None
+    return candidate[1] > held[1]
 
 
 def scope_identity(scope: Ref, origin: str | None = None) -> str:
@@ -37,15 +46,26 @@ def scope_identity(scope: Ref, origin: str | None = None) -> str:
 
 def merge_sources(
     current: Sequence[Source], additions: Sequence[Source]
-) -> tuple[tuple[Source, ...], bool]:
+) -> tuple[tuple[Source, ...], bool, bool]:
     result = list(current)
     added = False
+    refresh = False
     for source in additions:
         if source.replaces_category:
-            if any(
-                s.category == source.category and s.generation == source.generation
-                for s in result
-            ):
+            held = [s for s in result if s.category == source.category]
+            if any(s.generation == source.generation for s in held):
+                continue
+            if source.observed is None:
+                refresh = True
+                continue
+            comparisons = [newer(source.observed, s.observed) for s in held]
+            if any(comparison is None for comparison in comparisons):
+                refresh = True
+                continue
+            if held and not all(comparisons):
+                if all(newer(s.observed, source.observed) is True for s in held):
+                    continue
+                refresh = True
                 continue
             result = [s for s in result if s.category != source.category]
         if any(
@@ -56,7 +76,7 @@ def merge_sources(
             continue
         result.append(source)
         added = True
-    return tuple(result), added
+    return tuple(result), added, refresh
 
 
 def opening(status: str | None, added: bool) -> tuple[bool, bool]:
@@ -92,7 +112,7 @@ def request_budget(
     window_seconds: float = 86400,
     daily_cap: int = 12,
 ) -> str | None:
-    if sum(now - r.at < window_seconds for r in identity) >= per_identity:
+    if sum(0 <= now - r.at < window_seconds for r in identity) >= per_identity:
         return "IDENTITY_CAP"
     day = datetime.fromtimestamp(now, UTC).date()
     used = sum(

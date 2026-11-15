@@ -28,13 +28,57 @@ class ProgressOwnerTests(unittest.TestCase):
         )
 
     def test_sources_deduplicate_and_replace_only_the_selected_generation(self) -> None:
-        old = p.Source("selection", None, "old", "g1", True)
+        old = p.Source("selection", None, "old", "g1", True, ("reader", 1))
         completion = p.Source("completion", "opaque-key", "event")
-        new = p.Source("selection", None, "new", "g2", True)
-        merged, added = p.merge_sources((old, completion), (new, completion))
+        new = p.Source("selection", None, "new", "g2", True, ("reader", 2))
+        merged, added, pending = p.merge_sources((old, completion), (new, completion))
         self.assertTrue(added)
+        self.assertFalse(pending)
         self.assertEqual(merged, (completion, new))
-        self.assertEqual(p.merge_sources(merged, (new, completion)), (merged, False))
+        self.assertEqual(
+            p.merge_sources(merged, (new, completion)), (merged, False, False)
+        )
+
+    def test_late_older_scope_generation_does_not_replace_or_rearm(self) -> None:
+        old = p.Source("scope", None, "old", "g1", True, ("reader-a", 1))
+        held = p.Source("scope", None, "newer", "g2", True, ("reader-a", 2))
+        current, added, pending = p.merge_sources((), (held,))
+        self.assertTrue(added)
+        self.assertFalse(pending)
+        current, added, pending = p.merge_sources(current, (old,))
+        self.assertFalse(added)
+        self.assertFalse(pending)
+        self.assertEqual(current, (held,))
+        self.assertEqual(p.opening("DISCHARGED", added), (False, False))
+
+    def test_newer_observation_accepts_a_legitimate_generation_reversion(self) -> None:
+        first = p.Source("scope", None, "g1", "g1", True, ("reader-a", 1))
+        second = p.Source("scope", None, "g2", "g2", True, ("reader-a", 2))
+        reverted = p.Source("scope", None, "g1-again", "g1", True, ("reader-a", 3))
+        current, added, pending = p.merge_sources((), (first,))
+        self.assertTrue(added)
+        self.assertFalse(pending)
+        current, added, pending = p.merge_sources(current, (second,))
+        self.assertTrue(added)
+        self.assertFalse(pending)
+        current, added, pending = p.merge_sources(current, (reverted,))
+        self.assertTrue(added)
+        self.assertFalse(pending)
+        self.assertEqual(current, (reverted,))
+
+    def test_missing_or_incomparable_observation_requests_refresh(self) -> None:
+        held = p.Source("scope", None, "held", "g2", True, ("reader-a", 2))
+        missing = p.Source("scope", None, "missing", "g1", True)
+        other_epoch = p.Source("scope", None, "other", "g1", True, ("reader-b", 3))
+        equal_order_conflict = p.Source(
+            "scope", None, "equal", "g1", True, ("reader-a", 2)
+        )
+        for incoming in (missing, other_epoch, equal_order_conflict):
+            with self.subTest(incoming=incoming):
+                current, added, pending = p.merge_sources((held,), (incoming,))
+                self.assertFalse(added)
+                self.assertTrue(pending)
+                self.assertEqual(current, (held,))
 
     def test_dirty_disposition_never_discharges_and_intent_reemits_same_key(
         self,
@@ -87,6 +131,17 @@ class ProgressOwnerTests(unittest.TestCase):
         self.assertIsNone(p.request_budget(stamps, stamps, now + 86401))
         carried = tuple(p.RequestStamp(str(n), now - n, True) for n in (1, 2, 3))
         self.assertIsNone(p.request_budget((), carried, now, daily_cap=1))
+
+    def test_future_dated_stamps_do_not_count_in_the_rolling_window(self) -> None:
+        now = 1_800_000_000.0
+        past = (p.RequestStamp("a", now - 1), p.RequestStamp("b", now - 2))
+        future = p.RequestStamp("c", now + 60)
+        self.assertIsNone(p.request_budget((*past, future), (*past, future), now))
+        third = p.RequestStamp("d", now - 3)
+        self.assertEqual(
+            p.request_budget((*past, third, future), (*past, third, future), now),
+            "IDENTITY_CAP",
+        )
 
     @staticmethod
     def evaluation() -> p.Evaluation:

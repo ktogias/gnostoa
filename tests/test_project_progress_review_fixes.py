@@ -16,13 +16,13 @@ class MigrationRearmTests(unittest.TestCase):
         self.scope = {"kind": "work_item", "ref": "issue:496"}
         self.original = {"kind": "operation", "delivery_key": "completed-step"}
         self.store: n.Native = {}
-        self.bound, _ = n.open_obligation(
+        self.bound, _, _ = n.open_obligation(
             self.store, self.scope, [self.original], None, self.now
         )
         self.bound.update(status="DISCHARGED", discharge="QUIESCENT")
         self.bound["requests"] = [self.request("bound-request", self.now, "SENT")]
         self.bound["requests"][0]["input_sha256"] = self.fingerprint(self.bound)
-        self.old, _ = n.open_obligation(
+        self.old, _, _ = n.open_obligation(
             self.store,
             {"kind": "work_item", "ref": None},
             [self.original],
@@ -124,6 +124,61 @@ class MigrationRearmTests(unittest.TestCase):
         )
         self.assertEqual(old_on_disk["status"], "MIGRATED")
         self.assertEqual(old_on_disk["superseded_by"], bound_again["id"])
+
+    def test_replaying_migrated_origin_keeps_single_successor_after_restart(
+        self,
+    ) -> None:
+        self.old["requests"] = [
+            self.request("original-request", self.now + 1, "INTENT")
+        ]
+        bound = n.migrate(self.store, self.old, self.scope, self.now + 2)
+        self.assertEqual(self.old["status"], "MIGRATED")
+        expected_requests = copy.deepcopy(bound["requests"])
+        self.store = json.loads(json.dumps(self.store))
+        replayed, added, refresh = n.open_obligation(
+            self.store,
+            {"kind": "work_item", "ref": None},
+            [self.original],
+            "unresolved-step",
+            self.now + 3,
+        )
+        self.assertFalse(added)
+        self.assertIsNone(refresh)
+        self.assertEqual(replayed["id"], bound["id"])
+        self.assertEqual(self.store[self.old["id"]]["status"], "MIGRATED")
+        self.assertEqual(replayed["requests"], expected_requests)
+        self.assertEqual(
+            [
+                obligation["id"]
+                for obligation in self.store.values()
+                if obligation["status"] != "MIGRATED"
+            ],
+            [bound["id"]],
+        )
+        replayed_again, _, _ = n.open_obligation(
+            self.store,
+            {"kind": "work_item", "ref": None},
+            [self.original],
+            "unresolved-step",
+            self.now + 4,
+        )
+        self.assertEqual(replayed_again["id"], bound["id"])
+        self.assertEqual(self.store[self.old["id"]]["status"], "MIGRATED")
+
+    def test_replaying_migrated_origin_without_successor_fails_closed(self) -> None:
+        bound = n.migrate(self.store, self.old, self.scope, self.now + 1)
+        del self.store[bound["id"]]
+        replayed, added, refresh = n.open_obligation(
+            self.store,
+            {"kind": "work_item", "ref": None},
+            [self.original],
+            "unresolved-step",
+            self.now + 2,
+        )
+        self.assertEqual(replayed["status"], "MIGRATED")
+        self.assertFalse(added)
+        self.assertEqual(refresh, "SOURCE_PENDING/REFRESH")
+        self.assertNotIn("OPEN", [value["status"] for value in self.store.values()])
 
     def test_carried_intent_reemits_same_key_then_holds_without_new_request(
         self,
@@ -294,7 +349,12 @@ class SourceEvidenceBoundsTests(unittest.TestCase):
             ],
         }
         n.validate_progress(
-            {"authority_context": {pointer: complete}},
+            {
+                "authority_context": {
+                    pointer: complete,
+                    "_coverage": {"coverage": "COMPLETE"},
+                }
+            },
             frontier,
             row,
             claim,
