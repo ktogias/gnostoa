@@ -3,22 +3,15 @@
 from __future__ import annotations
 
 import ast
-import importlib.util
 import unittest
 from dataclasses import replace
 from pathlib import Path
 
+from tools import project_progress as p
 from tools.agent_review_model import Ref
-
-SPEC = importlib.util.find_spec("tools.project_progress")
-if SPEC is not None:
-    from tools import project_progress as p
 
 
 class ProgressOwnerTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.assertIsNotNone(SPEC, "no canonical progress owner/consumer API at parent")
-
     def test_opaque_scope_identity_preserves_bound_and_unresolved_history(self) -> None:
         ref = Ref("ticket", "opaque/A-7")
         self.assertEqual(p.scope_identity(ref), p.scope_identity(ref, "ignored"))

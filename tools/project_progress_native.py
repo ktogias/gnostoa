@@ -78,13 +78,7 @@ def _source(value: Native) -> p.Source:
     order: p.ObservationOrder = None
     if isinstance(observed, Mapping):
         epoch, sequence = observed.get("epoch"), observed.get("seq")
-        if (
-            isinstance(epoch, str)
-            and epoch
-            and isinstance(sequence, int)
-            and not isinstance(sequence, bool)
-            and sequence >= 0
-        ):
+        if isinstance(epoch, str) and epoch and type(sequence) is int and sequence >= 0:
             order = (epoch, sequence)
     return p.Source(
         str(value.get("kind")),
@@ -198,9 +192,29 @@ def _absorb(
 
 
 def _stamp(request: Native) -> p.RequestStamp:
-    return p.RequestStamp(
-        str(request["key"]), _ts(request["at"]), bool(request.get("carried_from"))
-    )
+    try:
+        return p.RequestStamp(
+            str(request["key"]), _ts(request["at"]), bool(request.get("carried_from"))
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(
+            "PROJECT_PROGRESS a request record needs its key and an ISO time"
+        ) from error
+
+
+def _targets(decoded: Native) -> tuple[Ref | None, ...]:
+    assignments = decoded.get("assignments")
+    if not isinstance(assignments, list):
+        raise ValueError("PROJECT_PROGRESS assignments must be a list")
+    targets: list[Ref | None] = []
+    for assignment in assignments:
+        operation = (
+            assignment.get("operation") if isinstance(assignment, Mapping) else None
+        )
+        if not isinstance(operation, Mapping):
+            raise ValueError("PROJECT_PROGRESS each assignment needs its operation")
+        targets.append(provider.target_ref(operation.get("operation_target")))
+    return tuple(targets)
 
 
 def _carry_requests(bound: Native, unbound: Native) -> None:
@@ -364,10 +378,7 @@ def _evaluation(
     return p.Evaluation(
         provider.scope_ref(row.get("scope") or {}),
         reads,
-        tuple(
-            provider.target_ref(a["operation"].get("operation_target"))
-            for a in decoded["assignments"]
-        ),
+        _targets(decoded),
         provider.closed_targets(row.get("sources") or [])
         + provider.closed_reads(context),
         frontier.get("coverage") == "COMPLETE",

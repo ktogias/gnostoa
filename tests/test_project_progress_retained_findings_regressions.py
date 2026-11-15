@@ -563,5 +563,42 @@ class BudgetLimitTests(unittest.TestCase):
             decide(another_limit=1)
 
 
+class MalformedRecordBoundaryTests(unittest.TestCase):
+    def test_a_malformed_request_record_is_one_named_refusal(self) -> None:
+        good: n.Native = {"key": "k", "at": _iso(NOW)}
+        self.assertEqual(n._stamp(good), core.RequestStamp("k", NOW, False))
+        for name, record in (
+            ("no time", {"key": "k"}),
+            ("no key", {"at": _iso(NOW)}),
+            ("bad time", {"key": "k", "at": "not-a-time"}),
+            ("null time", {"key": "k", "at": None}),
+        ):
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS a request"),
+            ):
+                n._stamp(record)
+
+    def test_a_malformed_assignment_is_refused_inside_the_value_error_boundary(
+        self,
+    ) -> None:
+        scope: n.Native = {"kind": "work_item", "ref": "issue:499"}
+        row = n.progress_row(scope, [])
+        claim: n.Native = {"id": row["id"], "disposition": "REFRESH", "need": []}
+        frontier: n.Native = {"coverage": "COMPLETE", "rows": [row]}
+        for name, decoded in (
+            ("not a mapping", {"assignments": ["x"]}),
+            ("no operation", {"assignments": [{}]}),
+            ("operation not a mapping", {"assignments": [{"operation": 7}]}),
+            ("not a list", {"assignments": None}),
+            ("absent", {}),
+        ):
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS"),
+            ):
+                n.validate_progress({}, frontier, row, claim, decoded, [claim])
+
+
 if __name__ == "__main__":
     unittest.main()
