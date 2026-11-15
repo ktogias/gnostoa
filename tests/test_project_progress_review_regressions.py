@@ -431,10 +431,14 @@ class SourceEvidenceBoundsTests(unittest.TestCase):
         }
         captured = dict(fresh)
         captured.pop("observed_at")
+        before = copy.deepcopy(captured)
         changed = n.source_changes({pointer: captured}, {pointer: fresh}, [pointer])
         self.assertIsNotNone(changed)
         assert changed is not None
         self.assertEqual(changed[0], "SOURCE_PENDING")
+        # The captured read keeps its own bytes: fresh data never fills the gap.
+        self.assertEqual(captured, before)
+        self.assertNotIn("observed_at", captured)
 
 
 if __name__ == "__main__":

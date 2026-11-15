@@ -188,14 +188,30 @@ class ProgressOwnerTests(unittest.TestCase):
                 self.assertRaisesRegex(p.ProgressError, "scope_binding"),
             ):
                 p.validate_result(distinct, unbound)
-        unread = p.Evaluation(evaluation.scope, (), evaluation.targets, (), True, True)
-        lineage_only = p.Result(
-            "ASSIGNED",
-            evidence=(p.Citation("lineage", "d", None),),
-            assignment_index=0,
-        )
+        lineage = p.Citation("lineage", "d", None)
+        lineage_only = p.Result("ASSIGNED", evidence=(lineage,), assignment_index=0)
+        # The cited lineage is exempt from the read check, yet it binds no scope.
+        for reads in ((), evaluation.reads):
+            cited_lineage = p.Evaluation(
+                evaluation.scope,
+                reads,
+                evaluation.targets,
+                (),
+                True,
+                True,
+                lineage=lineage,
+            )
+            with (
+                self.subTest(reads=len(reads)),
+                self.assertRaisesRegex(p.ProgressError, "scope_binding"),
+            ):
+                p.validate_result(cited_lineage, lineage_only)
+        # Beside the scope and target read, the same lineage citation is accepted ...
+        with_read = replace(result, evidence=(*result.evidence, lineage))
+        p.validate_result(replace(evaluation, lineage=lineage), with_read)
+        # ... and without the evaluation's lineage it is an unheld citation.
         with self.assertRaisesRegex(p.ProgressError, "scope_binding"):
-            p.validate_result(unread, lineage_only)
+            p.validate_result(evaluation, with_read)
 
     def test_quiescence_and_refresh_are_distinct_and_empty_is_never_progress(
         self,

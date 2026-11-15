@@ -75,6 +75,42 @@ class GenerationlessScopeUpdateTests(unittest.TestCase):
                     self.assertEqual(obligation["sources"], [update])
                     self.assertEqual(obligation["status"], "DISCHARGED")
 
+    def test_a_present_null_generation_is_absent_and_never_the_text_none(self) -> None:
+        store: n.Native = {}
+        scope: n.Native = {"kind": "work_item", "ref": "issue:496"}
+        first: n.Native = {
+            "kind": "scope",
+            "generation": None,
+            "title": "before",
+            "observed": {"epoch": "reader-a", "seq": 1},
+        }
+        obligation, _, _ = n.open_obligation(store, scope, [first], None, NOW)
+        obligation["status"] = "DISCHARGED"
+        update: n.Native = {
+            **first,
+            "title": "after",
+            "observed": {"epoch": "reader-a", "seq": 2},
+        }
+        obligation, added, refresh = n.open_obligation(
+            store, scope, [update], None, NOW + 1
+        )
+        self.assertTrue(added)
+        self.assertIsNone(refresh)
+        self.assertEqual(obligation["sources"], [update])
+        self.assertEqual(obligation["status"], "OPEN")
+        # A null generation and the literal text "None" stay two generations.
+        obligation["status"] = "DISCHARGED"
+        named: n.Native = {
+            **first,
+            "generation": "None",
+            "title": "named",
+            "observed": {"epoch": "reader-a", "seq": 3},
+        }
+        obligation, added, _ = n.open_obligation(store, scope, [named], None, NOW + 2)
+        self.assertTrue(added)
+        self.assertEqual(obligation["sources"], [named])
+        self.assertEqual(obligation["status"], "OPEN")
+
 
 class ReviewSubmissionTimeTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -339,6 +375,59 @@ class ProviderNumberTests(unittest.TestCase):
                 self.assertIsNone(github.read_ref("opaque", held))
                 # ... and the read's own URL still decides, as for an absent number.
                 self.assertEqual(Ref("pr", "500"), github.read_ref(pull, held))
+
+    def test_a_gate_subject_names_a_positive_provider_number(self) -> None:
+        self.assertTrue(github.valid_subject({"pr_number": 500, "head_sha": HEAD}))
+        for number in (0, -1, -500, True, "500", 5.0, None):
+            with self.subTest(number=number):
+                self.assertFalse(
+                    github.valid_subject({"pr_number": number, "head_sha": HEAD})
+                )
+
+    def test_no_wait_binding_is_emitted_for_a_zero_or_negative_subject(self) -> None:
+        claim: n.Native = {
+            "id": "row-m16",
+            "disposition": "WAITING",
+            "resume_event": "native_exact_head_review",
+            "owner": "human:ktogias",
+            "evidence_sha256": "source-digest",
+        }
+        for number, bound in ((500, True), (0, False), (-500, False)):
+            row: n.Native = {
+                "id": "row-m16",
+                "kind": "HUMAN_MERGE",
+                "source_kind": "canonical_criterion",
+                "canonical": {"criterion": "M16"},
+                "source_sha256": "source-digest",
+                "subject": {"pr_number": number, "head_sha": HEAD},
+            }
+            with self.subTest(number=number):
+                binding = n.gate_binding({}, row, claim)
+                self.assertEqual(binding is not None, bound)
+
+
+class MergedAttributeChangeTests(unittest.TestCase):
+    def test_a_changed_merged_flag_is_a_captured_source_change(self) -> None:
+        pointer = "https://github.com/ktogias/gnostoa/pull/500"
+        captured: n.Native = {
+            "kind": "pr",
+            "number": 500,
+            "coverage": "CURRENT",
+            "body_sha256": "opaque-digest",
+            "body_complete": True,
+            "observed_at": 1.0,
+            "state": "open",
+            "merged": False,
+        }
+        unchanged = dict(captured)
+        self.assertIsNone(
+            n.source_changes({pointer: captured}, {pointer: unchanged}, [pointer])
+        )
+        fresh = {**captured, "merged": True}
+        self.assertEqual(
+            n.source_changes({pointer: captured}, {pointer: fresh}, [pointer]),
+            ("REPAIR_PENDING", "captured source changed: " + pointer),
+        )
 
 
 class SourceChangeResumeTests(unittest.TestCase):

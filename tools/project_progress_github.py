@@ -30,6 +30,7 @@ _ATTRIBUTES = (
     "head_sha",
     "base_sha",
     "state",
+    "merged",
     "repository",
     "kind",
 )
@@ -148,8 +149,10 @@ def closed_reads(context: Mapping[str, Any]) -> tuple[Ref, ...]:
 
 
 def valid_subject(subject: Mapping[str, Any]) -> bool:
+    number = subject.get("pr_number")
     return (
-        type(subject.get("pr_number")) is int
+        type(number) is int
+        and number > 0
         and _HEAD.fullmatch(str(subject.get("head_sha") or "")) is not None
     )
 

@@ -72,6 +72,8 @@ def progress_row(
 
 def _source(value: Native) -> p.Source:
     key = value.get("delivery_key") or value.get("key")
+    # A present null generation is an absent one, never the text "None".
+    generation = value.get("generation")
     observed = value.get("observed")
     order: p.ObservationOrder = None
     if isinstance(observed, Mapping):
@@ -88,7 +90,7 @@ def _source(value: Native) -> p.Source:
         str(value.get("kind")),
         str(key) if key else None,
         _source_fingerprint(value),
-        str(value.get("generation")) if "generation" in value else None,
+        str(generation) if generation is not None else None,
         value.get("kind") == "scope",
         order,
     )
