@@ -28,6 +28,7 @@ import yaml
 from tests.claude_actions_workflows_support import _expression_secrets
 from tests.merge_evidence_github_support import API, HEAD, _replies
 from tests.review_reconcile_l1_support import adapter_fixture, paged_fake_fixture
+from tools.merge_admission_checks import CHECK_NAME
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -339,6 +340,12 @@ class AdmissionWorkflowTests(unittest.TestCase):
         self.assertEqual(["completed"], events["workflow_run"]["types"])
         self.assertTrue(events["schedule"])
         self.assertIn("pull_number", events["workflow_dispatch"]["inputs"])
+
+    def test_the_sweep_keeps_the_hourly_schedule(self) -> None:
+        """#325 6851172499: the sweep is the backstop for a change that no Actions
+        event names; the declarer's exact-head readback (runbook, step 5 of the
+        normal merge) is the prompt route. Keep the admitted hourly backstop."""
+        self.assertEqual([{"cron": "41 * * * *"}], _load(ADMISSION)["on"]["schedule"])
 
     def test_the_workflow_token_writes_nothing(self) -> None:
         workflow = _load(ADMISSION)
@@ -824,6 +831,86 @@ class ActivationRunbookTests(unittest.TestCase):
         launch = text.split("  guard_merge() {", 1)[1].split("\n  }\n", 1)[0]
         self.assertIn('"$created/venv/bin/python" -I -B', launch)
         self.assertIn("ci/merge_admission_guard.py", launch)
+
+
+def _rounds_step() -> str:
+    """Step 5 of the normal merge, up to step 6."""
+    text = RUNBOOK.read_text(encoding="utf-8")
+    procedure = text.split("### The normal merge", 1)[1]
+    return procedure.split("5. **Rounds.**", 1)[1].split("\n6. ", 1)[0]
+
+
+def _admission_section() -> str:
+    text = RUNBOOK.read_text(encoding="utf-8")
+    return text.split("### Merge admission (MA0 1b.4)", 1)[1].split("\n### ", 1)[0]
+
+
+class FreshVerdictRunbookTests(unittest.TestCase):
+    """#325 6851172499: a review thread's resolution raises no Actions event (T1), so
+    the displayed verdict waited for the sweep. The declarer's exact-head readback,
+    posted in the same operation, wakes the relay instead."""
+
+    def test_a_resolution_is_followed_by_the_declarer_s_readback(self) -> None:
+        step = _normalized(_rounds_step())
+        for part in (
+            "in the same operation",
+            f"`{_declarer()}`",
+            "`policy/merge-authorities.yaml`",
+            "`Exact-head readback: <40-hex head>`",
+            "`merge-admission-trigger.yml`",
+            "raises no Actions event",
+        ):
+            with self.subTest(part=part):
+                self.assertIn(part, step)
+        # The readback follows the resolution it reports.
+        self.assertLess(step.index("are resolved"), step.index("Exact-head readback"))
+
+    def test_the_readback_is_never_a_new_seal(self) -> None:
+        """Step 8 reads the App's latest `Exact review candidate:` comment as the
+        seal, so the readback never starts with that prefix."""
+        step = _rounds_step()
+        readback = _normalized(
+            step.split("Exact-head readback", 1)[1].split("\n   - ", 1)[0]
+        )
+        self.assertIn("never the seal's `Exact review candidate:`", readback)
+
+    def test_verdict_check_and_evaluation_start_follow_comment(self) -> None:
+        step = _normalized(_rounds_step())
+        self.assertIn(
+            "Its check must be on the readback head and complete after the comment",
+            step,
+        )
+        self.assertIn("the evaluation must have started after the comment", step)
+
+    def test_freshness_binds_the_readback_event_and_same_head_check(self) -> None:
+        step = _normalized(_rounds_step())
+        for part in (
+            "comment ID",
+            "`issue_comment` relay run and attempt",
+            "downstream evaluation run and attempt",
+            "same-head `merge-admission` check",
+            "`gnostoa-ma0` App (ID `5302326`)",
+            "started after the comment",
+            "digest demonstrably covers the changed state",
+        ):
+            with self.subTest(part=part):
+                self.assertIn(part, step)
+
+    def test_freshness_uses_the_pinned_production_check_selector(self) -> None:
+        """The runbook's selector is the check-run name queried by the producer."""
+        self.assertEqual("merge-admission", CHECK_NAME)
+        workflow = _normalized(ADMISSION.read_text(encoding="utf-8"))
+        self.assertIn('GNOSTOA_MA0_APP_ID: "5302326"', workflow)
+
+    def test_t1_names_the_readback_and_hourly_sweep(self) -> None:
+        section = _admission_section()
+        t1 = section.split(
+            "**A review thread's resolution or reopening wakes nothing", 1
+        )[1].split("\n", 1)[0]
+        self.assertIn("exact-head readback", t1)
+        section = _normalized(section)
+        self.assertIn("hourly", section)
+        self.assertNotIn("every 10 minutes", section)
 
 
 def _secret_references(node: object) -> set[str | None]:
