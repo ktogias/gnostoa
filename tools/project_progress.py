@@ -44,6 +44,15 @@ def scope_identity(scope: Ref, origin: str | None = None) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
+def _already_held(source: Source, held: Sequence[Source]) -> bool:
+    """Two absent generations prove nothing: then only the fingerprint does."""
+    if source.generation is None:
+        return any(
+            s.generation is None and s.fingerprint == source.fingerprint for s in held
+        )
+    return any(s.generation == source.generation for s in held)
+
+
 def merge_sources(
     current: Sequence[Source], additions: Sequence[Source]
 ) -> tuple[tuple[Source, ...], bool, bool]:
@@ -53,7 +62,7 @@ def merge_sources(
     for source in additions:
         if source.replaces_category:
             held = [s for s in result if s.category == source.category]
-            if any(s.generation == source.generation for s in held):
+            if _already_held(source, held):
                 continue
             if source.observed is None:
                 refresh = True

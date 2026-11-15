@@ -119,6 +119,25 @@ def closed_targets(sources: Any) -> tuple[Ref, ...]:
     )
 
 
+def closed_reads(context: Mapping[str, Any]) -> tuple[Ref, ...]:
+    """A captured read that reports its PR closed or merged closes that target."""
+    result = []
+    for pointer, held in context.items():
+        if (
+            pointer.startswith("_")
+            or not isinstance(held, dict)
+            or held.get("kind") != "pr"
+        ):
+            continue
+        ref = read_ref(pointer, held)
+        if ref is not None and (
+            str(held.get("state") or "").lower() in ("closed", "merged")
+            or held.get("merged") is True
+        ):
+            result.append(ref)
+    return tuple(result)
+
+
 def valid_subject(subject: Mapping[str, Any]) -> bool:
     return (
         type(subject.get("pr_number")) is int

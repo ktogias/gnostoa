@@ -45,16 +45,23 @@ def scope_identity(scope: Mapping[str, Any], origin: str | None = None) -> str:
 
 
 def progress_row(
-    scope: Native, sources: Iterable[Native], chains: Native | None = None
+    scope: Native,
+    sources: Iterable[Native],
+    chains: Native | None = None,
+    *,
+    origin: str | None = None,
 ) -> Native:
+    """An unresolved scope is told apart by its origin, as its obligation is."""
     values = list(sources)
+    identity: Native = {"kind": scope.get("kind"), "ref": scope.get("ref")}
+    if not scope.get("ref") and origin is not None:
+        identity["origin"] = origin
     row: Native = {
         "kind": "PROJECT_PROGRESS",
         "source_kind": "controller_progress",
         "scope": copy.deepcopy(scope),
         "sources": copy.deepcopy(values),
-        "source_key": "progress:"
-        + _digest({"kind": scope.get("kind"), "ref": scope.get("ref")}),
+        "source_key": "progress:" + _digest(identity),
         "source_sha256": _digest(values),
     }
     if chains:
@@ -348,7 +355,8 @@ def _evaluation(
             provider.target_ref(a["operation"].get("operation_target"))
             for a in decoded["assignments"]
         ),
-        provider.closed_targets(row.get("sources") or []),
+        provider.closed_targets(row.get("sources") or [])
+        + provider.closed_reads(context),
         frontier.get("coverage") == "COMPLETE",
         isinstance(job.get("authority_context"), dict)
         and isinstance(context.get("_coverage"), dict)
@@ -625,18 +633,15 @@ def gate_binding(job: Native, row: Native, claim: Native) -> Native | None:
     }
 
 
-def _provider_at(item: Native) -> float | None:
-    fields = (
-        ("updated_at", "submitted_at") if "submitted_at" in item else ("updated_at",)
-    )
-    stamps = []
+def _provider_at(item: Native, review: bool) -> float | None:
+    """A review counts from its submission; a later edit never moves that time."""
+    field = "submitted_at" if review else "updated_at"
+    if field not in item:
+        return None
     try:
-        for field in fields:
-            if field in item:
-                stamps.append(_ts(item[field]))
+        return _ts(item[field])
     except (ValueError, TypeError, OverflowError):
         return None
-    return max(stamps) if stamps else None
 
 
 def gate_resume(
@@ -698,7 +703,7 @@ def gate_resume(
         str(fact.get("head") or ""),
         str(record.get("material_id") or ""),
         float(cast(float, observed)),
-        _provider_at(item),
+        _provider_at(item, record.get("kind") == "review"),
         sequence if type(sequence) is int else 0,
         mode,
         advances,
