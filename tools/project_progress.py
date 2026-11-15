@@ -53,6 +53,30 @@ def _already_held(source: Source, held: Sequence[Source]) -> bool:
     return any(s.generation == source.generation for s in held)
 
 
+def _category_update(source: Source, held: Sequence[Source]) -> bool | None:
+    """True replaces the held category, False keeps it, None needs a refresh."""
+    if _already_held(source, held):
+        return False
+    if source.observed is None:
+        return None
+    comparisons = [newer(source.observed, s.observed) for s in held]
+    if any(comparison is None for comparison in comparisons):
+        return None
+    if all(comparisons):
+        return True
+    if all(newer(s.observed, source.observed) is True for s in held):
+        return False
+    return None
+
+
+def _duplicate(source: Source, held: Sequence[Source]) -> bool:
+    return any(
+        (source.key and s.key == source.key and s.category == source.category)
+        or s.fingerprint == source.fingerprint
+        for s in held
+    )
+
+
 def merge_sources(
     current: Sequence[Source], additions: Sequence[Source]
 ) -> tuple[tuple[Source, ...], bool, bool]:
@@ -61,27 +85,15 @@ def merge_sources(
     refresh = False
     for source in additions:
         if source.replaces_category:
-            held = [s for s in result if s.category == source.category]
-            if _already_held(source, held):
-                continue
-            if source.observed is None:
+            update = _category_update(
+                source, [s for s in result if s.category == source.category]
+            )
+            if update is None:
                 refresh = True
-                continue
-            comparisons = [newer(source.observed, s.observed) for s in held]
-            if any(comparison is None for comparison in comparisons):
-                refresh = True
-                continue
-            if held and not all(comparisons):
-                if all(newer(s.observed, source.observed) is True for s in held):
-                    continue
-                refresh = True
+            if not update:
                 continue
             result = [s for s in result if s.category != source.category]
-        if any(
-            (source.key and s.key == source.key and s.category == source.category)
-            or s.fingerprint == source.fingerprint
-            for s in result
-        ):
+        if _duplicate(source, result):
             continue
         result.append(source)
         added = True
@@ -151,37 +163,56 @@ class Decision:
     reason: str
 
 
-def decide_transition(state: Transition) -> Decision:
-    if not state.open:
-        return Decision("HOLD", "ACCOUNTED")
-    if state.intent:
+def _pending_ingress(state: Transition) -> Decision | None:
+    """A changed pending ingress refreshes first; only a failed refresh asks again."""
+    if state.pending_refreshed is None:
+        return Decision("REFRESH_PENDING", state.reason)
+    if state.pending_refreshed:
+        return Decision("REFRESHED", state.reason)
+    return None
+
+
+def _settled(state: Transition) -> Decision | None:
+    """What the held request already decides; None leaves the ask open."""
+    if state.fate == "DISCHARGE" and not state.changed:
+        return Decision("DISCHARGE", state.reason)
+    if state.fate == "REEMIT":
         return Decision("REEMIT", state.reason)
-    ask = not state.has_request
-    reason = state.reason if state.has_request else "OPENED"
-    if state.has_request:
-        if state.fate == "DISCHARGE" and not state.changed:
-            return Decision("DISCHARGE", reason)
-        if state.fate == "REEMIT":
-            return Decision("REEMIT", reason)
-        if state.changed and reason == "PENDING_INGRESS":
-            if state.pending_refreshed is None:
-                return Decision("REFRESH_PENDING", reason)
-            if state.pending_refreshed:
-                return Decision("REFRESHED", reason)
-            ask = True
-        else:
-            ask = (
-                state.fate == "RETRY"
-                or (state.changed and state.fate == "DISCHARGE")
-                or (state.changed and reason in ("TAKEN", "LOST"))
-            )
-    if not ask:
-        return Decision("HOLD", reason)
+    if state.changed and state.reason == "PENDING_INGRESS":
+        return _pending_ingress(state)
+    return None
+
+
+def _asks(state: Transition) -> bool:
+    if state.fate == "RETRY":
+        return True
+    return state.changed and (
+        state.fate == "DISCHARGE"
+        or state.reason in ("PENDING_INGRESS", "TAKEN", "LOST")
+    )
+
+
+def _ask(state: Transition, reason: str) -> Decision:
     if state.source_open:
         return Decision("HOLD", "SOURCE_OWNER_OPEN")
     if state.return_open:
         return Decision("HOLD", "SOURCE_RETURN_OPEN")
     return Decision("HELD", state.hold) if state.hold else Decision("REQUEST", reason)
+
+
+def decide_transition(state: Transition) -> Decision:
+    if not state.open:
+        return Decision("HOLD", "ACCOUNTED")
+    if state.intent:
+        return Decision("REEMIT", state.reason)
+    if not state.has_request:
+        return _ask(state, "OPENED")
+    settled = _settled(state)
+    if settled is not None:
+        return settled
+    if not _asks(state):
+        return Decision("HOLD", state.reason)
+    return _ask(state, state.reason)
 
 
 @dataclass(frozen=True)
@@ -267,62 +298,85 @@ def _cited(
     return tuple(result_reads)
 
 
-def validate_result(evaluation: Evaluation, result: Result) -> None:
-    """The same captured-evidence contract is used at intake and before egress."""
+def _covered(evaluation: Evaluation) -> bool:
     scope_read = evaluation.scope is not None and any(
         r.ref == evaluation.scope and r.current and r.complete for r in evaluation.reads
     )
-    covered = (
-        scope_read and evaluation.frontier_complete and evaluation.context_complete
-    )
+    return scope_read and evaluation.frontier_complete and evaluation.context_complete
+
+
+def _assigned_target(evaluation: Evaluation, result: Result) -> Ref | None:
+    index = result.assignment_index
+    if (
+        not result.valid_shape
+        or index is None
+        or not 0 <= index < len(evaluation.targets)
+    ):
+        raise ProgressError("assignment_shape")
+    target = evaluation.targets[index]
+    if target is not None and target in evaluation.closed_targets:
+        raise ProgressError("closed_target")
+    return target
+
+
+def _validate_assigned(evaluation: Evaluation, result: Result, covered: bool) -> None:
+    target = _assigned_target(evaluation, result)
+    cited = _cited(evaluation, result, lineage=True)
+    if cited is None:
+        raise ProgressError("scope_binding")
+    if (
+        not covered
+        or not any(r.ref == evaluation.scope for r in cited)
+        or target is None
+        or not any(r.ref == target for r in cited)
+    ):
+        raise ProgressError("scope_binding")
+
+
+def _validate_waiting(evaluation: Evaluation, result: Result) -> None:
+    gate = next((g for g in evaluation.gates if g.key == result.resume_key), None)
+    if (
+        not result.valid_shape
+        or not result.owner.strip()
+        or not result.reason.strip()
+        or gate is None
+        or not gate.waiting
+        or gate.owner != result.owner
+    ):
+        raise ProgressError("waiting")
+
+
+def _validate_refresh(result: Result, covered: bool) -> None:
+    if (
+        not result.valid_shape
+        or not result.reason.strip()
+        or (covered and not result.need)
+    ):
+        raise ProgressError("refresh")
+
+
+def _validate_quiescent(evaluation: Evaluation, result: Result, covered: bool) -> None:
+    cited = _cited(evaluation, result)
+    if (
+        not result.valid_shape
+        or cited is None
+        or not covered
+        or not any(r.ref == evaluation.scope for r in cited)
+    ):
+        raise ProgressError("quiescence")
+
+
+def validate_result(evaluation: Evaluation, result: Result) -> None:
+    """The same captured-evidence contract is used at intake and before egress."""
+    covered = _covered(evaluation)
     if result.mode == "ASSIGNED":
-        index = result.assignment_index
-        if (
-            not result.valid_shape
-            or index is None
-            or not 0 <= index < len(evaluation.targets)
-        ):
-            raise ProgressError("assignment_shape")
-        target = evaluation.targets[index]
-        if target is not None and target in evaluation.closed_targets:
-            raise ProgressError("closed_target")
-        cited = _cited(evaluation, result, lineage=True)
-        if cited is None:
-            raise ProgressError("scope_binding")
-        if (
-            not covered
-            or not any(r.ref == evaluation.scope for r in cited)
-            or target is None
-            or not any(r.ref == target for r in cited)
-        ):
-            raise ProgressError("scope_binding")
+        _validate_assigned(evaluation, result, covered)
     elif result.mode == "WAITING":
-        gate = next((g for g in evaluation.gates if g.key == result.resume_key), None)
-        if (
-            not result.valid_shape
-            or not result.owner.strip()
-            or not result.reason.strip()
-            or gate is None
-            or not gate.waiting
-            or gate.owner != result.owner
-        ):
-            raise ProgressError("waiting")
+        _validate_waiting(evaluation, result)
     elif result.mode == "REFRESH":
-        if (
-            not result.valid_shape
-            or not result.reason.strip()
-            or (covered and not result.need)
-        ):
-            raise ProgressError("refresh")
+        _validate_refresh(result, covered)
     elif result.mode == "QUIESCENT":
-        cited = _cited(evaluation, result)
-        if (
-            not result.valid_shape
-            or cited is None
-            or not covered
-            or not any(r.ref == evaluation.scope for r in cited)
-        ):
-            raise ProgressError("quiescence")
+        _validate_quiescent(evaluation, result, covered)
     else:
         raise ProgressError("result_mode")
 

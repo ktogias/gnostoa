@@ -16,8 +16,10 @@ from typing import Any
 from tools.agent_review_model import Ref
 from tools.project_progress import Citation, Observation, Read
 
-_TARGET = re.compile(r"(?:issue:[1-9][0-9]*/)?pr:([1-9][0-9]*)")
-_ISSUE = re.compile(r"issue:([1-9][0-9]*)")
+# re.ASCII keeps \d to the ASCII digits 0-9: a provider number is never another script's.
+_TARGET = re.compile(r"(?:issue:[1-9]\d*/)?pr:([1-9]\d*)", re.ASCII)
+_ISSUE = re.compile(r"issue:([1-9]\d*)", re.ASCII)
+_URL_NUMBER = re.compile(r"/(?:issues|pull)/([1-9]\d*)(?:[#?].*)?$", re.ASCII)
 _HEAD = re.compile(r"[0-9a-f]{40}")
 _ATTRIBUTES = (
     "source_binding_sha256",
@@ -48,10 +50,7 @@ def target_ref(target: object) -> Ref | None:
 def read_ref(pointer: str, held: Mapping[str, Any]) -> Ref | None:
     number = str(held.get("number") or "")
     if not number.isdigit():
-        match = re.search(
-            r"/(?:issues|pull)/([1-9][0-9]*)(?:[#?].*)?$",
-            str(held.get("url") or pointer),
-        )
+        match = _URL_NUMBER.search(str(held.get("url") or pointer))
         number = match[1] if match else ""
     kind = held.get("kind")
     return Ref(str(kind), number) if number and isinstance(kind, str) else None
@@ -104,6 +103,15 @@ def citations(evidence: Any) -> tuple[tuple[Citation, ...], bool]:
     return tuple(result), True
 
 
+def pr_closed(value: Mapping[str, Any]) -> bool:
+    """The one closed-PR rule, for a retained source and for a captured read."""
+    return (
+        str(value.get("state") or "").lower() in ("closed", "merged")
+        or value.get("merged") is True
+        or bool(value.get("merge_commit_sha"))
+    )
+
+
 def closed_targets(sources: Any) -> tuple[Ref, ...]:
     return tuple(
         Ref("pr", str(s["pr_number"]))
@@ -111,16 +119,15 @@ def closed_targets(sources: Any) -> tuple[Ref, ...]:
         if isinstance(s, dict)
         and s.get("kind") == "pr"
         and type(s.get("pr_number")) is int
-        and (
-            s.get("state") == "closed"
-            or s.get("merged") is True
-            or s.get("merge_commit_sha")
-        )
+        and pr_closed(s)
     )
 
 
 def closed_reads(context: Mapping[str, Any]) -> tuple[Ref, ...]:
-    """A captured read that reports its PR closed or merged closes that target."""
+    """A captured PR read closes its target unless it reports a state that is open.
+
+    A read that carries no state proves nothing about the PR, so it fails closed.
+    """
     result = []
     for pointer, held in context.items():
         if (
@@ -130,10 +137,8 @@ def closed_reads(context: Mapping[str, Any]) -> tuple[Ref, ...]:
         ):
             continue
         ref = read_ref(pointer, held)
-        if ref is not None and (
-            str(held.get("state") or "").lower() in ("closed", "merged")
-            or held.get("merged") is True
-        ):
+        stated = isinstance(held.get("state"), str) and bool(held["state"])
+        if ref is not None and (not stated or pr_closed(held)):
             result.append(ref)
     return tuple(result)
 

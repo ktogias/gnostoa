@@ -30,7 +30,8 @@ class MigrationRearmTests(unittest.TestCase):
             self.now,
         )
 
-    def request(self, key: str, at: float, state: str) -> n.Native:
+    @staticmethod
+    def request(key: str, at: float, state: str) -> n.Native:
         return {
             "key": key,
             "at": datetime.fromtimestamp(at, UTC).isoformat(),

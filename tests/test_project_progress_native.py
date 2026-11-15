@@ -93,17 +93,13 @@ class NativeProgressTests(unittest.TestCase):
         self.assertEqual(obligation["sources"], [newer])
 
     def test_scope_observation_order_is_not_part_of_source_fingerprint(self) -> None:
-        first = {
-            "kind": "scope",
-            "generation": "g1",
-            "observed": {"epoch": "reader-a", "seq": 1},
-        }
-        later = {
-            "kind": "scope",
-            "generation": "g1",
-            "observed": {"epoch": "reader-a", "seq": 3},
-        }
-        self.assertEqual(n._source(first).fingerprint, n._source(later).fingerprint)
+        # No generation: only the fingerprint can tell that the later one is held.
+        first = {"kind": "scope", "observed": {"epoch": "reader-a", "seq": 1}}
+        later = {"kind": "scope", "observed": {"epoch": "reader-a", "seq": 3}}
+        obligation = n.new_obligation("id", self.scope, self.now)
+        self.assertEqual(n.merge_sources(obligation, [first]), (True, False))
+        self.assertEqual(n.merge_sources(obligation, [later]), (False, False))
+        self.assertEqual(obligation["sources"], [first])
 
     def test_newer_observation_accepts_digest_reversion(self) -> None:
         store: n.Native = {}
@@ -328,9 +324,11 @@ class NativeProgressTests(unittest.TestCase):
             }
         ]
         invented = core.RequestStamp("never-given", self.now)
-        with mock.patch.object(core, "migrate_requests", return_value=(invented,)):
-            with self.assertRaises(ValueError):
-                n.migrate(store, old, self.scope, self.now + 1)
+        with (
+            mock.patch.object(core, "migrate_requests", return_value=(invented,)),
+            self.assertRaises(ValueError),
+        ):
+            n.migrate(store, old, self.scope, self.now + 1)
 
     def test_migration_retains_each_overlapping_request_record(self) -> None:
         store: n.Native = {}

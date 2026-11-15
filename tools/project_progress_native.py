@@ -13,7 +13,7 @@ import hashlib
 import json
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, TypedDict, Unpack, cast
 
 from tools import project_progress as p
 from tools import project_progress_github as provider
@@ -201,6 +201,30 @@ def _stamp(request: Native) -> p.RequestStamp:
     )
 
 
+def _carry_requests(bound: Native, unbound: Native) -> None:
+    carried = [dict(r, carried_from=unbound["id"]) for r in unbound["requests"]]
+    # Native serialization retains every original request field and stable key.
+    ordered = p.migrate_requests(
+        tuple(_stamp(r) for r in carried),
+        tuple(_stamp(r) for r in bound["requests"]),
+    )
+    remaining = [(_stamp(r), r) for r in carried + bound["requests"]]
+    preserved = []
+    for stamp in ordered:
+        index = next(
+            (i for i, (candidate, _) in enumerate(remaining) if candidate == stamp),
+            None,
+        )
+        if index is None:
+            raise ValueError(
+                "PROJECT_PROGRESS migration ordered a request it was not given"
+            )
+        _, raw = remaining.pop(index)
+        preserved.append(raw)
+    bound["requests"] = preserved
+    bound.setdefault("migrated_from", []).append(unbound["id"])
+
+
 def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> Native:
     oid = scope_identity(scope)
     bound = obligations.get(oid) or new_obligation(oid, scope, now)
@@ -223,27 +247,7 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
         bound["status"] = "OPEN"
     _merge_chains(bound, unbound.get("chains") or {})
     if not carried_before:
-        carried = [dict(r, carried_from=unbound["id"]) for r in unbound["requests"]]
-        # Native serialization retains every original request field and stable key.
-        ordered = p.migrate_requests(
-            tuple(_stamp(r) for r in carried),
-            tuple(_stamp(r) for r in bound["requests"]),
-        )
-        remaining = [(_stamp(r), r) for r in carried + bound["requests"]]
-        preserved = []
-        for stamp in ordered:
-            index = next(
-                (i for i, (candidate, _) in enumerate(remaining) if candidate == stamp),
-                None,
-            )
-            if index is None:
-                raise ValueError(
-                    "PROJECT_PROGRESS migration ordered a request it was not given"
-                )
-            _, raw = remaining.pop(index)
-            preserved.append(raw)
-        bound["requests"] = preserved
-        bound.setdefault("migrated_from", []).append(unbound["id"])
+        _carry_requests(bound, unbound)
     if unbound["status"] == "OPEN":
         merge_sources(bound, [binding])
         reopen(bound, now, "BINDING_RESOLVED")
@@ -253,6 +257,14 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
         bound["rearmed_at"] = _iso(now)
     unbound.update(status="MIGRATED", superseded_by=oid, migrated_at=_iso(now))
     return bound
+
+
+class BudgetLimits(TypedDict, total=False):
+    """The request budget's keyword limits, as `request_budget` names them."""
+
+    per_identity: int
+    window_seconds: float
+    daily_cap: int
 
 
 def request_budget(
@@ -286,10 +298,8 @@ def controller_decision(
     obligations: Native,
     current_input: str | None,
     last_input: str | None,
-    per_identity: int = 3,
-    window_seconds: float = 86400,
-    daily_cap: int = 12,
     pending_refreshed: bool | None = None,
+    **limits: Unpack[BudgetLimits],
 ) -> tuple[str, str]:
     requests = obligation["requests"]
     decision = p.decide_transition(
@@ -303,14 +313,7 @@ def controller_decision(
             pending_refreshed=pending_refreshed,
             source_open=source_router_open,
             return_open=linked_open,
-            hold=request_budget(
-                obligations,
-                obligation,
-                now,
-                per_identity=per_identity,
-                window_seconds=window_seconds,
-                daily_cap=daily_cap,
-            ),
+            hold=request_budget(obligations, obligation, now, **limits),
         )
     )
     reason_map = {
@@ -318,6 +321,31 @@ def controller_decision(
         "SOURCE_RETURN_OPEN": "NATIVE_RETURN_OPEN",
     }
     return decision.action, reason_map.get(decision.reason, decision.reason)
+
+
+_GATE = "gate:"
+_GATE_KINDS = ("HUMAN_MERGE", "TECHNICAL", "UNFINISHED", "SOURCE_RECOVERY")
+
+
+def _text(value: object) -> str:
+    return str(value or "")
+
+
+def _gates(frontier: Native, row: Native, claims: list[Native]) -> tuple[p.Gate, ...]:
+    gates = []
+    for gate in frontier["rows"]:
+        claim = next(
+            (c for c in claims if isinstance(c, dict) and c.get("id") == gate["id"]), {}
+        )
+        if gate is not row and gate.get("kind") in _GATE_KINDS:
+            gates.append(
+                p.Gate(
+                    _GATE + gate["id"],
+                    _text(claim.get("owner")),
+                    claim.get("disposition") == "WAITING",
+                )
+            )
+    return tuple(gates)
 
 
 def _evaluation(
@@ -330,24 +358,7 @@ def _evaluation(
         for source, held in context.items()
         if not source.startswith("_") and isinstance(held, dict)
     )
-    gates = []
-    for gate in frontier["rows"]:
-        claim = next(
-            (c for c in claims if isinstance(c, dict) and c.get("id") == gate["id"]), {}
-        )
-        if gate is not row and gate.get("kind") in (
-            "HUMAN_MERGE",
-            "TECHNICAL",
-            "UNFINISHED",
-            "SOURCE_RECOVERY",
-        ):
-            gates.append(
-                p.Gate(
-                    "gate:" + gate["id"],
-                    str(claim.get("owner") or ""),
-                    claim.get("disposition") == "WAITING",
-                )
-            )
+    gates = _gates(frontier, row, claims)
     return p.Evaluation(
         provider.scope_ref(row.get("scope") or {}),
         reads,
@@ -361,7 +372,7 @@ def _evaluation(
         isinstance(job.get("authority_context"), dict)
         and isinstance(context.get("_coverage"), dict)
         and context["_coverage"].get("coverage") == "COMPLETE",
-        tuple(gates),
+        gates,
         p.Citation(
             "frontier:" + row["id"],
             str((job.get("continuation_contract") or {}).get("frontier_sha256") or ""),
@@ -388,8 +399,8 @@ def _progress_pointer(claim: Native, row: Native) -> bool:
         row.get("kind") == "PROJECT_PROGRESS"
         and claim.get("id") == row.get("id")
         and isinstance(resume, str)
-        and resume.startswith("gate:")
-        and bool(resume[len("gate:") :])
+        and resume.startswith(_GATE)
+        and bool(resume[len(_GATE) :])
     )
 
 
@@ -424,41 +435,57 @@ def _waiting_shape(claim: Native, progress_wait: bool) -> bool:
     )
 
 
+def _assigned_shape(claim: Native, evidence_valid: bool) -> bool:
+    return (
+        set(claim) == {"id", "disposition", "assignment_index", "evidence"}
+        and type(claim.get("assignment_index")) is int
+        and evidence_valid
+    )
+
+
+def _refresh_shape(claim: Native) -> bool:
+    need = claim.get("need", [])
+    return (
+        set(claim) - {"need"} == {"id", "disposition", "reason"}
+        and isinstance(claim.get("reason"), str)
+        and isinstance(need, list)
+        and len(need) <= 4
+        and all(type(n) is int and n > 0 for n in need)
+    )
+
+
+def _quiescent_shape(claim: Native, evidence_valid: bool) -> bool:
+    return set(claim) == {"id", "disposition", "evidence"} and evidence_valid
+
+
+def _resume_key(claim: Native, mode: str, progress_wait: bool) -> str:
+    if mode == "WAITING" and not progress_wait:
+        return _GATE + _text(claim.get("id"))
+    return _text(claim.get("resume_event"))
+
+
 def _result(claim: Native, row: Native) -> p.Result:
-    mode = str(claim.get("disposition") or "")
-    row_id = str(row.get("id") or "")
+    mode = _text(claim.get("disposition"))
+    row_id = _text(row.get("id"))
     identity_valid = bool(row_id) and claim.get("id") == row_id
     evidence, evidence_valid = provider.citations(claim.get("evidence"))
     index = claim.get("assignment_index")
     need = claim.get("need", [])
     progress_wait = identity_valid and _progress_wait(claim, row)
     shapes = {
-        "ASSIGNED": identity_valid
-        and set(claim) == {"id", "disposition", "assignment_index", "evidence"}
-        and type(index) is int
-        and evidence_valid,
+        "ASSIGNED": identity_valid and _assigned_shape(claim, evidence_valid),
         "WAITING": _waiting_shape(claim, progress_wait),
-        "REFRESH": identity_valid
-        and set(claim) - {"need"} == {"id", "disposition", "reason"}
-        and isinstance(claim.get("reason"), str)
-        and isinstance(need, list)
-        and len(need) <= 4
-        and all(type(n) is int and n > 0 for n in need),
-        "QUIESCENT": identity_valid
-        and set(claim) == {"id", "disposition", "evidence"}
-        and evidence_valid,
+        "REFRESH": identity_valid and _refresh_shape(claim),
+        "QUIESCENT": identity_valid and _quiescent_shape(claim, evidence_valid),
     }
-    resume_event = str(claim.get("resume_event") or "")
-    if mode == "WAITING" and not progress_wait:
-        resume_event = "gate:" + str(claim.get("id") or "")
     return p.Result(
         mode,
         shapes.get(mode, False),
         evidence,
         index if type(index) is int else None,
-        str(claim.get("owner") or ""),
-        str(claim.get("reason") or ""),
-        resume_event,
+        _text(claim.get("owner")),
+        _text(claim.get("reason")),
+        _resume_key(claim, mode, progress_wait),
         tuple(str(n) for n in need) if isinstance(need, list) else (),
     )
 
@@ -489,9 +516,9 @@ def validate_progress(
         )
         if claim.get("disposition") == "WAITING":
             binding_id = (
-                str(claim.get("resume_event") or "")[len("gate:") :]
+                _text(claim.get("resume_event"))[len(_GATE) :]
                 if _progress_pointer(claim, row)
-                else str(claim.get("id") or "")
+                else _text(claim.get("id"))
             )
             binding_rows = [
                 item
@@ -513,23 +540,20 @@ def validate_progress(
         raise ValueError("PROJECT_PROGRESS " + _ERRORS[error.code]) from error
 
 
+_INCOMPLETE = "captured source is missing or incomplete: "
+
+
 def source_changes(
     held: Native, fresh: Native, pointers: Iterable[str]
 ) -> tuple[str, str] | None:
     sources = tuple(pointers)
     for pointer in sources:
         if pointer not in held:
-            return (
-                "SOURCE_PENDING",
-                "captured source is missing or incomplete: " + pointer,
-            )
+            return "SOURCE_PENDING", _INCOMPLETE + pointer
         if not isinstance(held[pointer], Mapping) or (
             pointer in fresh and not isinstance(fresh[pointer], Mapping)
         ):
-            return (
-                "SOURCE_PENDING",
-                "captured source is missing or incomplete: " + pointer,
-            )
+            return "SOURCE_PENDING", _INCOMPLETE + pointer
     result = p.source_changes(
         tuple(provider.read_source(k, held[k]) for k in sources),
         tuple(provider.read_source(k, fresh[k]) for k in sources if k in fresh),
@@ -537,11 +561,7 @@ def source_changes(
     if result is None:
         return None
     status, pointer = result
-    detail = (
-        "captured source changed: "
-        if status == "REPAIR_PENDING"
-        else "captured source is missing or incomplete: "
-    )
+    detail = "captured source changed: " if status == "REPAIR_PENDING" else _INCOMPLETE
     return status, detail + pointer
 
 
@@ -644,6 +664,43 @@ def _provider_at(item: Native, review: bool) -> float | None:
         return None
 
 
+def _resume_selector(
+    gate: Native, record: Native, item: Native, *, changed: bool, owner_review: bool
+) -> tuple[str, str, bool] | None:
+    """The supported selector's mode and reason, and whether this record advances it."""
+    head = gate["resume_subject"]["head_sha"]
+    selector = gate.get("resume_event")
+    if selector == "native_exact_head_review":
+        return (
+            "decision",
+            "OWNER_REVIEW",
+            owner_review
+            and record.get("kind") == "review"
+            and item.get("commit_id") == head,
+        )
+    if selector == "provider_source_changed":
+        return (
+            "source",
+            "MERGE_ADMISSION_CHANGE",
+            changed
+            and record.get("kind") == "check_verdict"
+            and item.get("head_sha") == head,
+        )
+    return None
+
+
+def _resume_gate(gate: Native, mode: str) -> p.ResumeGate:
+    resume = gate["resume_subject"]
+    baseline = (gate.get("canonical") or {}).get("check_run_id")
+    return p.ResumeGate(
+        provider.subject_ref(resume),
+        str(resume["head_sha"]),
+        mode,
+        float(gate["at"]),
+        baseline if type(baseline) is int else 0,
+    )
+
+
 def gate_resume(
     gate: Native,
     record: Native,
@@ -669,47 +726,24 @@ def gate_resume(
     ):
         return None
     item = (record.get("payload") or {}).get("item") or {}
-    selector = gate.get("resume_event")
-    if selector == "native_exact_head_review":
-        mode, reason = "decision", "OWNER_REVIEW"
-        advances = (
-            owner_review
-            and record.get("kind") == "review"
-            and item.get("commit_id") == resume["head_sha"]
-        )
-    elif selector == "provider_source_changed":
-        mode, reason = "source", "MERGE_ADMISSION_CHANGE"
-        advances = (
-            changed
-            and record.get("kind") == "check_verdict"
-            and item.get("head_sha") == resume["head_sha"]
-        )
-    else:
+    selected = _resume_selector(
+        gate, record, item, changed=changed, owner_review=owner_review
+    )
+    if selected is None:
         return None
+    mode, reason, advances = selected
     sequence = fact.get("provider_id")
     if mode == "source" and type(sequence) is not int:
         return None
-    baseline = (gate.get("canonical") or {}).get("check_run_id")
-    subject = Ref("pr", str(record.get("number")))
-    normalized_gate = p.ResumeGate(
-        provider.subject_ref(resume),
-        str(resume["head_sha"]),
-        mode,
-        float(gate["at"]),
-        baseline if type(baseline) is int else 0,
-    )
     normalized_fact = p.ResumeFact(
-        subject,
-        str(fact.get("head") or ""),
-        str(record.get("material_id") or ""),
+        Ref("pr", str(record.get("number"))),
+        _text(fact.get("head")),
+        _text(record.get("material_id")),
         float(cast(float, observed)),
         _provider_at(item, record.get("kind") == "review"),
         sequence if type(sequence) is int else 0,
         mode,
         advances,
     )
-    return (
-        reason
-        if p.gate_resume(normalized_gate, normalized_fact, now, tuple(seen))
-        else None
-    )
+    resumes = p.gate_resume(_resume_gate(gate, mode), normalized_fact, now, tuple(seen))
+    return reason if resumes else None

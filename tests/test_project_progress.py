@@ -182,29 +182,31 @@ class ProgressOwnerTests(unittest.TestCase):
         for missing in ("scope", "target"):
             # The remaining citation is valid and captured; only this binding is absent.
             evidence = bound.evidence[1:] if missing == "scope" else bound.evidence[:1]
+            unbound = replace(bound, evidence=evidence)
             with (
                 self.subTest(missing=missing),
                 self.assertRaisesRegex(p.ProgressError, "scope_binding"),
             ):
-                p.validate_result(distinct, replace(bound, evidence=evidence))
+                p.validate_result(distinct, unbound)
+        unread = p.Evaluation(evaluation.scope, (), evaluation.targets, (), True, True)
+        lineage_only = p.Result(
+            "ASSIGNED",
+            evidence=(p.Citation("lineage", "d", None),),
+            assignment_index=0,
+        )
         with self.assertRaisesRegex(p.ProgressError, "scope_binding"):
-            p.validate_result(
-                p.Evaluation(evaluation.scope, (), evaluation.targets, (), True, True),
-                p.Result(
-                    "ASSIGNED",
-                    evidence=(p.Citation("lineage", "d", None),),
-                    assignment_index=0,
-                ),
-            )
+            p.validate_result(unread, lineage_only)
 
     def test_quiescence_and_refresh_are_distinct_and_empty_is_never_progress(
         self,
     ) -> None:
         evaluation = self.evaluation()
+        empty = p.Result("")
         with self.assertRaises(p.ProgressError):
-            p.validate_result(evaluation, p.Result(""))
+            p.validate_result(evaluation, empty)
+        needless = p.Result("REFRESH", reason="need evidence")
         with self.assertRaisesRegex(p.ProgressError, "refresh"):
-            p.validate_result(evaluation, p.Result("REFRESH", reason="need evidence"))
+            p.validate_result(evaluation, needless)
         p.validate_result(
             evaluation, p.Result("REFRESH", reason="another source", need=("other",))
         )
@@ -240,7 +242,7 @@ class ProgressOwnerTests(unittest.TestCase):
         }
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
-                self.assertTrue({entry.name for entry in node.names} <= allowed)
+                self.assertLessEqual({entry.name for entry in node.names}, allowed)
             elif isinstance(node, ast.ImportFrom):
                 self.assertIn(node.module, allowed)
             elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
