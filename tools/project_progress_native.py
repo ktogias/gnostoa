@@ -161,21 +161,17 @@ def open_obligation(
         )
         if successor is None or successor.get("status") == "MIGRATED":
             return obligation, False, "SOURCE_PENDING/REFRESH"
-        successor_previous = str(successor["status"])
-        added, refresh = merge_sources(successor, sources)
-        created, rearmed = p.opening(successor_previous, added)
-        if created:
-            successor.update(
-                status="OPEN", reopened_at=_iso(now), reopened_by="SCOPE_RETURNED"
-            )
-        _merge_chains(successor, chains or {})
-        if rearmed:
-            reopen(successor, now, "NEW_SOURCE")
-        return (
-            successor,
-            created or added,
-            "SOURCE_PENDING/REFRESH" if refresh else None,
-        )
+        return _absorb(successor, str(successor["status"]), sources, now, chains)
+    return _absorb(obligation, previous, sources, now, chains)
+
+
+def _absorb(
+    obligation: Native,
+    previous: str | None,
+    sources: Iterable[Native],
+    now: float,
+    chains: Native | None,
+) -> tuple[Native, bool, str | None]:
     added, refresh = merge_sources(obligation, sources)
     created, rearmed = p.opening(previous, added)
     if created and previous is not None:
@@ -214,10 +210,10 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
         # and complete request history are already durable; finish only the tombstone.
         unbound.update(status="MIGRATED", superseded_by=oid, migrated_at=_iso(now))
         return bound
-    created, _ = p.opening(str(bound["status"]), False)
+    added, _ = merge_sources(bound, unbound["sources"])
+    created, rearmed = p.opening(str(bound["status"]), added)
     if created:
         bound["status"] = "OPEN"
-    merge_sources(bound, unbound["sources"])
     _merge_chains(bound, unbound.get("chains") or {})
     if not carried_before:
         carried = [dict(r, carried_from=unbound["id"]) for r in unbound["requests"]]
@@ -230,8 +226,13 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
         preserved = []
         for stamp in ordered:
             index = next(
-                i for i, (candidate, _) in enumerate(remaining) if candidate == stamp
+                (i for i, (candidate, _) in enumerate(remaining) if candidate == stamp),
+                None,
             )
+            if index is None:
+                raise ValueError(
+                    "PROJECT_PROGRESS migration ordered a request it was not given"
+                )
             _, raw = remaining.pop(index)
             preserved.append(raw)
         bound["requests"] = preserved
@@ -239,6 +240,8 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
     if unbound["status"] == "OPEN":
         merge_sources(bound, [binding])
         reopen(bound, now, "BINDING_RESOLVED")
+    elif rearmed:
+        reopen(bound, now, "NEW_SOURCE")
     else:
         bound["rearmed_at"] = _iso(now)
     unbound.update(status="MIGRATED", superseded_by=oid, migrated_at=_iso(now))
@@ -359,6 +362,60 @@ def _evaluation(
     )
 
 
+_WAITING_BASE = frozenset({"id", "disposition", "owner", "reason", "resume_event"})
+
+
+def _non_empty_str(value: object) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
+def _positive_int(value: object) -> bool:
+    return type(value) is int and value > 0
+
+
+def _progress_pointer(claim: Native, row: Native) -> bool:
+    """A PROJECT_PROGRESS row waiting on a `gate:<row id>` pointer of its own."""
+    resume = claim.get("resume_event")
+    return (
+        row.get("kind") == "PROJECT_PROGRESS"
+        and claim.get("id") == row.get("id")
+        and isinstance(resume, str)
+        and resume.startswith("gate:")
+        and bool(resume[len("gate:") :])
+    )
+
+
+def _progress_wait(claim: Native, row: Native) -> bool:
+    return set(claim) == _WAITING_BASE and _progress_pointer(claim, row)
+
+
+def _waiting_shape(claim: Native, progress_wait: bool) -> bool:
+    keys = set(claim)
+    evidence = _non_empty_str(claim.get("evidence_sha256"))
+    plain = keys == _WAITING_BASE | {"evidence_sha256"} and evidence
+    dependency = (
+        keys
+        == _WAITING_BASE
+        | {"evidence_sha256", "dependency_pr_number", "dependency_head_sha"}
+        and evidence
+        and _positive_int(claim.get("dependency_pr_number"))
+        and isinstance(claim.get("dependency_head_sha"), str)
+    )
+    check = (
+        keys == _WAITING_BASE | {"evidence_sha256", "check_run_id"}
+        and evidence
+        and _positive_int(claim.get("check_run_id"))
+    )
+    return (
+        (
+            progress_wait
+            or (_non_empty_str(claim.get("id")) and (plain or dependency or check))
+        )
+        and isinstance(claim.get("owner"), str)
+        and isinstance(claim.get("reason"), str)
+    )
+
+
 def _result(claim: Native, row: Native) -> p.Result:
     mode = str(claim.get("disposition") or "")
     row_id = str(row.get("id") or "")
@@ -366,52 +423,13 @@ def _result(claim: Native, row: Native) -> p.Result:
     evidence, evidence_valid = provider.citations(claim.get("evidence"))
     index = claim.get("assignment_index")
     need = claim.get("need", [])
-    waiting_base = {"id", "disposition", "owner", "reason", "resume_event"}
-    progress_wait = (
-        row.get("kind") == "PROJECT_PROGRESS"
-        and identity_valid
-        and set(claim) == waiting_base
-        and isinstance(claim.get("resume_event"), str)
-        and claim["resume_event"].startswith("gate:")
-        and bool(claim["resume_event"][len("gate:") :])
-    )
-    waiting_evidence = (
-        set(claim) == waiting_base | {"evidence_sha256"}
-        and isinstance(claim.get("evidence_sha256"), str)
-        and bool(claim.get("evidence_sha256"))
-    )
-    waiting_dependency = (
-        set(claim)
-        == waiting_base
-        | {"evidence_sha256", "dependency_pr_number", "dependency_head_sha"}
-        and isinstance(claim.get("evidence_sha256"), str)
-        and bool(claim.get("evidence_sha256"))
-        and type(claim.get("dependency_pr_number")) is int
-        and claim["dependency_pr_number"] > 0
-        and isinstance(claim.get("dependency_head_sha"), str)
-    )
-    waiting_check = (
-        set(claim) == waiting_base | {"evidence_sha256", "check_run_id"}
-        and isinstance(claim.get("evidence_sha256"), str)
-        and bool(claim.get("evidence_sha256"))
-        and type(claim.get("check_run_id")) is int
-        and claim["check_run_id"] > 0
-    )
+    progress_wait = identity_valid and _progress_wait(claim, row)
     shapes = {
         "ASSIGNED": identity_valid
         and set(claim) == {"id", "disposition", "assignment_index", "evidence"}
         and type(index) is int
         and evidence_valid,
-        "WAITING": (
-            progress_wait
-            or (
-                isinstance(claim.get("id"), str)
-                and bool(claim.get("id"))
-                and (waiting_evidence or waiting_dependency or waiting_check)
-            )
-        )
-        and isinstance(claim.get("owner"), str)
-        and isinstance(claim.get("reason"), str),
+        "WAITING": _waiting_shape(claim, progress_wait),
         "REFRESH": identity_valid
         and set(claim) - {"need"} == {"id", "disposition", "reason"}
         and isinstance(claim.get("reason"), str)
@@ -422,6 +440,9 @@ def _result(claim: Native, row: Native) -> p.Result:
         and set(claim) == {"id", "disposition", "evidence"}
         and evidence_valid,
     }
+    resume_event = str(claim.get("resume_event") or "")
+    if mode == "WAITING" and not progress_wait:
+        resume_event = "gate:" + str(claim.get("id") or "")
     return p.Result(
         mode,
         shapes.get(mode, False),
@@ -429,13 +450,7 @@ def _result(claim: Native, row: Native) -> p.Result:
         index if type(index) is int else None,
         str(claim.get("owner") or ""),
         str(claim.get("reason") or ""),
-        (
-            str(claim.get("resume_event") or "")
-            if mode == "WAITING" and progress_wait
-            else "gate:" + str(claim.get("id") or "")
-            if mode == "WAITING"
-            else str(claim.get("resume_event") or "")
-        ),
+        resume_event,
         tuple(str(n) for n in need) if isinstance(need, list) else (),
     )
 
@@ -465,16 +480,9 @@ def validate_progress(
             _result(claim, row),
         )
         if claim.get("disposition") == "WAITING":
-            progress_pointer = (
-                row.get("kind") == "PROJECT_PROGRESS"
-                and claim.get("id") == row.get("id")
-                and isinstance(claim.get("resume_event"), str)
-                and claim["resume_event"].startswith("gate:")
-                and bool(claim["resume_event"][len("gate:") :])
-            )
             binding_id = (
                 str(claim.get("resume_event") or "")[len("gate:") :]
-                if progress_pointer
+                if _progress_pointer(claim, row)
                 else str(claim.get("id") or "")
             )
             binding_rows = [
@@ -529,6 +537,57 @@ def source_changes(
     return status, detail + pointer
 
 
+def _owner_review_gate(
+    job: Native, row: Native, claim: Native, at: Native
+) -> tuple[Native, Native] | None:
+    canonical = row.get("canonical") or {}
+    if (
+        row.get("kind") == "HUMAN_MERGE"
+        and row.get("source_kind") == "canonical_criterion"
+        and canonical.get("criterion") == "M16"
+        and claim.get("evidence_sha256") == row.get("source_sha256")
+    ):
+        return at, canonical
+    if row.get("kind") not in ("TECHNICAL", "UNFINISHED"):
+        return None
+    dependency = {
+        "pr_number": claim.get("dependency_pr_number"),
+        "head_sha": claim.get("dependency_head_sha"),
+    }
+    waits = [
+        wait
+        for wait in (job.get("continuation_frontier") or {}).get("dependency_waits", [])
+        if wait.get("subject") == at
+        and wait.get("dependency") == dependency
+        and wait.get("evidence_sha256") == claim.get("evidence_sha256")
+    ]
+    if len(waits) != 1:
+        return None
+    return dependency, {
+        key: waits[0][key]
+        for key in ("check_run_id", "protected_revision")
+        if key in waits[0]
+    }
+
+
+def _provider_gate(
+    job: Native, claim: Native, at: Native
+) -> tuple[Native, Native] | None:
+    check_run_id = claim.get("check_run_id")
+    if type(check_run_id) is not int:
+        return None
+    for candidate in (job.get("continuation_frontier") or {}).get("rows", []):
+        if (
+            candidate.get("source_kind") == "canonical_criterion"
+            and candidate.get("kind") == "TECHNICAL"
+            and candidate.get("subject") == at
+            and candidate.get("source_sha256") == claim.get("evidence_sha256")
+            and (candidate.get("canonical") or {}).get("check_run_id") == check_run_id
+        ):
+            return at, candidate["canonical"]
+    return None
+
+
 def gate_binding(job: Native, row: Native, claim: Native) -> Native | None:
     """Translate only a supported, already-validated native gate; never approve it."""
     at = row.get("subject") or {}
@@ -539,56 +598,16 @@ def gate_binding(job: Native, row: Native, claim: Native) -> Native | None:
     ):
         return None
     selector, owner = claim.get("resume_event"), claim.get("owner")
-    resume = at
-    canonical = row.get("canonical") or {}
+    resolved: tuple[Native, Native] | None
     if selector == "native_exact_head_review" and owner == "human:ktogias":
-        if (
-            row.get("kind") == "HUMAN_MERGE"
-            and row.get("source_kind") == "canonical_criterion"
-            and canonical.get("criterion") == "M16"
-            and claim.get("evidence_sha256") == row.get("source_sha256")
-        ):
-            pass
-        elif row.get("kind") in ("TECHNICAL", "UNFINISHED"):
-            dependency = {
-                "pr_number": claim.get("dependency_pr_number"),
-                "head_sha": claim.get("dependency_head_sha"),
-            }
-            waits = [
-                wait
-                for wait in (job.get("continuation_frontier") or {}).get(
-                    "dependency_waits", []
-                )
-                if wait.get("subject") == at
-                and wait.get("dependency") == dependency
-                and wait.get("evidence_sha256") == claim.get("evidence_sha256")
-            ]
-            if len(waits) != 1:
-                return None
-            resume = dependency
-            canonical = {
-                key: waits[0][key]
-                for key in ("check_run_id", "protected_revision")
-                if key in waits[0]
-            }
-        else:
-            return None
+        resolved = _owner_review_gate(job, row, claim, at)
     elif selector == "provider_source_changed" and owner == "provider:canonical-gate":
-        candidates = [
-            r
-            for r in (job.get("continuation_frontier") or {}).get("rows", [])
-            if r.get("source_kind") == "canonical_criterion"
-            and r.get("kind") == "TECHNICAL"
-            and r.get("subject") == at
-            and r.get("source_sha256") == claim.get("evidence_sha256")
-            and type(claim.get("check_run_id")) is int
-            and (r.get("canonical") or {}).get("check_run_id") == claim["check_run_id"]
-        ]
-        if not candidates:
-            return None
-        canonical = candidates[0]["canonical"]
+        resolved = _provider_gate(job, claim, at)
     else:
         return None
+    if resolved is None:
+        return None
+    resume, canonical = resolved
     if not provider.valid_subject(resume):
         return None
     return {

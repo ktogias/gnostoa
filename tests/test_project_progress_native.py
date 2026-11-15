@@ -6,7 +6,10 @@ import copy
 import json
 import unittest
 from datetime import UTC, datetime
+from typing import cast
+from unittest import mock
 
+from tools import project_progress as core
 from tools import project_progress_native as n
 
 
@@ -231,7 +234,7 @@ class NativeProgressTests(unittest.TestCase):
         pointers = tuple(self.reads)
         fresh = copy.deepcopy(self.reads)
         for row in fresh.values():
-            row["observed_at"] += 20
+            row["observed_at"] = cast(float, row["observed_at"]) + 20
         self.assertIsNone(n.source_changes(self.reads, fresh, pointers))
         original = self.reads[pointers[0]]
         original["source_binding_sha256"] = "original-provider-object"
@@ -261,6 +264,16 @@ class NativeProgressTests(unittest.TestCase):
                 assert result is not None
                 self.assertEqual(result[0], "SOURCE_PENDING")
 
+    def test_pointer_missing_from_held_is_source_pending_not_a_key_error(self) -> None:
+        pointer = next(iter(self.reads))
+        fresh = {pointer: copy.deepcopy(self.reads[pointer])}
+        for held in ({}, {"unrelated": copy.deepcopy(self.reads[pointer])}):
+            with self.subTest(held=sorted(held)):
+                result = n.source_changes(held, fresh, (pointer,))
+                assert result is not None
+                self.assertEqual(result[0], "SOURCE_PENDING")
+                self.assertIn(pointer, result[1])
+
     def test_migration_keeps_tombstone_request_identity_and_budget_attribution(
         self,
     ) -> None:
@@ -286,6 +299,38 @@ class NativeProgressTests(unittest.TestCase):
             n.request_budget(store, bound, self.now + 10, daily_cap=1), "DAILY_CAP"
         )
         self.assertIsNone(n.request_budget(store, bound, self.now + 10, daily_cap=2))
+
+    def test_migration_of_new_sources_reopens_a_discharged_bound_obligation(
+        self,
+    ) -> None:
+        store: n.Native = {}
+        source = {"category": "comment", "fingerprint": "new-evidence"}
+        old, _, _ = n.open_obligation(
+            store, {"kind": "work_item", "ref": None}, [source], "old", self.now
+        )
+        bound, _, _ = n.open_obligation(store, self.scope, [], None, self.now)
+        bound["status"] = "DISCHARGED"
+        old["status"] = "DISCHARGED"
+        migrated = n.migrate(store, old, self.scope, self.now + 1)
+        self.assertEqual(migrated["status"], "OPEN")
+        self.assertEqual(migrated["reopened_by"], "NEW_SOURCE")
+
+    def test_migration_rejects_an_ordering_that_invents_a_request(self) -> None:
+        store: n.Native = {}
+        old, _, _ = n.open_obligation(
+            store, {"kind": "work_item", "ref": None}, [], "old", self.now
+        )
+        old["requests"] = [
+            {
+                "key": "k",
+                "at": datetime.fromtimestamp(self.now, UTC).isoformat(),
+                "state": "INTENT",
+            }
+        ]
+        invented = core.RequestStamp("never-given", self.now)
+        with mock.patch.object(core, "migrate_requests", return_value=(invented,)):
+            with self.assertRaises(ValueError):
+                n.migrate(store, old, self.scope, self.now + 1)
 
     def test_migration_retains_each_overlapping_request_record(self) -> None:
         store: n.Native = {}
