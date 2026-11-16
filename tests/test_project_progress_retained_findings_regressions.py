@@ -884,5 +884,187 @@ class DecodedResultShapeTests(unittest.TestCase):
                     n.validate_progress({}, frontier, row, claim, decoded, [claim])
 
 
+_SUBJECT: n.Native = {"pr_number": 500, "head_sha": HEAD}
+_BAD_SHAPES: tuple[Any, ...] = ("text", ["x"], 7, True)
+
+
+class OwnerReviewShapeBoundaryTests(unittest.TestCase):
+    """Owner review 5921808537: malformed native shapes stay inside the boundary."""
+
+    def refresh(self, job: n.Native, row: n.Native) -> None:
+        claim: n.Native = {"id": row["id"], "disposition": "REFRESH", "reason": "again"}
+        decoded: n.Native = {
+            "assignments": [{"operation": {"operation_target": "pr:500"}}]
+        }
+        n.validate_progress(
+            job, {"coverage": "COMPLETE", "rows": [row]}, row, claim, decoded, [claim]
+        )
+
+    def test_a_truthy_non_mapping_native_field_is_one_named_refusal(self) -> None:
+        row = n.progress_row({"kind": "work_item", "ref": "issue:499"}, [])
+        job: n.Native = {"continuation_contract": {"frontier_sha256": "lineage"}}
+        self.refresh(job, row)
+        for bad in _BAD_SHAPES:
+            for owner, field in (
+                (job, "continuation_contract"),
+                (row, "sources"),
+                (row, "scope"),
+            ):
+                if field == "sources" and isinstance(bad, list):
+                    continue  # a list is the table's own shape for sources
+                held = copy.deepcopy(job)
+                held_row = copy.deepcopy(row)
+                (held if owner is job else held_row)[field] = bad
+                with (
+                    self.subTest(field=field, bad=bad),
+                    self.assertRaisesRegex(ValueError, "^PROJECT_PROGRESS "),
+                ):
+                    self.refresh(held, held_row)
+
+    def resume_gate(self) -> n.Native:
+        binding = n.gate_binding(
+            {},
+            {
+                "id": "gate",
+                "kind": "HUMAN_MERGE",
+                "source_kind": "canonical_criterion",
+                "subject": _SUBJECT,
+                "source_sha256": "captured",
+                "canonical": {"criterion": "M16"},
+            },
+            {
+                "id": "gate",
+                "disposition": "WAITING",
+                "owner": "human:ktogias",
+                "resume_event": "native_exact_head_review",
+                "evidence_sha256": "captured",
+            },
+        )
+        assert binding is not None
+        return {**binding, "at": NOW}
+
+    def resume(self, gate: n.Native, payload: Any) -> str | None:
+        record: n.Native = {
+            "kind": "review",
+            "number": 500,
+            "material_id": "m",
+            "observed_at": NOW + 2,
+            "payload": payload,
+        }
+        return n.gate_resume(
+            gate, record, {"head": HEAD, "provider_id": 9}, NOW + 3, owner_review=True
+        )
+
+    def test_a_non_mapping_canonical_or_payload_never_resumes_or_raises(self) -> None:
+        item = {"commit_id": HEAD, "submitted_at": _iso(NOW + 1)}
+        gate = self.resume_gate()
+        self.assertEqual(self.resume(gate, {"item": item}), "OWNER_REVIEW")
+        for bad in _BAD_SHAPES:
+            with self.subTest(bad=bad):
+                self.assertIsNone(
+                    self.resume({**gate, "canonical": bad}, {"item": item})
+                )
+                self.assertIsNone(self.resume(gate, bad))
+                self.assertIsNone(self.resume(gate, {"item": bad}))
+
+    def test_a_held_row_is_matched_on_its_whole_canonical_binding(self) -> None:
+        held: n.Native = {
+            "id": "gate",
+            "kind": "TECHNICAL",
+            "source_kind": "canonical_criterion",
+            "source_key": "k",
+            "subject": _SUBJECT,
+            "source_sha256": "evidence",
+            "canonical": {"check_run_id": 456},
+        }
+        claim: n.Native = {
+            "id": "gate",
+            "disposition": "WAITING",
+            "owner": "provider:canonical-gate",
+            "resume_event": "provider_source_changed",
+            "evidence_sha256": "evidence",
+            "check_run_id": 456,
+        }
+        job: n.Native = {"continuation_frontier": {"rows": [held]}}
+        self.assertIsNotNone(n.gate_binding(job, dict(held), claim))
+        for name, other in {
+            "source kind": {**held, "source_kind": "native_outcome"},
+            "source key": {**held, "source_key": "other"},
+            "canonical": {**held, "canonical": {"check_run_id": 456, "extra": 1}},
+            "missing key": {k: v for k, v in held.items() if k != "source_key"},
+        }.items():
+            with self.subTest(name=name):
+                self.assertIsNone(n.gate_binding(job, other, claim))
+
+    def test_a_damaged_held_wait_table_never_yields_a_unique_owner(self) -> None:
+        dependency = {"pr_number": 600, "head_sha": "b" * 40}
+        dependency_wait: n.Native = {
+            "subject": _SUBJECT,
+            "dependency": dependency,
+            "evidence_sha256": "evidence",
+            "check_run_id": 123,
+        }
+        review_claim: n.Native = {
+            "id": "gate",
+            "disposition": "WAITING",
+            "owner": "human:ktogias",
+            "resume_event": "native_exact_head_review",
+            "evidence_sha256": "evidence",
+            "dependency_pr_number": 600,
+            "dependency_head_sha": "b" * 40,
+        }
+        gate_row: n.Native = {
+            "id": "gate",
+            "kind": "TECHNICAL",
+            "source_kind": "canonical_criterion",
+            "subject": _SUBJECT,
+            "source_sha256": "evidence",
+            "canonical": {"check_run_id": 456},
+        }
+        native: n.Native = {
+            "id": "native",
+            "kind": "UNFINISHED",
+            "source_kind": "native_outcome",
+            "subject": _SUBJECT,
+            "source_key": "delivery:1",
+            "source_sha256": "native-sha",
+        }
+        provider_wait: n.Native = {
+            "subject": _SUBJECT,
+            "source_key": "delivery:1",
+            "source_sha256": "native-sha",
+            "obligation_ids": ["gate"],
+            "observed_check_run_id": 456,
+        }
+        check_claim: n.Native = {
+            "id": "native",
+            "disposition": "WAITING",
+            "owner": "provider:canonical-gate",
+            "resume_event": "provider_source_changed",
+            "evidence_sha256": "evidence",
+            "check_run_id": 456,
+        }
+
+        def review(waits: list[Any]) -> n.Native | None:
+            frontier = {"dependency_waits": waits}
+            return n.gate_binding(
+                {"continuation_frontier": frontier}, gate_row, review_claim
+            )
+
+        def native_bind(waits: list[Any], rows: list[Any]) -> n.Native | None:
+            frontier = {"rows": rows, "provider_waits": waits}
+            return n.gate_binding(
+                {"continuation_frontier": frontier}, native, check_claim
+            )
+
+        self.assertIsNotNone(review([dependency_wait]))
+        self.assertIsNotNone(native_bind([provider_wait], [gate_row]))
+        for junk in (None, 7, "text", ["x"]):
+            with self.subTest(junk=junk):
+                self.assertIsNone(review([dependency_wait, junk]))
+                self.assertIsNone(native_bind([provider_wait, junk], [gate_row]))
+                self.assertIsNone(native_bind([provider_wait], [gate_row, junk]))
+
+
 if __name__ == "__main__":
     unittest.main()

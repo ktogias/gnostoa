@@ -11,7 +11,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any, TypedDict, Unpack, cast
 
@@ -384,6 +384,28 @@ def _text(value: object) -> str:
     return str(value or "")
 
 
+# The one shape table for nested native fields read before a core call: the
+# expected type of each and its empty value when the field is absent or falsy.
+_BOUNDARY_SHAPES: dict[str, tuple[type, Callable[[], Any]]] = {
+    "continuation_contract": (Mapping, dict),
+    "scope": (Mapping, dict),
+    "sources": (list, list),
+}
+
+
+def _boundary(owner: Native, field: str) -> Any:
+    """A native field in its table shape; a truthy wrong shape is one named refusal."""
+    expected, empty = _BOUNDARY_SHAPES[field]
+    value = owner.get(field)
+    if not value:
+        return empty()
+    if not isinstance(value, expected):
+        raise ValueError(
+            f"PROJECT_PROGRESS the native {field} must be a {expected.__name__.lower()}"
+        )
+    return value
+
+
 def _frontier_rows(frontier: object) -> list[Native]:
     """The captured frontier's rows, or one named refusal: never an empty frontier."""
     rows = frontier.get("rows") if isinstance(frontier, Mapping) else None
@@ -432,11 +454,12 @@ def _evaluation(
         if not source.startswith("_") and isinstance(held, dict)
     )
     gates = _gates(_frontier_rows(frontier), row, claims)
+    contract = _boundary(job, "continuation_contract")
     return p.Evaluation(
-        provider.scope_ref(row.get("scope") or {}),
+        provider.scope_ref(_boundary(row, "scope")),
         reads,
         _targets(decoded),
-        provider.closed_targets(row.get("sources") or [])
+        provider.closed_targets(_boundary(row, "sources"))
         + provider.closed_reads(context),
         frontier.get("coverage") == "COMPLETE",
         isinstance(job.get("authority_context"), dict)
@@ -445,7 +468,7 @@ def _evaluation(
         gates,
         p.Citation(
             "frontier:" + row["id"],
-            str((job.get("continuation_contract") or {}).get("frontier_sha256") or ""),
+            str(contract.get("frontier_sha256") or ""),
             None,
         ),
     )
@@ -642,12 +665,18 @@ def _mapping(value: object) -> Native:
     return cast("Native", value) if isinstance(value, Mapping) else {}
 
 
-def _held_gate_sources(job: Native, key: str) -> list[Native]:
-    """The job's held frontier entries under one key; only mapping entries can bind."""
+def _held_gate_sources(job: Native, key: str) -> list[Native] | None:
+    """The job's held frontier entries under one key, or None for a damaged table.
+
+    An absent table holds nothing. A table that is not a list, or that holds any
+    non-mapping entry, is damaged authority: it never filters down to an owner.
+    """
     items = _mapping(job.get("continuation_frontier")).get(key)
-    if not isinstance(items, list):
+    if items is None:
         return []
-    return [cast("Native", item) for item in items if isinstance(item, Mapping)]
+    if not isinstance(items, list) or not all(isinstance(i, Mapping) for i in items):
+        return None
+    return cast("list[Native]", items)
 
 
 def _owner_review_gate(
@@ -667,9 +696,12 @@ def _owner_review_gate(
         "pr_number": claim.get("dependency_pr_number"),
         "head_sha": claim.get("dependency_head_sha"),
     }
+    held_waits = _held_gate_sources(job, "dependency_waits")
+    if held_waits is None:
+        return None
     waits = [
         wait
-        for wait in _held_gate_sources(job, "dependency_waits")
+        for wait in held_waits
         if wait.get("subject") == at
         and wait.get("dependency") == dependency
         and wait.get("evidence_sha256") == claim.get("evidence_sha256")
@@ -708,11 +740,10 @@ def _provider_gate(
     """Bind the one held check-run row, or a native row a held provider wait owns."""
     if type(claim.get("check_run_id")) is not int:
         return None
-    held = [
-        candidate
-        for candidate in _held_gate_sources(job, "rows")
-        if _check_run_row(candidate, claim, at)
-    ]
+    rows = _held_gate_sources(job, "rows")
+    if rows is None:
+        return None
+    held = [candidate for candidate in rows if _check_run_row(candidate, claim, at)]
     if len(held) != 1:
         return None
     gate = held[0]
@@ -721,10 +752,26 @@ def _provider_gate(
     return at, _mapping(gate.get("canonical"))
 
 
+_GATE_ROW_FIELDS = (
+    "id",
+    "kind",
+    "source_kind",
+    "source_key",
+    "source_sha256",
+    "subject",
+    "canonical",
+)
+
+
 def _is_gate_row(row: Native, gate: Native) -> bool:
-    """The frontier row is the held gate itself: same id, kind and source digest."""
+    """The frontier row is the held gate itself: every identity and canonical field.
+
+    A missing field must be missing on both sides, so a row cannot borrow the held
+    canonical record while differing in source kind, source key or canonical content.
+    """
     return all(
-        row.get(field) == gate.get(field) for field in ("id", "kind", "source_sha256")
+        (field in row) == (field in gate) and row.get(field) == gate.get(field)
+        for field in _GATE_ROW_FIELDS
     )
 
 
@@ -737,9 +784,12 @@ def _native_wait_owns(
     key, digest = row.get("source_key"), row.get("source_sha256")
     if not (isinstance(key, str) and key and isinstance(digest, str) and digest):
         return False
+    held_waits = _held_gate_sources(job, "provider_waits")
+    if held_waits is None:
+        return False
     waits = [
         wait
-        for wait in _held_gate_sources(job, "provider_waits")
+        for wait in held_waits
         if wait.get("subject") == at
         and wait.get("source_key") == key
         and wait.get("source_sha256") == digest
@@ -827,7 +877,7 @@ def _resume_selector(
 
 def _resume_gate(gate: Native, mode: str) -> p.ResumeGate:
     resume = gate["resume_subject"]
-    baseline = (gate.get("canonical") or {}).get("check_run_id")
+    baseline = _mapping(gate.get("canonical")).get("check_run_id")
     return p.ResumeGate(
         provider.subject_ref(resume),
         str(resume["head_sha"]),
@@ -853,15 +903,18 @@ def gate_resume(
     existing observer. Exact subject, time, sequence and consumed-material checks
     are the neutral owner's common resume decision.
     """
-    resume = gate.get("resume_subject") or {}
+    resume = _mapping(gate.get("resume_subject"))
     observed = record.get("observed_at")
+    payload = record.get("payload")
     if (
         not provider.valid_subject(resume)
         or type(observed) not in (int, float)
         or type(gate.get("at")) not in (int, float)
+        or (payload and not isinstance(payload, Mapping))
+        or (gate.get("canonical") and not isinstance(gate["canonical"], Mapping))
     ):
         return None
-    item = (record.get("payload") or {}).get("item") or {}
+    item = _mapping(_mapping(payload).get("item"))
     selected = _resume_selector(
         gate, record, item, changed=changed, owner_review=owner_review
     )
