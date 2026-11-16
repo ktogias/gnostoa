@@ -772,12 +772,18 @@ class NativeProgressTests(unittest.TestCase):
             "check_run_id": 456,
         }
 
+        unset: Any = object()
+
         def bind(
-            row: n.Native = native,
-            waits: Any = (wait,),
-            rows: Any = (gate,),
-            the_claim: n.Native = claim,
+            row: Any = unset,
+            waits: Any = unset,
+            rows: Any = unset,
+            the_claim: Any = unset,
         ) -> n.Native | None:
+            row = native if row is unset else row
+            waits = (wait,) if waits is unset else waits
+            rows = (gate,) if rows is unset else rows
+            the_claim = claim if the_claim is unset else the_claim
             job: n.Native = {
                 "continuation_frontier": {
                     "rows": list(rows),
@@ -823,6 +829,28 @@ class NativeProgressTests(unittest.TestCase):
             "other kind": bind(row={**native, "kind": "HUMAN_MERGE"}),
             "other source": bind(row={**native, "source_kind": "source_recovery"}),
             "progress row": bind(row={**native, "kind": "PROJECT_PROGRESS"}),
+            "gate id, other kind": bind(row={**gate, "kind": "HUMAN_MERGE"}),
+            "gate id, other digest": bind(row={**gate, "source_sha256": "other"}),
+            "bool held id": bind(
+                rows=({**gate, "canonical": {"check_run_id": True}},),
+                waits=({**wait, "observed_check_run_id": True},),
+                the_claim={**claim, "check_run_id": 1},
+            ),
+            "float held id": bind(
+                rows=({**gate, "canonical": {"check_run_id": 1.0}},),
+                waits=({**wait, "observed_check_run_id": 1},),
+                the_claim={**claim, "check_run_id": 1},
+            ),
+            "bool observed id": bind(
+                rows=({**gate, "canonical": {"check_run_id": 1}},),
+                waits=({**wait, "observed_check_run_id": True},),
+                the_claim={**claim, "check_run_id": 1},
+            ),
+            "float observed id": bind(
+                rows=({**gate, "canonical": {"check_run_id": 1}},),
+                waits=({**wait, "observed_check_run_id": 1.0},),
+                the_claim={**claim, "check_run_id": 1},
+            ),
         }
         for name, result in refused.items():
             with self.subTest(case=name):

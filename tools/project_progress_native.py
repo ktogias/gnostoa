@@ -690,9 +690,16 @@ def _check_run_row(candidate: Native, claim: Native, at: Native) -> bool:
         and candidate.get("kind") == "TECHNICAL"
         and candidate.get("subject") == at
         and candidate.get("source_sha256") == claim.get("evidence_sha256")
-        and _mapping(candidate.get("canonical")).get("check_run_id")
-        == claim.get("check_run_id")
+        and _same_check_run(
+            _mapping(candidate.get("canonical")).get("check_run_id"),
+            claim.get("check_run_id"),
+        )
     )
+
+
+def _same_check_run(held: object, claimed: object) -> bool:
+    """Equal check-run ids only when both are real ints (`True` and `1.0` are not `1`)."""
+    return type(held) is int and type(claimed) is int and held == claimed
 
 
 def _provider_gate(
@@ -709,11 +716,16 @@ def _provider_gate(
     if len(held) != 1:
         return None
     gate = held[0]
-    if row.get("id") != gate.get("id") and not _native_wait_owns(
-        job, row, gate, claim, at
-    ):
+    if not _is_gate_row(row, gate) and not _native_wait_owns(job, row, gate, claim, at):
         return None
     return at, _mapping(gate.get("canonical"))
+
+
+def _is_gate_row(row: Native, gate: Native) -> bool:
+    """The frontier row is the held gate itself: same id, kind and source digest."""
+    return all(
+        row.get(field) == gate.get(field) for field in ("id", "kind", "source_sha256")
+    )
 
 
 def _native_wait_owns(
@@ -733,7 +745,9 @@ def _native_wait_owns(
         and wait.get("source_sha256") == digest
         and isinstance(wait.get("obligation_ids"), list)
         and gate.get("id") in wait["obligation_ids"]
-        and wait.get("observed_check_run_id") == claim.get("check_run_id")
+        and _same_check_run(
+            wait.get("observed_check_run_id"), claim.get("check_run_id")
+        )
     ]
     return len(waits) == 1
 
