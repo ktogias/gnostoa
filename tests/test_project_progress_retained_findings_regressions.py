@@ -18,10 +18,34 @@ from tools.agent_review_model import Ref
 
 NOW = 1_800_000_000.0
 HEAD = "a" * 40
+# The one refusal of an unreadable journal record, as distinct from a missing list.
+_BAD_REQUEST_RECORD = "PROJECT_PROGRESS a request record needs its key"
 
 
 def _iso(at: float) -> str:
     return datetime.fromtimestamp(at, UTC).isoformat()
+
+
+def _journal(*records: Any) -> tuple[n.Native, n.Native]:
+    """A store of one obligation, and that obligation, journalling `records`."""
+    obligation = n.new_obligation("o", {"kind": "work_item", "ref": "issue:499"}, NOW)
+    obligation["requests"] = list(records)
+    return {"o": obligation}, obligation
+
+
+def _retry_decision(obligation: n.Native, store: n.Native) -> tuple[str, str]:
+    return n.controller_decision(
+        obligation,
+        fate="RETRY",
+        reason="SENT",
+        touched=False,
+        linked_open=False,
+        source_router_open=False,
+        now=NOW,
+        obligations=store,
+        current_input="a",
+        last_input="a",
+    )
 
 
 class GenerationlessScopeUpdateTests(unittest.TestCase):
@@ -152,15 +176,32 @@ class ReviewSubmissionTimeTests(unittest.TestCase):
     def test_a_review_without_a_submission_time_fails_closed(self) -> None:
         self.assertIsNone(self.resume({"updated_at": _iso(NOW + 1)}))
 
+    def provider_time(self, kind: str, item: n.Native) -> float | None:
+        """The provider time the resume decision is handed for one record."""
+        record: n.Native = {
+            "kind": kind,
+            "number": 600,
+            "material_id": "one-material",
+            "observed_at": NOW + 2,
+            "payload": {"item": {"commit_id": HEAD, **item}},
+        }
+        with mock.patch.object(core, "gate_resume", wraps=core.gate_resume) as decided:
+            n.gate_resume(self.gate, record, self.fact, NOW + 3, owner_review=True)
+        fact: core.ResumeFact = decided.call_args.args[1]
+        return fact.provider_at
+
     def test_a_submission_time_without_a_timezone_fails_closed(self) -> None:
-        naive = _iso(NOW + 1)[: -len("+00:00")]
+        aware = _iso(NOW + 1)
+        naive = aware[: -len("+00:00")]
         for text in (naive, naive + ".5", naive[:10]):
             with self.subTest(text=text):
-                # Read at the one provider-time parser: the host zone never decides.
-                self.assertIsNone(n._provider_at({"submitted_at": text}, True))
-                self.assertIsNone(n._provider_at({"updated_at": text}, False))
+                # Read what the decision is handed: the host zone never decides.
+                self.assertIsNone(self.provider_time("review", {"submitted_at": text}))
+                self.assertIsNone(self.provider_time("comment", {"updated_at": text}))
                 self.assertIsNone(self.resume({"submitted_at": text}))
-        self.assertEqual(self.resume({"submitted_at": _iso(NOW + 1)}), "OWNER_REVIEW")
+        self.assertEqual(self.provider_time("review", {"submitted_at": aware}), NOW + 1)
+        self.assertEqual(self.provider_time("comment", {"updated_at": aware}), NOW + 1)
+        self.assertEqual(self.resume({"submitted_at": aware}), "OWNER_REVIEW")
 
     def test_a_submission_after_the_gate_resumes_whatever_its_edit_time(self) -> None:
         for updated in (None, NOW - 1, NOW + 2):
@@ -575,8 +616,14 @@ class BudgetLimitTests(unittest.TestCase):
 
 class MalformedRecordBoundaryTests(unittest.TestCase):
     def test_a_malformed_request_record_is_one_named_refusal(self) -> None:
-        good: n.Native = {"key": "k", "at": _iso(NOW)}
-        self.assertEqual(n._stamp(good), core.RequestStamp("k", NOW, False))
+        store, obligation = _journal({"key": "k", "at": _iso(NOW)})
+        with mock.patch.object(
+            core, "request_budget", wraps=core.request_budget
+        ) as budget:
+            n.request_budget(store, obligation, NOW)
+        # The budget is handed the record's own key and instant, read once.
+        stamps = (core.RequestStamp("k", NOW, False),)
+        self.assertEqual(budget.call_args.args[:2], (stamps, stamps))
         for name, record in (
             ("no time", {"key": "k"}),
             ("no key", {"at": _iso(NOW)}),
@@ -585,11 +632,12 @@ class MalformedRecordBoundaryTests(unittest.TestCase):
             ("naive time", {"key": "k", "at": "2027-01-15T08:00:00"}),
             ("naive date", {"key": "k", "at": "2027-01-15"}),
         ):
+            store, obligation = _journal(record)
             with (
                 self.subTest(name),
-                self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS a request"),
+                self.assertRaisesRegex(ValueError, _BAD_REQUEST_RECORD),
             ):
-                n._stamp(record)
+                n.request_budget(store, obligation, NOW)
 
     def test_a_malformed_assignment_is_refused_inside_the_value_error_boundary(
         self,
@@ -702,20 +750,6 @@ class FailClosedHistoryMatrixTests(unittest.TestCase):
         ("record null", None),
     )
 
-    def decide(self, obligation: n.Native, store: n.Native) -> tuple[str, str]:
-        return n.controller_decision(
-            obligation,
-            fate="RETRY",
-            reason="SENT",
-            touched=False,
-            linked_open=False,
-            source_router_open=False,
-            now=NOW,
-            obligations=store,
-            current_input="a",
-            last_input="a",
-        )
-
     def test_each_bad_record_refuses_budget_decision_and_migration(self) -> None:
         for name, record in self.BAD:
             for last in (False, True):
@@ -729,7 +763,7 @@ class FailClosedHistoryMatrixTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS"):
                         n.request_budget(store, obligation, NOW)
                     with self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS"):
-                        self.decide(obligation, store)
+                        _retry_decision(obligation, store)
                     unbound = n.new_obligation("u", {"kind": "work_item"}, NOW)
                     unbound["requests"] = copy.deepcopy(requests)
                     migration: n.Native = {}
@@ -746,10 +780,11 @@ class FailClosedHistoryMatrixTests(unittest.TestCase):
         unbound = n.new_obligation("u", {"kind": "work_item"}, NOW)
         unbound["requests"] = [{"key": "u", "at": _iso(NOW - 9)}]
         store: n.Native = {bound["id"]: bound}
-        held = copy.deepcopy((store, unbound))
+        records = (store, unbound)
+        held = copy.deepcopy(records)
         with self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS"):
             n.migrate(store, unbound, self.SCOPE, NOW)
-        self.assertEqual((store, unbound), held)
+        self.assertEqual(records, held)
 
     def test_requests_missing_or_null_refuse_without_a_raw_error(self) -> None:
         for name in ("missing", "null", "mapping"):
@@ -764,7 +799,7 @@ class FailClosedHistoryMatrixTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS"):
                     n.request_budget(store, obligation, NOW)
                 with self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS"):
-                    self.decide(obligation, store)
+                    _retry_decision(obligation, store)
                 self.assertEqual(store, held)
 
     def test_a_corrupt_peer_holds_every_obligation_until_repaired(self) -> None:
@@ -775,19 +810,18 @@ class FailClosedHistoryMatrixTests(unittest.TestCase):
         held = copy.deepcopy(store)
         for _ in range(2):  # a restart replays the same refusal
             with self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS"):
-                self.decide(good, store)
+                _retry_decision(good, store)
             self.assertEqual(store, held)
         peer["requests"][0]["at"] = _iso(NOW - 5)
-        self.assertEqual(self.decide(good, store)[0], "REQUEST")
+        self.assertEqual(_retry_decision(good, store)[0], "REQUEST")
 
     def test_an_overflowing_timestamp_is_one_named_refusal(self) -> None:
-        with (
-            mock.patch.object(n, "datetime") as clock,
-            self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS a request"),
-        ):
+        store, obligation = _journal({"key": "k", "at": _iso(NOW)})
+        with mock.patch.object(n, "datetime") as clock:
             clock.fromisoformat.return_value.timestamp.side_effect = OverflowError
             clock.fromisoformat.return_value.tzinfo = UTC
-            n._stamp({"key": "k", "at": _iso(NOW)})
+            with self.assertRaisesRegex(ValueError, _BAD_REQUEST_RECORD):
+                n.request_budget(store, obligation, NOW)
 
 
 class DecodedResultShapeTests(unittest.TestCase):
@@ -823,25 +857,31 @@ class DecodedResultShapeTests(unittest.TestCase):
         for mode in ("ASSIGNED", "WAITING", "REFRESH", "QUIESCENT"):
             claim: n.Native = {"id": row["id"], "disposition": mode, "need": []}
             for name, decoded in shapes:
-                held = copy.deepcopy((frontier, claim))
+                inputs = (frontier, claim)
+                held = copy.deepcopy(inputs)
                 with (
                     self.subTest(mode=mode, shape=name),
                     self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS"),
                 ):
                     n.validate_progress({}, frontier, row, claim, decoded, [claim])
-                self.assertEqual((frontier, claim), held)
+                self.assertEqual(inputs, held)
 
     def test_an_unparseable_operation_target_is_refused(self) -> None:
+        scope: n.Native = {"kind": "work_item", "ref": "issue:499"}
+        row = n.progress_row(scope, [])
+        frontier: n.Native = {"coverage": "COMPLETE", "rows": [row]}
         values: tuple[Any, ...] = (None, 7, {}, "garbage", "pr:")
-        for value in values:
-            decoded: n.Native = {
-                "assignments": [{"operation": {"operation_target": value}}]
-            }
-            with (
-                self.subTest(value=value),
-                self.assertRaisesRegex(ValueError, "supported operation_target"),
-            ):
-                n._targets(decoded)
+        for mode in ("ASSIGNED", "WAITING", "REFRESH", "QUIESCENT"):
+            claim: n.Native = {"id": row["id"], "disposition": mode, "need": []}
+            for value in values:
+                decoded: n.Native = {
+                    "assignments": [{"operation": {"operation_target": value}}]
+                }
+                with (
+                    self.subTest(mode=mode, value=value),
+                    self.assertRaisesRegex(ValueError, "supported operation_target"),
+                ):
+                    n.validate_progress({}, frontier, row, claim, decoded, [claim])
 
 
 if __name__ == "__main__":
