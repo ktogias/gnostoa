@@ -198,19 +198,32 @@ def _stamp(request: Native) -> p.RequestStamp:
     the caller before any intent, so budget history cannot be silently reset.
     """
     try:
-        at = datetime.fromisoformat(str(request["at"]).replace("Z", "+00:00"))
+        if not isinstance(request, Mapping):
+            raise TypeError("a request record must be a mapping")
+        key, raw = request["key"], request["at"]
+        if not isinstance(key, str) or not key or not isinstance(raw, str):
+            raise TypeError("a request key and time must be non-empty text")
+        at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         if at.tzinfo is None:
             raise ValueError("a request time must carry its timezone")
-        return p.RequestStamp(
-            str(request["key"]), at.timestamp(), bool(request.get("carried_from"))
-        )
+        return p.RequestStamp(key, at.timestamp(), bool(request.get("carried_from")))
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise ValueError(
             "PROJECT_PROGRESS a request record needs its key and a timezone-aware ISO time"
         ) from error
 
 
+def _history(obligation: object) -> tuple[p.RequestStamp, ...]:
+    """Every request stamp of one obligation, read-only, or one named refusal."""
+    requests = obligation.get("requests") if isinstance(obligation, Mapping) else None
+    if not isinstance(requests, list):
+        raise ValueError("PROJECT_PROGRESS a request record list is missing or invalid")
+    return tuple(_stamp(r) for r in requests)
+
+
 def _targets(decoded: Native) -> tuple[Ref | None, ...]:
+    if not isinstance(decoded, Mapping):
+        raise ValueError("PROJECT_PROGRESS the decoded result must be a mapping")
     assignments = decoded.get("assignments")
     if not isinstance(assignments, list):
         raise ValueError("PROJECT_PROGRESS assignments must be a list")
@@ -251,6 +264,10 @@ def _carry_requests(bound: Native, unbound: Native) -> None:
 
 def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> Native:
     oid = scope_identity(scope)
+    # Validate every carried and bound request before the first mutation.
+    _history(unbound)
+    if obligations.get(oid):
+        _history(obligations[oid])
     bound = obligations.get(oid) or new_obligation(oid, scope, now)
     obligations[oid] = bound
     binding = {
@@ -300,9 +317,11 @@ def request_budget(
     window_seconds: float = 86400,
     daily_cap: int = 12,
 ) -> str | None:
+    identity = _history(obligation)
+    everyone = tuple(s for o in obligations.values() for s in _history(o))
     return p.request_budget(
-        tuple(_stamp(r) for r in obligation["requests"]),
-        tuple(_stamp(r) for o in obligations.values() for r in o["requests"]),
+        identity,
+        everyone,
         now,
         per_identity=per_identity,
         window_seconds=window_seconds,
@@ -325,12 +344,14 @@ def controller_decision(
     pending_refreshed: bool | None = None,
     **limits: Unpack[BudgetLimits],
 ) -> tuple[str, str]:
-    requests = obligation["requests"]
+    raw = obligation.get("requests")
+    requests = raw if isinstance(raw, list) else []
+    last = requests[-1] if requests else None
     decision = p.decide_transition(
         p.Transition(
             open=obligation["status"] == "OPEN",
             has_request=bool(requests),
-            intent=bool(requests and requests[-1].get("state") == "INTENT"),
+            intent=isinstance(last, Mapping) and last.get("state") == "INTENT",
             changed=touched or (bool(requests) and current_input != last_input),
             fate=fate or "HOLD",
             reason=reason,
