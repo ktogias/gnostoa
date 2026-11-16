@@ -609,7 +609,7 @@ def validate_progress(
 ) -> None:
     try:
         if claim.get("disposition") in ("ASSIGNED", "QUIESCENT") and not any(
-            item.get("id") == row.get("id") for item in _frontier_rows(frontier)
+            item == row for item in _frontier_rows(frontier)
         ):
             raise ValueError(
                 "PROJECT_PROGRESS the captured frontier does not hold this row"
@@ -716,6 +716,7 @@ def _owner_review_gate(
         if wait.get("subject") == at
         and wait.get("dependency") == dependency
         and wait.get("evidence_sha256") == claim.get("evidence_sha256")
+        and wait.get("evidence_sha256") == row.get("source_sha256")
     ]
     if len(waits) != 1:
         return None

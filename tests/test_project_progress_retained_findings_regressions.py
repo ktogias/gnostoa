@@ -332,6 +332,29 @@ class CapturedClosedTargetTests(unittest.TestCase):
                 [self.claim],
             )
 
+    def test_a_row_with_a_captured_id_but_other_content_is_never_discharged(
+        self,
+    ) -> None:
+        # cubic 4591884412: the whole captured row must match, not only its id.
+        altered = {**self.row, "source_sha256": "not-captured"}
+        with self.assertRaisesRegex(ValueError, "^PROJECT_PROGRESS the captured"):
+            self.quiescent_row(altered)
+
+    def quiescent_row(self, row: n.Native) -> None:
+        claim: n.Native = {
+            "id": self.row["id"],
+            "disposition": "QUIESCENT",
+            "evidence": self.claim["evidence"][:1],
+        }
+        n.validate_progress(
+            {"authority_context": self.context},
+            {"coverage": "COMPLETE", "rows": [self.row]},
+            row,
+            claim,
+            {"assignments": []},
+            [claim],
+        )
+
     def test_a_target_captured_closed_or_merged_is_never_dispatched(self) -> None:
         for change in (
             {"state": "closed"},
@@ -1101,6 +1124,16 @@ class OwnerReviewShapeBoundaryTests(unittest.TestCase):
             )
 
         self.assertIsNotNone(review([dependency_wait]))
+        # CodeAnt 4591961227: a wait for another digest is not this row's wait.
+        borrowed = {**dependency_wait, "evidence_sha256": "other"}
+        borrowing = {**review_claim, "evidence_sha256": "other"}
+        self.assertIsNone(
+            n.gate_binding(
+                {"continuation_frontier": {"dependency_waits": [borrowed]}},
+                gate_row,
+                borrowing,
+            )
+        )
         self.assertIsNotNone(native_bind([provider_wait], [gate_row]))
         for junk in (None, 7, "text", ["x"]):
             with self.subTest(junk=junk):
