@@ -763,6 +763,7 @@ class NativeProgressTests(unittest.TestCase):
             [],
             {"coverage": "COMPLETE"},
             {"coverage": "COMPLETE", "rows": None},
+            {"coverage": "COMPLETE", "rows": []},
             {"coverage": "COMPLETE", "rows": {"a": good}},
             {"coverage": "COMPLETE", "rows": [good, "row"]},
             {"coverage": "COMPLETE", "rows": [good, {"kind": "TECHNICAL"}]},

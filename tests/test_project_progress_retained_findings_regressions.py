@@ -798,7 +798,7 @@ class DecodedResultShapeTests(unittest.TestCase):
         row = n.progress_row(scope, [])
         frontier: n.Native = {"coverage": "COMPLETE", "rows": [row]}
         target = {"operation_target": "pr:1"}
-        shapes = (
+        shapes: tuple[tuple[str, Any], ...] = (
             ("decoded null", None),
             ("decoded list", []),
             ("decoded string", "x"),
@@ -832,8 +832,11 @@ class DecodedResultShapeTests(unittest.TestCase):
                 self.assertEqual((frontier, claim), held)
 
     def test_an_unparseable_operation_target_is_refused(self) -> None:
-        for value in (None, 7, {}, "garbage", "pr:"):
-            decoded = {"assignments": [{"operation": {"operation_target": value}}]}
+        values: tuple[Any, ...] = (None, 7, {}, "garbage", "pr:")
+        for value in values:
+            decoded: n.Native = {
+                "assignments": [{"operation": {"operation_target": value}}]
+            }
             with (
                 self.subTest(value=value),
                 self.assertRaisesRegex(ValueError, "supported operation_target"),

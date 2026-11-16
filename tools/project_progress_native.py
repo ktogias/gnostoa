@@ -387,15 +387,19 @@ def _text(value: object) -> str:
 def _frontier_rows(frontier: object) -> list[Native]:
     """The captured frontier's rows, or one named refusal: never an empty frontier."""
     rows = frontier.get("rows") if isinstance(frontier, Mapping) else None
-    if not isinstance(rows, list) or not all(
-        isinstance(item, Mapping)
-        and _non_empty_str(item.get("id"))
-        and _non_empty_str(item.get("kind"))
-        for item in rows
+    if (
+        not isinstance(rows, list)
+        or not rows
+        or not all(
+            isinstance(item, Mapping)
+            and _non_empty_str(item.get("id"))
+            and _non_empty_str(item.get("kind"))
+            for item in rows
+        )
     ):
         raise ValueError(
-            "PROJECT_PROGRESS the captured frontier must be a mapping with a list of "
-            "rows, each a mapping with its id and kind"
+            "PROJECT_PROGRESS the captured frontier must be a mapping with a non-empty "
+            "list of rows, each a mapping with its id and kind"
         )
     return rows
 
