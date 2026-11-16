@@ -6,7 +6,7 @@ import copy
 import json
 import unittest
 from datetime import UTC, datetime
-from typing import cast
+from typing import Any, cast
 from unittest import mock
 
 from tools import project_progress as core
@@ -598,6 +598,82 @@ class NativeProgressTests(unittest.TestCase):
                             invalid,
                             {"assignments": []},
                             [invalid],
+                        )
+
+    def test_a_malformed_gate_source_never_binds_and_is_a_named_refusal(self) -> None:
+        scope: n.Native = {"kind": "work_item", "ref": "issue:499"}
+        row = n.progress_row(scope, [])
+        subject = {"pr_number": 500, "head_sha": "a" * 40}
+        gate_row: n.Native = {
+            "id": "gate",
+            "kind": "TECHNICAL",
+            "source_kind": "canonical_criterion",
+            "subject": subject,
+            "source_sha256": "evidence",
+            "canonical": {"check_run_id": 456},
+        }
+        check_claim: n.Native = {
+            "id": "gate",
+            "disposition": "WAITING",
+            "owner": "provider:canonical-gate",
+            "reason": "Await the exact-head check update.",
+            "resume_event": "provider_source_changed",
+            "evidence_sha256": "evidence",
+            "check_run_id": 456,
+        }
+        review_claim: n.Native = {
+            "id": "gate",
+            "disposition": "WAITING",
+            "owner": "human:ktogias",
+            "reason": "Await the captured dependency check.",
+            "resume_event": "native_exact_head_review",
+            "evidence_sha256": "evidence",
+            "dependency_pr_number": 600,
+            "dependency_head_sha": "b" * 40,
+        }
+        held_frontiers: tuple[Any, ...] = (
+            "text",
+            ["text"],
+            7,
+            {"rows": None, "dependency_waits": None},
+            {"rows": "text", "dependency_waits": "text"},
+            {"rows": {"a": gate_row}, "dependency_waits": {"a": {}}},
+            {"rows": ["text"], "dependency_waits": ["text"]},
+            {"rows": [None], "dependency_waits": [None]},
+            {"rows": [{**gate_row, "canonical": "text"}], "dependency_waits": [7]},
+        )
+        gate_rows: tuple[n.Native, ...] = (
+            {**gate_row, "canonical": "text"},
+            {**gate_row, "subject": "text"},
+            {**gate_row, "subject": ["text"]},
+        )
+        refusal = "^PROJECT_PROGRESS wait needs a supported exact gate binding"
+        for claim in (check_claim, review_claim):
+            for held in held_frontiers:
+                job: n.Native = {
+                    "authority_context": {"_coverage": {"coverage": "COMPLETE"}},
+                    "continuation_contract": {"frontier_sha256": "lineage"},
+                    "continuation_frontier": held,
+                }
+                frontier: n.Native = {"coverage": "COMPLETE", "rows": [row, gate_row]}
+                with self.subTest(selector=claim["resume_event"], held=held):
+                    self.assertIsNone(n.gate_binding(job, gate_row, claim))
+                    with self.assertRaisesRegex(ValueError, refusal):
+                        n.validate_progress(
+                            job, frontier, row, claim, {"assignments": []}, [claim]
+                        )
+            for bad_row in gate_rows:
+                job = {
+                    "authority_context": {"_coverage": {"coverage": "COMPLETE"}},
+                    "continuation_contract": {"frontier_sha256": "lineage"},
+                    "continuation_frontier": {"rows": [bad_row]},
+                }
+                frontier = {"coverage": "COMPLETE", "rows": [row, bad_row]}
+                with self.subTest(selector=claim["resume_event"], row=bad_row):
+                    self.assertIsNone(n.gate_binding(job, bad_row, claim))
+                    with self.assertRaisesRegex(ValueError, refusal):
+                        n.validate_progress(
+                            job, frontier, row, claim, {"assignments": []}, [claim]
                         )
 
     def test_progress_claim_keeps_its_identity_and_resolves_distinct_gate_row(

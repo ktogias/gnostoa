@@ -637,10 +637,23 @@ def source_changes(
     return status, detail + pointer
 
 
+def _mapping(value: object) -> Native:
+    """A mapping value, else an empty one: a malformed shape binds nothing."""
+    return cast("Native", value) if isinstance(value, Mapping) else {}
+
+
+def _held_gate_sources(job: Native, key: str) -> list[Native]:
+    """The job's held frontier entries under one key; only mapping entries can bind."""
+    items = _mapping(job.get("continuation_frontier")).get(key)
+    if not isinstance(items, list):
+        return []
+    return [cast("Native", item) for item in items if isinstance(item, Mapping)]
+
+
 def _owner_review_gate(
     job: Native, row: Native, claim: Native, at: Native
 ) -> tuple[Native, Native] | None:
-    canonical = row.get("canonical") or {}
+    canonical = _mapping(row.get("canonical"))
     if (
         row.get("kind") == "HUMAN_MERGE"
         and row.get("source_kind") == "canonical_criterion"
@@ -656,7 +669,7 @@ def _owner_review_gate(
     }
     waits = [
         wait
-        for wait in (job.get("continuation_frontier") or {}).get("dependency_waits", [])
+        for wait in _held_gate_sources(job, "dependency_waits")
         if wait.get("subject") == at
         and wait.get("dependency") == dependency
         and wait.get("evidence_sha256") == claim.get("evidence_sha256")
@@ -676,21 +689,22 @@ def _provider_gate(
     check_run_id = claim.get("check_run_id")
     if type(check_run_id) is not int:
         return None
-    for candidate in (job.get("continuation_frontier") or {}).get("rows", []):
+    for candidate in _held_gate_sources(job, "rows"):
+        canonical = _mapping(candidate.get("canonical"))
         if (
             candidate.get("source_kind") == "canonical_criterion"
             and candidate.get("kind") == "TECHNICAL"
             and candidate.get("subject") == at
             and candidate.get("source_sha256") == claim.get("evidence_sha256")
-            and (candidate.get("canonical") or {}).get("check_run_id") == check_run_id
+            and canonical.get("check_run_id") == check_run_id
         ):
-            return at, candidate["canonical"]
+            return at, canonical
     return None
 
 
 def gate_binding(job: Native, row: Native, claim: Native) -> Native | None:
     """Translate only a supported, already-validated native gate; never approve it."""
-    at = row.get("subject") or {}
+    at = _mapping(row.get("subject"))
     if (
         claim.get("disposition") != "WAITING"
         or claim.get("id") != row.get("id")
