@@ -464,7 +464,12 @@ def _evaluation(
         frontier.get("coverage") == "COMPLETE",
         isinstance(job.get("authority_context"), dict)
         and isinstance(context.get("_coverage"), dict)
-        and context["_coverage"].get("coverage") == "COMPLETE",
+        and context["_coverage"].get("coverage") == "COMPLETE"
+        and all(
+            isinstance(held, dict)
+            for source, held in context.items()
+            if not source.startswith("_")
+        ),
         gates,
         p.Citation(
             "frontier:" + row["id"],
@@ -603,6 +608,12 @@ def validate_progress(
     claims: list[Native],
 ) -> None:
     try:
+        if claim.get("disposition") in ("ASSIGNED", "QUIESCENT") and not any(
+            item.get("id") == row.get("id") for item in _frontier_rows(frontier)
+        ):
+            raise ValueError(
+                "PROJECT_PROGRESS the captured frontier does not hold this row"
+            )
         p.validate_result(
             _evaluation(job, frontier, row, decoded, claims),
             _result(claim, row),

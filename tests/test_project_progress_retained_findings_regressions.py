@@ -290,6 +290,48 @@ class CapturedClosedTargetTests(unittest.TestCase):
     def test_an_open_captured_target_is_assignable(self) -> None:
         self.validate(self.context)
 
+    def quiescent(self, context: n.Native, rows: list[n.Native]) -> None:
+        claim: n.Native = {
+            "id": self.row["id"],
+            "disposition": "QUIESCENT",
+            "evidence": self.claim["evidence"][:1],
+        }
+        n.validate_progress(
+            {"authority_context": context},
+            {"coverage": "COMPLETE", "rows": rows},
+            self.row,
+            claim,
+            {"assignments": []},
+            [claim],
+        )
+
+    def test_a_non_mapping_retained_read_leaves_the_context_incomplete(self) -> None:
+        # CodeAnt 4590772769: skipping the read must not keep COMPLETE coverage.
+        self.quiescent(self.context, [self.row])
+        for bad in ("text", ["x"], 7, None):
+            context = {**self.context, "https://github.com/ktogias/gnostoa/pull/9": bad}
+            with (
+                self.subTest(bad=bad),
+                self.assertRaisesRegex(ValueError, "^PROJECT_PROGRESS quiescence"),
+            ):
+                self.quiescent(context, [self.row])
+
+    def test_a_row_outside_the_captured_frontier_is_never_discharged(self) -> None:
+        # CodeAnt 4590772777: ASSIGNED and QUIESCENT need the row in the frontier.
+        other = n.progress_row({"kind": "work_item", "ref": "issue:497"}, [])
+        with self.assertRaisesRegex(ValueError, "^PROJECT_PROGRESS the captured"):
+            self.quiescent(self.context, [other])
+        context = copy.deepcopy(self.context)
+        with self.assertRaisesRegex(ValueError, "^PROJECT_PROGRESS the captured"):
+            n.validate_progress(
+                {"authority_context": context},
+                {"coverage": "COMPLETE", "rows": [other]},
+                self.row,
+                self.claim,
+                {"assignments": [{"operation": {"operation_target": "pr:600"}}]},
+                [self.claim],
+            )
+
     def test_a_target_captured_closed_or_merged_is_never_dispatched(self) -> None:
         for change in (
             {"state": "closed"},
@@ -888,22 +930,57 @@ _SUBJECT: n.Native = {"pr_number": 500, "head_sha": HEAD}
 _BAD_SHAPES: tuple[Any, ...] = ("text", ["x"], 7, True)
 
 
+def _refresh(job: n.Native, row: n.Native) -> None:
+    claim: n.Native = {"id": row["id"], "disposition": "REFRESH", "reason": "again"}
+    decoded: n.Native = {"assignments": [{"operation": {"operation_target": "pr:500"}}]}
+    n.validate_progress(
+        job, {"coverage": "COMPLETE", "rows": [row]}, row, claim, decoded, [claim]
+    )
+
+
+def _resume_gate() -> n.Native:
+    binding = n.gate_binding(
+        {},
+        {
+            "id": "gate",
+            "kind": "HUMAN_MERGE",
+            "source_kind": "canonical_criterion",
+            "subject": _SUBJECT,
+            "source_sha256": "captured",
+            "canonical": {"criterion": "M16"},
+        },
+        {
+            "id": "gate",
+            "disposition": "WAITING",
+            "owner": "human:ktogias",
+            "resume_event": "native_exact_head_review",
+            "evidence_sha256": "captured",
+        },
+    )
+    assert binding is not None
+    return {**binding, "at": NOW}
+
+
+def _resume_review(gate: n.Native, payload: Any) -> str | None:
+    record: n.Native = {
+        "kind": "review",
+        "number": 500,
+        "material_id": "m",
+        "observed_at": NOW + 2,
+        "payload": payload,
+    }
+    return n.gate_resume(
+        gate, record, {"head": HEAD, "provider_id": 9}, NOW + 3, owner_review=True
+    )
+
+
 class OwnerReviewShapeBoundaryTests(unittest.TestCase):
     """Owner review 5921808537: malformed native shapes stay inside the boundary."""
-
-    def refresh(self, job: n.Native, row: n.Native) -> None:
-        claim: n.Native = {"id": row["id"], "disposition": "REFRESH", "reason": "again"}
-        decoded: n.Native = {
-            "assignments": [{"operation": {"operation_target": "pr:500"}}]
-        }
-        n.validate_progress(
-            job, {"coverage": "COMPLETE", "rows": [row]}, row, claim, decoded, [claim]
-        )
 
     def test_a_truthy_non_mapping_native_field_is_one_named_refusal(self) -> None:
         row = n.progress_row({"kind": "work_item", "ref": "issue:499"}, [])
         job: n.Native = {"continuation_contract": {"frontier_sha256": "lineage"}}
-        self.refresh(job, row)
+        _refresh(job, row)
         for bad in _BAD_SHAPES:
             for owner, field in (
                 (job, "continuation_contract"),
@@ -919,53 +996,19 @@ class OwnerReviewShapeBoundaryTests(unittest.TestCase):
                     self.subTest(field=field, bad=bad),
                     self.assertRaisesRegex(ValueError, "^PROJECT_PROGRESS "),
                 ):
-                    self.refresh(held, held_row)
-
-    def resume_gate(self) -> n.Native:
-        binding = n.gate_binding(
-            {},
-            {
-                "id": "gate",
-                "kind": "HUMAN_MERGE",
-                "source_kind": "canonical_criterion",
-                "subject": _SUBJECT,
-                "source_sha256": "captured",
-                "canonical": {"criterion": "M16"},
-            },
-            {
-                "id": "gate",
-                "disposition": "WAITING",
-                "owner": "human:ktogias",
-                "resume_event": "native_exact_head_review",
-                "evidence_sha256": "captured",
-            },
-        )
-        assert binding is not None
-        return {**binding, "at": NOW}
-
-    def resume(self, gate: n.Native, payload: Any) -> str | None:
-        record: n.Native = {
-            "kind": "review",
-            "number": 500,
-            "material_id": "m",
-            "observed_at": NOW + 2,
-            "payload": payload,
-        }
-        return n.gate_resume(
-            gate, record, {"head": HEAD, "provider_id": 9}, NOW + 3, owner_review=True
-        )
+                    _refresh(held, held_row)
 
     def test_a_non_mapping_canonical_or_payload_never_resumes_or_raises(self) -> None:
         item = {"commit_id": HEAD, "submitted_at": _iso(NOW + 1)}
-        gate = self.resume_gate()
-        self.assertEqual(self.resume(gate, {"item": item}), "OWNER_REVIEW")
+        gate = _resume_gate()
+        self.assertEqual(_resume_review(gate, {"item": item}), "OWNER_REVIEW")
         for bad in _BAD_SHAPES:
             with self.subTest(bad=bad):
                 self.assertIsNone(
-                    self.resume({**gate, "canonical": bad}, {"item": item})
+                    _resume_review({**gate, "canonical": bad}, {"item": item})
                 )
-                self.assertIsNone(self.resume(gate, bad))
-                self.assertIsNone(self.resume(gate, {"item": bad}))
+                self.assertIsNone(_resume_review(gate, bad))
+                self.assertIsNone(_resume_review(gate, {"item": bad}))
 
     def test_a_held_row_is_matched_on_its_whole_canonical_binding(self) -> None:
         held: n.Native = {

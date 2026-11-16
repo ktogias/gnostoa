@@ -925,9 +925,10 @@ class NativeProgressTests(unittest.TestCase):
         )
         refusal = "^PROJECT_PROGRESS wait needs a supported exact gate binding"
         for waits in ([], [{**owning_wait, "source_sha256": "old"}], [owning_wait] * 2):
+            held = job_with(waits)
             with self.subTest(waits=waits), self.assertRaisesRegex(ValueError, refusal):
                 n.validate_progress(
-                    job_with(waits),
+                    held,
                     frontier,
                     self.row,
                     pointer,
