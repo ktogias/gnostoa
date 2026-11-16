@@ -676,6 +676,259 @@ class NativeProgressTests(unittest.TestCase):
                             job, frontier, row, claim, {"assignments": []}, [claim]
                         )
 
+    def test_a_check_run_wait_binds_only_its_own_validated_canonical_row(self) -> None:
+        scope: n.Native = {"kind": "work_item", "ref": "issue:499"}
+        row = n.progress_row(scope, [])
+        subject = {"pr_number": 500, "head_sha": "a" * 40}
+        held_row: n.Native = {
+            "id": "check-gate",
+            "kind": "TECHNICAL",
+            "source_kind": "canonical_criterion",
+            "subject": subject,
+            "source_sha256": "check-evidence",
+            "canonical": {"check_run_id": 456},
+        }
+        check_claim: n.Native = {
+            "id": "check-gate",
+            "disposition": "WAITING",
+            "owner": "provider:canonical-gate",
+            "reason": "Await the exact-head check update.",
+            "resume_event": "provider_source_changed",
+            "evidence_sha256": "check-evidence",
+            "check_run_id": 456,
+        }
+        job: n.Native = {
+            "authority_context": {"_coverage": {"coverage": "COMPLETE"}},
+            "continuation_contract": {"frontier_sha256": "lineage"},
+            "continuation_frontier": {"rows": [held_row]},
+        }
+        self.assertIsNotNone(n.gate_binding(job, held_row, check_claim))
+        other_rows: tuple[n.Native, ...] = (
+            {
+                **held_row,
+                "kind": "HUMAN_MERGE",
+                "source_sha256": "human-evidence",
+                "canonical": {"criterion": "M16"},
+            },
+            {
+                "kind": "SOURCE_RECOVERY",
+                "source_kind": "source_recovery",
+                "subject": subject,
+                "source_sha256": "check-evidence",
+            },
+            {**held_row, "source_kind": "native_outcome"},
+            {**held_row, "source_sha256": "other-evidence"},
+            {**held_row, "canonical": {"check_run_id": 455}},
+        )
+        refusal = "^PROJECT_PROGRESS wait needs a supported exact gate binding"
+        for other in other_rows:
+            validated: n.Native = {**other, "id": "other-gate"}
+            claim: n.Native = {**check_claim, "id": "other-gate"}
+            frontier: n.Native = {
+                "coverage": "COMPLETE",
+                "rows": [row, held_row, validated],
+            }
+            with self.subTest(row=validated):
+                self.assertIsNone(n.gate_binding(job, validated, claim))
+                with self.assertRaisesRegex(ValueError, refusal):
+                    n.validate_progress(
+                        job, frontier, row, claim, {"assignments": []}, [claim]
+                    )
+
+    def test_an_unfinished_native_row_binds_only_through_one_owning_provider_wait(
+        self,
+    ) -> None:
+        subject = {"pr_number": 500, "head_sha": "a" * 40}
+        gate: n.Native = {
+            "id": "check-gate",
+            "kind": "TECHNICAL",
+            "source_kind": "canonical_criterion",
+            "subject": subject,
+            "source_sha256": "check-evidence",
+            "canonical": {"check_run_id": 456},
+        }
+        native: n.Native = {
+            "id": "native-row",
+            "kind": "UNFINISHED",
+            "source_kind": "native_outcome",
+            "subject": subject,
+            "source_key": "delivery:1",
+            "source_sha256": "native-sha",
+        }
+        wait: n.Native = {
+            "subject": subject,
+            "source_key": "delivery:1",
+            "source_sha256": "native-sha",
+            "obligation_ids": ["check-gate"],
+            "observed_check_run_id": 456,
+        }
+        claim: n.Native = {
+            "id": "native-row",
+            "disposition": "WAITING",
+            "owner": "provider:canonical-gate",
+            "reason": "Await the exact-head check update.",
+            "resume_event": "provider_source_changed",
+            "evidence_sha256": "check-evidence",
+            "check_run_id": 456,
+        }
+
+        def bind(
+            row: n.Native = native,
+            waits: Any = (wait,),
+            rows: Any = (gate,),
+            the_claim: n.Native = claim,
+        ) -> n.Native | None:
+            job: n.Native = {
+                "continuation_frontier": {
+                    "rows": list(rows),
+                    "provider_waits": waits
+                    if not isinstance(waits, tuple)
+                    else list(waits),
+                }
+            }
+            return n.gate_binding(job, row, {**the_claim, "id": row["id"]})
+
+        bound = bind()
+        assert bound is not None
+        self.assertEqual(bound["row"], "native-row")
+        self.assertEqual(bound["source_key"], "delivery:1")
+        self.assertEqual(bound["source_sha256"], "native-sha")
+        self.assertEqual(bound["canonical"]["check_run_id"], 456)
+        self.assertIsNotNone(bind(row=gate))
+        refused: dict[str, n.Native | None] = {
+            "no wait": bind(waits=()),
+            "stale digest": bind(waits=({**wait, "source_sha256": "old"},)),
+            "other key": bind(waits=({**wait, "source_key": "delivery:2"},)),
+            "other head": bind(
+                waits=(
+                    {
+                        **wait,
+                        "subject": {"pr_number": 500, "head_sha": "b" * 40},
+                    },
+                )
+            ),
+            "other obligation": bind(waits=({**wait, "obligation_ids": ["x"]},)),
+            "newer verdict": bind(waits=({**wait, "observed_check_run_id": 457},)),
+            "two waits": bind(waits=(wait, dict(wait))),
+            "two gate rows": bind(rows=(gate, dict(gate))),
+            "text waits": bind(waits="text"),
+            "null waits": bind(waits=None),
+            "mapping waits": bind(waits={"a": wait}),
+            "non-mapping waits": bind(waits=(7, "text")),
+            "text obligations": bind(waits=({**wait, "obligation_ids": "check-gate"},)),
+            "empty key": bind(
+                row={**native, "source_key": ""},
+                waits=({**wait, "source_key": ""},),
+            ),
+            "other kind": bind(row={**native, "kind": "HUMAN_MERGE"}),
+            "other source": bind(row={**native, "source_kind": "source_recovery"}),
+            "progress row": bind(row={**native, "kind": "PROJECT_PROGRESS"}),
+        }
+        for name, result in refused.items():
+            with self.subTest(case=name):
+                self.assertIsNone(result)
+
+    def test_a_progress_pointer_to_a_wait_owned_native_row_resumes_after_restart(
+        self,
+    ) -> None:
+        head = "a" * 40
+        subject = {"pr_number": 500, "head_sha": head}
+        gate_row: n.Native = {
+            "id": "check-gate",
+            "kind": "TECHNICAL",
+            "source_kind": "canonical_criterion",
+            "subject": subject,
+            "source_sha256": "check-evidence",
+            "canonical": {"check_run_id": 456},
+        }
+        native_row: n.Native = {
+            "id": "native-row",
+            "kind": "UNFINISHED",
+            "source_kind": "native_outcome",
+            "subject": subject,
+            "source_key": "delivery:1",
+            "source_sha256": "native-sha",
+        }
+        owning_wait: n.Native = {
+            "subject": subject,
+            "source_key": "delivery:1",
+            "source_sha256": "native-sha",
+            "obligation_ids": ["check-gate"],
+            "observed_check_run_id": 456,
+        }
+        pointer: n.Native = {
+            "id": self.row["id"],
+            "disposition": "WAITING",
+            "owner": "provider:canonical-gate",
+            "reason": "Await the exact-head check update.",
+            "resume_event": "gate:native-row",
+        }
+        native_claim: n.Native = {
+            "id": "native-row",
+            "disposition": "WAITING",
+            "owner": "provider:canonical-gate",
+            "reason": "Await the exact-head check update.",
+            "resume_event": "provider_source_changed",
+            "evidence_sha256": "check-evidence",
+            "check_run_id": 456,
+        }
+        claims = [pointer, native_claim]
+
+        def job_with(waits: list[Any]) -> n.Native:
+            return {
+                **self.job,
+                "continuation_frontier": {
+                    "rows": [gate_row, native_row],
+                    "provider_waits": waits,
+                },
+            }
+
+        frontier: n.Native = {
+            "coverage": "COMPLETE",
+            "rows": [self.row, gate_row, native_row],
+        }
+        n.validate_progress(
+            job_with([owning_wait]),
+            frontier,
+            self.row,
+            pointer,
+            {"assignments": []},
+            claims,
+        )
+        refusal = "^PROJECT_PROGRESS wait needs a supported exact gate binding"
+        for waits in ([], [{**owning_wait, "source_sha256": "old"}], [owning_wait] * 2):
+            with self.subTest(waits=waits), self.assertRaisesRegex(ValueError, refusal):
+                n.validate_progress(
+                    job_with(waits),
+                    frontier,
+                    self.row,
+                    pointer,
+                    {"assignments": []},
+                    claims,
+                )
+
+        binding = n.gate_binding(job_with([owning_wait]), native_row, native_claim)
+        assert binding is not None
+        stored = json.loads(json.dumps({**binding, "at": self.now}))
+        record: n.Native = {
+            "kind": "check_verdict",
+            "number": 500,
+            "material_id": "verdict:457",
+            "observed_at": self.now + 1,
+            "payload": {"item": {"head_sha": head}},
+        }
+        fact: n.Native = {"head": head, "provider_id": 457}
+        self.assertEqual(
+            n.gate_resume(stored, record, fact, self.now + 2, changed=True),
+            "MERGE_ADMISSION_CHANGE",
+        )
+        self.assertIsNone(
+            n.gate_resume(
+                stored, record, {**fact, "provider_id": 456}, self.now + 2, changed=True
+            )
+        )
+        self.assertIsNone(n.gate_resume(stored, record, fact, self.now + 2))
+
     def test_progress_claim_keeps_its_identity_and_resolves_distinct_gate_row(
         self,
     ) -> None:

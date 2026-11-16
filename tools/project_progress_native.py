@@ -683,23 +683,59 @@ def _owner_review_gate(
     }
 
 
+def _check_run_row(candidate: Native, claim: Native, at: Native) -> bool:
+    """A technical canonical criterion row carrying the claim's digest and check run."""
+    return (
+        candidate.get("source_kind") == "canonical_criterion"
+        and candidate.get("kind") == "TECHNICAL"
+        and candidate.get("subject") == at
+        and candidate.get("source_sha256") == claim.get("evidence_sha256")
+        and _mapping(candidate.get("canonical")).get("check_run_id")
+        == claim.get("check_run_id")
+    )
+
+
 def _provider_gate(
-    job: Native, claim: Native, at: Native
+    job: Native, row: Native, claim: Native, at: Native
 ) -> tuple[Native, Native] | None:
-    check_run_id = claim.get("check_run_id")
-    if type(check_run_id) is not int:
+    """Bind the one held check-run row, or a native row a held provider wait owns."""
+    if type(claim.get("check_run_id")) is not int:
         return None
-    for candidate in _held_gate_sources(job, "rows"):
-        canonical = _mapping(candidate.get("canonical"))
-        if (
-            candidate.get("source_kind") == "canonical_criterion"
-            and candidate.get("kind") == "TECHNICAL"
-            and candidate.get("subject") == at
-            and candidate.get("source_sha256") == claim.get("evidence_sha256")
-            and canonical.get("check_run_id") == check_run_id
-        ):
-            return at, canonical
-    return None
+    held = [
+        candidate
+        for candidate in _held_gate_sources(job, "rows")
+        if _check_run_row(candidate, claim, at)
+    ]
+    if len(held) != 1:
+        return None
+    gate = held[0]
+    if row.get("id") != gate.get("id") and not _native_wait_owns(
+        job, row, gate, claim, at
+    ):
+        return None
+    return at, _mapping(gate.get("canonical"))
+
+
+def _native_wait_owns(
+    job: Native, row: Native, gate: Native, claim: Native, at: Native
+) -> bool:
+    """An unfinished native row is owned by exactly one held provider wait on the gate."""
+    if row.get("kind") != "UNFINISHED" or row.get("source_kind") != "native_outcome":
+        return False
+    key, digest = row.get("source_key"), row.get("source_sha256")
+    if not (isinstance(key, str) and key and isinstance(digest, str) and digest):
+        return False
+    waits = [
+        wait
+        for wait in _held_gate_sources(job, "provider_waits")
+        if wait.get("subject") == at
+        and wait.get("source_key") == key
+        and wait.get("source_sha256") == digest
+        and isinstance(wait.get("obligation_ids"), list)
+        and gate.get("id") in wait["obligation_ids"]
+        and wait.get("observed_check_run_id") == claim.get("check_run_id")
+    ]
+    return len(waits) == 1
 
 
 def gate_binding(job: Native, row: Native, claim: Native) -> Native | None:
@@ -716,7 +752,7 @@ def gate_binding(job: Native, row: Native, claim: Native) -> Native | None:
     if selector == "native_exact_head_review" and owner == "human:ktogias":
         resolved = _owner_review_gate(job, row, claim, at)
     elif selector == "provider_source_changed" and owner == "provider:canonical-gate":
-        resolved = _provider_gate(job, claim, at)
+        resolved = _provider_gate(job, row, claim, at)
     else:
         return None
     if resolved is None:
