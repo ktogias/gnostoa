@@ -831,11 +831,14 @@ class DecodedResultShapeTests(unittest.TestCase):
                     n.validate_progress({}, frontier, row, claim, decoded, [claim])
                 self.assertEqual((frontier, claim), held)
 
-    def test_an_unparseable_operation_target_stays_none(self) -> None:
+    def test_an_unparseable_operation_target_is_refused(self) -> None:
         for value in (None, 7, {}, "garbage", "pr:"):
             decoded = {"assignments": [{"operation": {"operation_target": value}}]}
-            with self.subTest(value=value):
-                self.assertEqual(n._targets(decoded), (None,))
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ValueError, "supported operation_target"),
+            ):
+                n._targets(decoded)
 
 
 if __name__ == "__main__":

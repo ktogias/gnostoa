@@ -237,7 +237,12 @@ def _targets(decoded: Native) -> tuple[Ref | None, ...]:
         )
         if not isinstance(operation, Mapping):
             raise ValueError("PROJECT_PROGRESS each assignment needs its operation")
-        targets.append(provider.target_ref(operation.get("operation_target")))
+        target = provider.target_ref(operation.get("operation_target"))
+        if target is None:
+            raise ValueError(
+                "PROJECT_PROGRESS each assignment needs a supported operation_target"
+            )
+        targets.append(target)
     return tuple(targets)
 
 
@@ -379,9 +384,25 @@ def _text(value: object) -> str:
     return str(value or "")
 
 
-def _gates(frontier: Native, row: Native, claims: list[Native]) -> tuple[p.Gate, ...]:
+def _frontier_rows(frontier: object) -> list[Native]:
+    """The captured frontier's rows, or one named refusal: never an empty frontier."""
+    rows = frontier.get("rows") if isinstance(frontier, Mapping) else None
+    if not isinstance(rows, list) or not all(
+        isinstance(item, Mapping)
+        and _non_empty_str(item.get("id"))
+        and _non_empty_str(item.get("kind"))
+        for item in rows
+    ):
+        raise ValueError(
+            "PROJECT_PROGRESS the captured frontier must be a mapping with a list of "
+            "rows, each a mapping with its id and kind"
+        )
+    return rows
+
+
+def _gates(rows: list[Native], row: Native, claims: list[Native]) -> tuple[p.Gate, ...]:
     gates = []
-    for gate in frontier["rows"]:
+    for gate in rows:
         claim = next(
             (c for c in claims if isinstance(c, dict) and c.get("id") == gate["id"]), {}
         )
@@ -406,7 +427,7 @@ def _evaluation(
         for source, held in context.items()
         if not source.startswith("_") and isinstance(held, dict)
     )
-    gates = _gates(frontier, row, claims)
+    gates = _gates(_frontier_rows(frontier), row, claims)
     return p.Evaluation(
         provider.scope_ref(row.get("scope") or {}),
         reads,
@@ -567,8 +588,8 @@ def validate_progress(
             )
             binding_rows = [
                 item
-                for item in frontier["rows"]
-                if isinstance(item, dict) and item.get("id") == binding_id
+                for item in _frontier_rows(frontier)
+                if item.get("id") == binding_id
             ]
             binding_claims = [
                 item

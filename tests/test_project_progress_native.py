@@ -739,6 +739,77 @@ class NativeProgressTests(unittest.TestCase):
                     job, frontier, row, invalid, {"assignments": []}, [invalid]
                 )
 
+    def _claims_by_mode(self) -> dict[str, n.Native]:
+        return {
+            "ASSIGNED": self.claim,
+            "REFRESH": {
+                "id": self.row["id"],
+                "disposition": "REFRESH",
+                "reason": "need a fresher read",
+            },
+            "WAITING": {
+                "id": self.row["id"],
+                "disposition": "WAITING",
+                "owner": "human:ktogias",
+                "reason": "wait",
+                "resume_event": "gate:other",
+            },
+        }
+
+    def test_malformed_or_missing_frontier_is_a_namespaced_refusal(self) -> None:
+        good = self.row
+        frontiers: list[object] = [
+            None,
+            [],
+            {"coverage": "COMPLETE"},
+            {"coverage": "COMPLETE", "rows": None},
+            {"coverage": "COMPLETE", "rows": {"a": good}},
+            {"coverage": "COMPLETE", "rows": [good, "row"]},
+            {"coverage": "COMPLETE", "rows": [good, {"kind": "TECHNICAL"}]},
+            {"coverage": "COMPLETE", "rows": [good, {"id": "x"}]},
+            {"coverage": "COMPLETE", "rows": [good, {"id": "", "kind": "TECHNICAL"}]},
+        ]
+        for mode, claim in self._claims_by_mode().items():
+            for frontier in frontiers:
+                with (
+                    self.subTest(mode=mode, frontier=frontier),
+                    self.assertRaisesRegex(
+                        ValueError, "^PROJECT_PROGRESS the captured frontier"
+                    ),
+                ):
+                    n.validate_progress(
+                        self.job,
+                        cast("n.Native", frontier),
+                        self.row,
+                        claim,
+                        self.decoded,
+                        [claim],
+                    )
+
+    def test_missing_or_unsupported_target_is_refused_for_every_claim(self) -> None:
+        for operation in ({}, {"operation_target": "repo:x"}, {"operation_target": 5}):
+            decoded: n.Native = {"assignments": [{"operation": operation}]}
+            for mode, claim in self._claims_by_mode().items():
+                with (
+                    self.subTest(mode=mode, operation=operation),
+                    self.assertRaisesRegex(ValueError, "^PROJECT_PROGRESS .*target"),
+                ):
+                    n.validate_progress(
+                        self.job, self.frontier, self.row, claim, decoded, [claim]
+                    )
+
+    def test_supported_targets_still_pass_on_non_assigned_claims(self) -> None:
+        refresh = self._claims_by_mode()["REFRESH"]
+        job = copy.deepcopy(self.job)
+        job["authority_context"]["_coverage"] = {"coverage": "INCOMPLETE"}
+        for target in ("issue:325", "pr:500"):
+            decoded: n.Native = {
+                "assignments": [{"operation": {"operation_target": target}}]
+            }
+            n.validate_progress(
+                job, self.frontier, self.row, refresh, decoded, [refresh]
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
