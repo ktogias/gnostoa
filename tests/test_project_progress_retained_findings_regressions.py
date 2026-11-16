@@ -152,6 +152,16 @@ class ReviewSubmissionTimeTests(unittest.TestCase):
     def test_a_review_without_a_submission_time_fails_closed(self) -> None:
         self.assertIsNone(self.resume({"updated_at": _iso(NOW + 1)}))
 
+    def test_a_submission_time_without_a_timezone_fails_closed(self) -> None:
+        naive = _iso(NOW + 1)[: -len("+00:00")]
+        for text in (naive, naive + ".5", naive[:10]):
+            with self.subTest(text=text):
+                # Read at the one provider-time parser: the host zone never decides.
+                self.assertIsNone(n._provider_at({"submitted_at": text}, True))
+                self.assertIsNone(n._provider_at({"updated_at": text}, False))
+                self.assertIsNone(self.resume({"submitted_at": text}))
+        self.assertEqual(self.resume({"submitted_at": _iso(NOW + 1)}), "OWNER_REVIEW")
+
     def test_a_submission_after_the_gate_resumes_whatever_its_edit_time(self) -> None:
         for updated in (None, NOW - 1, NOW + 2):
             item: n.Native = {"submitted_at": _iso(NOW + 1)}

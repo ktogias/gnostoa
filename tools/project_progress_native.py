@@ -35,7 +35,10 @@ def _iso(now: float) -> str:
 
 
 def _ts(value: Any) -> float:
-    return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if at.tzinfo is None:
+        raise ValueError("a provider time must carry its timezone")
+    return at.timestamp()
 
 
 def scope_identity(scope: Mapping[str, Any], origin: str | None = None) -> str:
