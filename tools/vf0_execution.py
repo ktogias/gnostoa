@@ -25,7 +25,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path, PurePosixPath
-from typing import IO, Protocol, cast
+from typing import IO, Any, Protocol, cast
 
 _GIT_SHA1_RE = re.compile(r"[0-9a-f]{40}")
 _DOCKER_ID_RE = re.compile(r"[0-9a-f]{64}")
@@ -1062,6 +1062,63 @@ def _wait_for_exit_without_reap(
         time.sleep(min(0.01, remaining))
 
 
+def _check_oci_mounts(mounts: list[Any], root: Path) -> None:
+    _need(
+        len(mounts) == 1
+        and isinstance(mounts[0], dict)
+        and mounts[0].get("Type") == "bind"
+        and mounts[0].get("Source") == str(root)
+        and mounts[0].get("Destination") == "/workspace"
+        and mounts[0].get("RW") is False,
+        "OCI_MOUNT_CONTRACT",
+    )
+
+
+def _check_oci_command(
+    spec: dict[str, Any],
+    host: dict[str, Any],
+    config: dict[str, Any],
+    limits: ExecutionLimits,
+    command: Sequence[str],
+) -> None:
+    expected_command = ["-I", "-c", _OCI_WRAPPER_SOURCE, *command]
+    expected_tmpfs = f"rw,nosuid,nodev,noexec,mode=1777,size={limits.tmpfs_bytes}"
+    _need(
+        spec.get("Path") == _OCI_WRAPPER_EXECUTABLE
+        and spec.get("Args") == expected_command
+        and config.get("Entrypoint") == [_OCI_WRAPPER_EXECUTABLE]
+        and config.get("Cmd") == expected_command
+        and config.get("WorkingDir") == "/workspace"
+        and host.get("Tmpfs") == {_CONTAINER_TMP: expected_tmpfs},
+        "OCI_CONTAINER_CONFIG",
+    )
+
+
+def _check_oci_isolation(
+    host: dict[str, Any],
+    config: dict[str, Any],
+    labels: dict[str, Any],
+    limits: ExecutionLimits,
+    cleanup_nonce: str,
+) -> None:
+    security = host.get("SecurityOpt") or []
+    _need(
+        host.get("ReadonlyRootfs") is True
+        and host.get("NetworkMode") == "none"
+        and host.get("IpcMode") == "none"
+        and host.get("Privileged") is False
+        and host.get("CapDrop") == ["ALL"]
+        and "no-new-privileges" in security
+        and config.get("User") == "10001:10001"
+        and labels.get(_CONTAINER_CLEANUP_LABEL) == cleanup_nonce
+        and host.get("PidsLimit") == limits.pids
+        and host.get("Memory") == limits.memory_bytes
+        and host.get("MemorySwap") == limits.memory_bytes
+        and host.get("NanoCpus") == round(limits.cpus * 1_000_000_000),
+        "OCI_CONTRACT",
+    )
+
+
 def _capture_environment(
     environment_overrides: dict[str, str] | None,
 ) -> dict[str, str]:
@@ -1418,16 +1475,7 @@ class DockerBackend:
         image_environment: dict[str, str],
         completion_token: str,  # nosemgrep: Semgrep_codacy.yaml.security.hard-coded-tokens -- runtime parameter, not a literal
     ) -> None:
-        try:
-            raw = json.loads(self._checked("inspect", container_id))
-        except (json.JSONDecodeError, TypeError) as exc:
-            raise ExecutionRejected("OCI_INSPECT") from exc
-        _need(
-            isinstance(raw, list) and len(raw) == 1 and isinstance(raw[0], dict),
-            "OCI_INSPECT",
-        )
-        spec = raw[0]
-        _need(spec.get("Image") == image_id, "OCI_IMAGE_IDENTITY")
+        spec = self._inspect_spec(container_id, image_id)
         host = spec.get("HostConfig", {})
         config = spec.get("Config", {})
         mounts = spec.get("Mounts", [])
@@ -1437,52 +1485,32 @@ class DockerBackend:
             and isinstance(mounts, list),
             "OCI_INSPECT",
         )
-        _need(
-            len(mounts) == 1
-            and isinstance(mounts[0], dict)
-            and mounts[0].get("Type") == "bind"
-            and mounts[0].get("Source") == str(root)
-            and mounts[0].get("Destination") == "/workspace"
-            and mounts[0].get("RW") is False,
-            "OCI_MOUNT_CONTRACT",
-        )
-        security = host.get("SecurityOpt") or []
+        _check_oci_mounts(mounts, root)
         labels = config.get("Labels") or {}
         _need(isinstance(labels, dict), "OCI_INSPECT")
-        expected_command = ["-I", "-c", _OCI_WRAPPER_SOURCE, *command]
-        expected_tmpfs = f"rw,nosuid,nodev,noexec,mode=1777,size={limits.tmpfs_bytes}"
-        _need(
-            spec.get("Path") == _OCI_WRAPPER_EXECUTABLE
-            and spec.get("Args") == expected_command
-            and config.get("Entrypoint") == [_OCI_WRAPPER_EXECUTABLE]
-            and config.get("Cmd") == expected_command
-            and config.get("WorkingDir") == "/workspace"
-            and host.get("Tmpfs") == {_CONTAINER_TMP: expected_tmpfs},
-            "OCI_CONTAINER_CONFIG",
-        )
-        environment = _environment_map(config.get("Env"), "OCI_ENV_CONTRACT")
+        _check_oci_command(spec, host, config, limits, command)
         expected_environment = dict(image_environment)
         expected_environment.update(_container_environment(subject))
         expected_environment[_OCI_COMPLETION_TOKEN_ENV] = completion_token
         _need(
-            environment == expected_environment,
+            _environment_map(config.get("Env"), "OCI_ENV_CONTRACT")
+            == expected_environment,
             "OCI_ENV_CONTRACT",
         )
+        _check_oci_isolation(host, config, labels, limits, cleanup_nonce)
+
+    def _inspect_spec(self, container_id: str, image_id: str) -> dict[str, Any]:
+        try:
+            raw = json.loads(self._checked("inspect", container_id))
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise ExecutionRejected("OCI_INSPECT") from exc
         _need(
-            host.get("ReadonlyRootfs") is True
-            and host.get("NetworkMode") == "none"
-            and host.get("IpcMode") == "none"
-            and host.get("Privileged") is False
-            and host.get("CapDrop") == ["ALL"]
-            and "no-new-privileges" in security
-            and config.get("User") == "10001:10001"
-            and labels.get(_CONTAINER_CLEANUP_LABEL) == cleanup_nonce
-            and host.get("PidsLimit") == limits.pids
-            and host.get("Memory") == limits.memory_bytes
-            and host.get("MemorySwap") == limits.memory_bytes
-            and host.get("NanoCpus") == round(limits.cpus * 1_000_000_000),
-            "OCI_CONTRACT",
+            isinstance(raw, list) and len(raw) == 1 and isinstance(raw[0], dict),
+            "OCI_INSPECT",
         )
+        spec: dict[str, Any] = raw[0]
+        _need(spec.get("Image") == image_id, "OCI_IMAGE_IDENTITY")
+        return spec
 
     @staticmethod
     def _inspect_confirms_absence(
