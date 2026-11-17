@@ -714,7 +714,7 @@ def _materialize_subject(
             )
             name = raw_name.decode("utf-8")
             size = int(raw_size)
-        except (ValueError, UnicodeDecodeError) as exc:
+        except ValueError as exc:  # UnicodeDecodeError is a ValueError
             raise ExecutionRejected("SUBJECT_TREE_ENTRY") from exc
         _need(mode in {"100644", "100755"} and kind == "blob", "SUBJECT_FILE_TYPE")
         path = PurePosixPath(name)
@@ -1052,7 +1052,7 @@ def _wait_for_exit_without_reap(
     while True:
         try:
             result = os.waitid(os.P_PID, process.pid, options)
-        except (ChildProcessError, OSError) as exc:
+        except OSError as exc:  # ChildProcessError is an OSError
             raise ExecutionRejected("BACKEND_REAP_FAILED") from exc
         if result is not None:
             return True
@@ -1247,15 +1247,14 @@ def _probe_local_containment(root: Path) -> None:
 class SubprocessBackend:
     """Finite local backend with PID containment but no immutable subject mount."""
 
+    @staticmethod
     def run(
-        self,
         root: Path,
         command: Sequence[str],
         limits: ExecutionLimits,
         *,
-        subject: GitSubject,
+        subject: GitSubject,  # accepted for the backend protocol; unused locally
     ) -> UntrustedCapture:
-        del subject
         command = _validate_command(command)
         _probe_local_containment(root)
         try:
