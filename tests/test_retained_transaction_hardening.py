@@ -21,12 +21,10 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
+from tools.capsule.retained_commit import _matches_reservation
 
 
 def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:
@@ -302,18 +300,21 @@ class PublicationIntentTests(ConsumptionFixture):
 
 
 class CompletedWorkspaceFixture(ConsumptionFixture):
-    def complete(self) -> None:
-        observed = self.prepare()
-        candidate = observed.preflight_candidate_sha256
-        assert candidate is not None
-        with mock.patch.object(
-            compiler,
-            "qualify_subjects",
-            side_effect=lambda *a, **k: _receipt(
-                k.get("task_id", "T1"), dict(k.get("bound") or {})
-            ),
-        ):
-            self.prepare(authority=self.authority(candidate))
+    """A consumption fixture; its helpers are module functions of it."""
+
+
+def complete(fixture: CompletedWorkspaceFixture) -> None:
+    observed = fixture.prepare()
+    candidate = observed.preflight_candidate_sha256
+    assert candidate is not None
+    with mock.patch.object(
+        compiler,
+        "qualify_subjects",
+        side_effect=lambda *a, **k: _receipt(
+            k.get("task_id", "T1"), dict(k.get("bound") or {})
+        ),
+    ):
+        fixture.prepare(authority=fixture.consumption_authority(candidate))
 
 
 class ConcurrentStagingCreationTests(ConsumptionFixture):
@@ -414,11 +415,11 @@ class CoherentPublicationTests(ConsumptionFixture):
             staged_manifest_sha256=first.manifest_sha256,
         )
         self.assertFalse(
-            retained_commit._matches_reservation(second, reservation),
+            _matches_reservation(second, reservation),
             "output the reservation was never sealed to must not match it",
         )
         self.assertTrue(
-            retained_commit._matches_reservation(
+            _matches_reservation(
                 second,
                 dataclasses.replace(
                     reservation, staged_manifest_sha256=second.manifest_sha256
@@ -481,7 +482,7 @@ class LockIdentityTests(CompletedWorkspaceFixture):
     """The persisted bytes and the identity they carry are two facts, not one."""
 
     def test_the_commit_record_binds_both_and_confuses_neither(self) -> None:
-        self.complete()
+        complete(self)
         record = json.loads(
             (self.workspace / retained_commit.COMMIT_RECORD_FILENAME).read_text()
         )
@@ -499,7 +500,7 @@ class LockIdentityTests(CompletedWorkspaceFixture):
         )
 
     def test_every_recorded_reference_names_the_same_lock(self) -> None:
-        self.complete()
+        complete(self)
         carried = json.loads((self.workspace / "experiment.lock").read_text())[
             "lock_sha256"
         ]
@@ -525,10 +526,11 @@ class LockIdentityTests(CompletedWorkspaceFixture):
             }
         ).encode()
         state = json.dumps({"lock_sha256": "e" * 64}).encode()
+        transaction_id = retained_commit.new_transaction_id()
         with self.assertRaises(retained_commit.RetainedTransactionError) as raised:
             retained_commit.stage(
                 self.workspace,
-                transaction_id=retained_commit.new_transaction_id(),
+                transaction_id=transaction_id,
                 base_identity=None,
                 candidate_sha256=None,
                 authority_sha256=None,
@@ -540,10 +542,11 @@ class LockIdentityTests(CompletedWorkspaceFixture):
         self.assertEqual(raised.exception.code, retained_commit.INCONSISTENT_STATE)
 
     def test_a_staged_lock_without_its_identity_is_refused(self) -> None:
+        transaction_id = retained_commit.new_transaction_id()
         with self.assertRaises(retained_commit.RetainedTransactionError):
             retained_commit.stage(
                 self.workspace,
-                transaction_id=retained_commit.new_transaction_id(),
+                transaction_id=transaction_id,
                 base_identity=None,
                 candidate_sha256=None,
                 authority_sha256=None,
@@ -567,7 +570,7 @@ class LocklessCommitTests(CompletedWorkspaceFixture):
         transaction published no lock, it would contradict the lock sitting on disk
         and every subsequent read would refuse a workspace nothing is wrong with.
         """
-        self.complete()
+        complete(self)
         published = json.loads(
             (self.workspace / retained_commit.COMMIT_RECORD_FILENAME).read_text()
         )
@@ -672,7 +675,7 @@ class StagedRecoverySourceTests(CompletedWorkspaceFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         before = (self.workspace / "experiment-state.json").read_text()
         effects: list[str] = []
 
@@ -733,7 +736,7 @@ class StagedRecoverySourceTests(CompletedWorkspaceFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         effects: list[str] = []
 
         def qualify(*args: object, **kwargs: object) -> Any:
@@ -745,7 +748,7 @@ class StagedRecoverySourceTests(CompletedWorkspaceFixture):
             assert isinstance(bound, dict)
             return _receipt(task_id, dict(bound))
 
-        real_write = retained_commit._write_atomic
+        real_write = _original(retained_commit, "_write_atomic")
 
         def crash_before_recording(path: Path, payload: bytes) -> None:
             if path.name == retained_commit.COMMIT_RECORD_FILENAME:

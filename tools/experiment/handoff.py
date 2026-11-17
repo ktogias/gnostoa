@@ -197,123 +197,166 @@ def _hash_copy_file_fd(
     return digest.hexdigest(), total
 
 
+def _copy_source_file(
+    name: str,
+    relative: str,
+    mode: int,
+    observed: os.stat_result,
+    source_dir_fd: int,
+    destination_dir_fd: int,
+) -> dict[str, object]:
+    source_fd = os.open(
+        name,
+        os.O_RDONLY | _O_NOFOLLOW,
+        dir_fd=source_dir_fd,
+    )
+    try:
+        opened = os.fstat(source_fd)
+        if not _same_stat_identity(observed, opened):
+            raise HandoffError(f"source-entry-changed:{relative}")
+        digest, size = _hash_copy_file_fd(
+            source_fd,
+            destination_dir_fd,
+            name,
+            opened,
+        )
+        post_path = os.stat(
+            name,
+            dir_fd=source_dir_fd,
+            follow_symlinks=False,
+        )
+        if not _same_stat_identity(opened, post_path):
+            raise HandoffError(f"source-entry-changed:{relative}")
+    finally:
+        os.close(source_fd)
+    return {
+        "path": relative,
+        "type": "file",
+        "mode": mode,
+        "bytes": size,
+        "sha256": digest,
+    }
+
+
+def _copy_source_symlink(
+    name: str,
+    relative: str,
+    mode: int,
+    observed: os.stat_result,
+    source_dir_fd: int,
+    destination_dir_fd: int,
+) -> dict[str, object]:
+    try:
+        target = os.readlink(name, dir_fd=source_dir_fd)
+        post_path = os.stat(
+            name,
+            dir_fd=source_dir_fd,
+            follow_symlinks=False,
+        )
+    except OSError as exc:
+        raise HandoffError(f"cannot-read-source-symlink:{relative}:{exc}") from exc
+    if not _same_stat_identity(observed, post_path):
+        raise HandoffError(f"source-entry-changed:{relative}")
+    os.symlink(target, name, dir_fd=destination_dir_fd)
+    return {
+        "path": relative,
+        "type": "symlink",
+        "mode": mode,
+        "target": target,
+    }
+
+
+def _copy_source_directory(
+    name: str,
+    relative: str,
+    mode: int,
+    observed: os.stat_result,
+    source_dir_fd: int,
+    destination_dir_fd: int,
+    members: list[dict[str, object]],
+) -> None:
+    os.mkdir(name, 0o700, dir_fd=destination_dir_fd)
+    source_child_fd = os.open(name, _directory_flags(), dir_fd=source_dir_fd)
+    destination_child_fd = os.open(name, _directory_flags(), dir_fd=destination_dir_fd)
+    try:
+        opened = os.fstat(source_child_fd)
+        if not _same_stat_identity(observed, opened):
+            raise HandoffError(f"source-entry-changed:{relative}")
+        members.append({"path": relative, "type": "directory", "mode": mode})
+        _walk_source(source_child_fd, destination_child_fd, relative, members)
+        after_child = os.fstat(source_child_fd)
+        if not _same_stat_identity(opened, after_child):
+            raise HandoffError(f"source-directory-changed:{relative}")
+        os.fchmod(destination_child_fd, mode)
+        os.fsync(destination_child_fd)
+    finally:
+        os.close(destination_child_fd)
+        os.close(source_child_fd)
+
+
+def _walk_source(
+    source_dir_fd: int,
+    destination_dir_fd: int,
+    prefix: str,
+    members: list[dict[str, object]],
+) -> None:
+    before_directory = os.fstat(source_dir_fd)
+    try:
+        names = sorted(os.listdir(source_dir_fd), key=_portable_name)
+    except OSError as exc:
+        raise HandoffError(f"cannot-list-source:{prefix or '.'}:{exc}") from exc
+
+    for name in names:
+        _portable_name(name)
+        relative = f"{prefix}/{name}" if prefix else name
+        try:
+            observed = os.stat(name, dir_fd=source_dir_fd, follow_symlinks=False)
+        except OSError as exc:
+            raise HandoffError(f"cannot-stat-source:{relative}:{exc}") from exc
+        mode = _normalized_mode(observed.st_mode)
+
+        if stat.S_ISDIR(observed.st_mode):
+            _copy_source_directory(
+                name,
+                relative,
+                mode,
+                observed,
+                source_dir_fd,
+                destination_dir_fd,
+                members,
+            )
+            continue
+
+        if stat.S_ISREG(observed.st_mode):
+            members.append(
+                _copy_source_file(
+                    name, relative, mode, observed, source_dir_fd, destination_dir_fd
+                )
+            )
+            continue
+
+        if stat.S_ISLNK(observed.st_mode):
+            members.append(
+                _copy_source_symlink(
+                    name, relative, mode, observed, source_dir_fd, destination_dir_fd
+                )
+            )
+            continue
+
+        raise HandoffError(f"unsupported-source-entry:{relative}")
+
+    after_directory = os.fstat(source_dir_fd)
+    if not _same_stat_identity(before_directory, after_directory):
+        raise HandoffError(f"source-directory-changed:{prefix or '.'}")
+
+
 def _source_members_and_copy_fd(
     source_root: Path, snapshot_fd: int
 ) -> list[dict[str, object]]:
     root_fd = _open_directory(source_root)
     members: list[dict[str, object]] = []
-
-    def walk(source_dir_fd: int, destination_dir_fd: int, prefix: str) -> None:
-        before_directory = os.fstat(source_dir_fd)
-        try:
-            names = sorted(os.listdir(source_dir_fd), key=_portable_name)
-        except OSError as exc:
-            raise HandoffError(f"cannot-list-source:{prefix or '.'}:{exc}") from exc
-
-        for name in names:
-            _portable_name(name)
-            relative = f"{prefix}/{name}" if prefix else name
-            try:
-                observed = os.stat(name, dir_fd=source_dir_fd, follow_symlinks=False)
-            except OSError as exc:
-                raise HandoffError(f"cannot-stat-source:{relative}:{exc}") from exc
-            mode = _normalized_mode(observed.st_mode)
-
-            if stat.S_ISDIR(observed.st_mode):
-                os.mkdir(name, 0o700, dir_fd=destination_dir_fd)
-                source_child_fd = os.open(
-                    name, _directory_flags(), dir_fd=source_dir_fd
-                )
-                destination_child_fd = os.open(
-                    name, _directory_flags(), dir_fd=destination_dir_fd
-                )
-                try:
-                    opened = os.fstat(source_child_fd)
-                    if not _same_stat_identity(observed, opened):
-                        raise HandoffError(f"source-entry-changed:{relative}")
-                    members.append(
-                        {"path": relative, "type": "directory", "mode": mode}
-                    )
-                    walk(source_child_fd, destination_child_fd, relative)
-                    after_child = os.fstat(source_child_fd)
-                    if not _same_stat_identity(opened, after_child):
-                        raise HandoffError(f"source-directory-changed:{relative}")
-                    os.fchmod(destination_child_fd, mode)
-                    os.fsync(destination_child_fd)
-                finally:
-                    os.close(destination_child_fd)
-                    os.close(source_child_fd)
-                continue
-
-            if stat.S_ISREG(observed.st_mode):
-                source_fd = os.open(
-                    name,
-                    os.O_RDONLY | _O_NOFOLLOW,
-                    dir_fd=source_dir_fd,
-                )
-                try:
-                    opened = os.fstat(source_fd)
-                    if not _same_stat_identity(observed, opened):
-                        raise HandoffError(f"source-entry-changed:{relative}")
-                    digest, size = _hash_copy_file_fd(
-                        source_fd,
-                        destination_dir_fd,
-                        name,
-                        opened,
-                    )
-                    post_path = os.stat(
-                        name,
-                        dir_fd=source_dir_fd,
-                        follow_symlinks=False,
-                    )
-                    if not _same_stat_identity(opened, post_path):
-                        raise HandoffError(f"source-entry-changed:{relative}")
-                finally:
-                    os.close(source_fd)
-                members.append(
-                    {
-                        "path": relative,
-                        "type": "file",
-                        "mode": mode,
-                        "bytes": size,
-                        "sha256": digest,
-                    }
-                )
-                continue
-
-            if stat.S_ISLNK(observed.st_mode):
-                try:
-                    target = os.readlink(name, dir_fd=source_dir_fd)
-                    post_path = os.stat(
-                        name,
-                        dir_fd=source_dir_fd,
-                        follow_symlinks=False,
-                    )
-                except OSError as exc:
-                    raise HandoffError(
-                        f"cannot-read-source-symlink:{relative}:{exc}"
-                    ) from exc
-                if not _same_stat_identity(observed, post_path):
-                    raise HandoffError(f"source-entry-changed:{relative}")
-                os.symlink(target, name, dir_fd=destination_dir_fd)
-                members.append(
-                    {
-                        "path": relative,
-                        "type": "symlink",
-                        "mode": mode,
-                        "target": target,
-                    }
-                )
-                continue
-
-            raise HandoffError(f"unsupported-source-entry:{relative}")
-
-        after_directory = os.fstat(source_dir_fd)
-        if not _same_stat_identity(before_directory, after_directory):
-            raise HandoffError(f"source-directory-changed:{prefix or '.'}")
-
     try:
-        walk(root_fd, snapshot_fd, "")
+        _walk_source(root_fd, snapshot_fd, "", members)
     finally:
         os.close(root_fd)
     return members

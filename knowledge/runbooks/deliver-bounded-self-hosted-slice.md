@@ -115,6 +115,68 @@ The reviewer checks applicability and rationale alongside the actual candidate.
 This is review enforcement, not a software gate or proof of search completeness.
 The existing emergency route retains its declared timing and follow-up.
 
+### Architecture-inheritance entrance gate
+
+The prior-art question above asks *what already exists*. This gate asks *who already
+owns each responsibility this slice touches*, and it binds the answer before code. It
+carries the owner's mandatory, fail-closed entrance gate
+([#15 comment 5919462524](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5919462524),
+2026-09-30). It is routed from source because, while it lived only in provider
+comments, two Pull Requests proceeded without it. See the
+[incident addendum on #14](https://github.com/ktogias/gnostoa/issues/14#issuecomment-5961727761).
+
+It applies to every Gnostoa-self implementation slice. Before the first semantic
+production mutation, the active Work Item or Change Request must hold an
+exact-base-bound lineage table covering every material responsibility that the slice
+introduces or changes:
+
+| responsibility | existing owner | existing implementation/contract | disposition | proof/falsifier |
+|---|---|---|---|---|
+| ... | ... | ... | consume / extend / adapt / factor / supersede / new-residual | ... |
+
+Each disposition means:
+
+- `consume`: call or use the existing component unchanged for that responsibility.
+- `extend`: add behavior under the existing semantic owner or abstraction.
+- `adapt`: translate provider- or executor-native vocabulary at the boundary; the
+  common core remains unchanged.
+- `factor`: extract a common private primitive only after a real second consumer
+  demonstrates the seam.
+- `supersede`: explicitly migrate, remove or deactivate the old active path; no
+  silent parallel authorities.
+- `new-residual`: a genuinely new responsibility, after the existing owners and
+  components have been inspected and found insufficient.
+
+**Fail closed.** If a material responsibility has no disposition, or a proposed
+`new-residual` does not explain why an existing owner or component is insufficient,
+implementation stops before production mutation. A passing local test suite does not
+waive this gate.
+
+Small duplicated parsing or validation may remain where a distinct trust boundary
+requires it. The prohibited duplication is a second implementation of the same state,
+authority or reconciliation responsibility. A provider- or agent-specific shape inside
+code meant to be common is the boundary error this gate exists to catch. Check it
+against the existing neutral subject and adapter patterns (Decisions 0086 and 0091)
+before writing the core.
+
+**Read the governing threads incrementally.** Owner gates and sequencing reach #14
+(the Ariadne thread) and #15 before they reach source. Before the first semantic
+production mutation, and before writing to either thread, read every #14 and #15
+entry posted since the last one you read. Reading only the comments you were pointed
+to is how this gate was missed.
+
+**Revisit the table** when the slice's responsibilities change. Its growth can change
+them without anyone deciding to, so treat these as triggers:
+
+- a third hardening round on the same file;
+- decision logic accumulating under a provider-specific directory such as `.github/`,
+  beyond a few hundred lines;
+- a reviewer or owner asking where a responsibility belongs.
+
+Like the checkpoint above, this is review enforcement, not a software gate. The
+conformance tests prove only that the gate is routed. The reviewer checks the table
+against the actual candidate.
+
 ## Procedure
 
 1. **Orient and read back the current subject.** Start through `AGENTS.md`; bind

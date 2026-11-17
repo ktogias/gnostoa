@@ -27,12 +27,9 @@ import unittest
 from typing import Any
 from unittest import mock
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 
 def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:
@@ -81,7 +78,7 @@ class SealedTransactionFixture(ConsumptionFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         with self.patched_effect(effects):
             with mock.patch.object(
                 retained_commit,
@@ -105,7 +102,7 @@ class SealedTransactionFixture(ConsumptionFixture):
         before = (self.workspace / "experiment-state.json").read_text()
         with self.patched_effect(effects):
             refused = self.prepare(
-                authority=self.authority(reservation.candidate_sha256)
+                authority=self.consumption_authority(reservation.candidate_sha256)
             )
         self.assertEqual(effects, ["effect"], "nothing may be re-run here")
         self.assertNotEqual(refused.status, "READY_FOR_OWNER_REVIEW")
@@ -205,7 +202,7 @@ class StagingRootSwapTests(ConsumptionFixture):
         (outside / transaction / "evidence.json").write_text("someone else's file\n")
         before = sorted(entry.name for entry in (outside / transaction).iterdir())
 
-        real_resolver = retained_commit._open_child_directory
+        real_resolver = _original(retained_commit, "_open_child_directory")
         swapped: list[str] = []
 
         def swap_after_resolving(parent_fd: int, name: str, *, create: bool) -> Any:

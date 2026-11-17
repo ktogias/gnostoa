@@ -130,6 +130,7 @@ class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
 
         qualification = bundle["qualification_snapshot"]
         self.assertEqual(QUALIFICATION_SNAPSHOT, qualification)
+        assert isinstance(qualification, dict)
         self.assertEqual([], qualification["entries"])
         self.assertEqual(QUALIFICATION_DIGEST, canonical_digest(qualification))
 
@@ -137,6 +138,7 @@ class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
         self.assertEqual(EXPECTED_JUDGE, acquired_judge)
 
         authority = bundle["authority"]
+        assert isinstance(authority, dict)
         self.assertEqual(
             {
                 "kind": "gnostoa-protected-main-record",

@@ -1,11 +1,11 @@
 {
   "contract": "gnostoa-self-orientation/0.1",
   "subject": {
-"source_commit": "1acf9bb448e7342bbf1b8a4cf16f3b2a86225f89", "source_tree": "784e6875e2399f854637908358b4dceb7872cfa3", "_public_identity_note": "# pragma: allowlist secret -- public Git commit and tree identities"
+"source_commit": "e55f13e3a15bf1f8fd836d3270e044b6e75a102f", "source_tree": "77911b40c0e37de91eb5a3a306c7e24fae6e4d13", "_public_identity_note": "# pragma: allowlist secret -- public Git commit and tree identities"
   },
   "projection": {
-    "id": "D14-O1",
-    "observed_at": "2026-09-11T12:16:47Z",
+    "id": "D14-O2",
+    "observed_at": "2026-11-11T19:28:47Z",
     "freshness_seconds": 86400,
     "review_characters": 5000
   },
@@ -14,8 +14,8 @@
       "id": "readme",
       "kind": "local-file",
       "locator": "README.md",
-      "identity": "sha256:819dc798620b7e4372574c1417c12569d07f6334f01e7d0a9d412622af86dc91",
-      "observed_at": "2026-09-11T12:16:47Z",
+      "identity": "sha256:3f258b2315d44be54fcb746a4fcff45e9c4f1eb7505e7e6a638a6bd5cf1a213e",
+      "observed_at": "2026-11-11T19:27:46Z",
       "required": true,
       "status": "complete"
     },
@@ -23,8 +23,8 @@
       "id": "roadmap",
       "kind": "local-file",
       "locator": "docs/roadmap.md",
-      "identity": "sha256:4977c4276e5883fc95bcdad075faaba47a964ba61eb034fcd72c580e8daaf716",
-      "observed_at": "2026-09-11T12:16:47Z",
+      "identity": "sha256:1299ed578eb0b0619a80bd39e8dba96c9695ed47baae46ce7dfe9cfaefa18e6e",
+      "observed_at": "2026-11-11T19:27:46Z",
       "required": true,
       "status": "complete"
     },
@@ -33,34 +33,34 @@
       "kind": "local-file",
       "locator": "knowledge/decisions/0065-run-a-bounded-gnostoa-self-orientation-snapshot.md",
       "identity": "sha256:6d4b064d2b4341b5257ff7aa36cc7f5e750d7b128b254ea2eb1c1f01a92a5594",
-      "observed_at": "2026-09-11T12:16:47Z",
+      "observed_at": "2026-11-11T19:27:46Z",
       "required": true,
       "status": "complete"
     },
     {
       "id": "main-entrance",
       "kind": "recorded-observation",
-      "locator": "https://github.com/ktogias/gnostoa/commit/1acf9bb448e7342bbf1b8a4cf16f3b2a86225f89",
-      "identity": "git:1acf9bb448e7342bbf1b8a4cf16f3b2a86225f89",
-      "observed_at": "2026-09-11T10:42:06Z",
+      "locator": "https://github.com/ktogias/gnostoa/commit/e55f13e3a15bf1f8fd836d3270e044b6e75a102f",
+      "identity": "git:e55f13e3a15bf1f8fd836d3270e044b6e75a102f",
+      "observed_at": "2026-11-11T19:28:47Z",
       "required": true,
       "status": "complete"
     },
     {
-      "id": "issue-14-admission",
+      "id": "provider-issues",
       "kind": "recorded-observation",
-      "locator": "https://github.com/ktogias/gnostoa/issues/14#issuecomment-5633306062",
-      "identity": "github-comment:5633306062",
-      "observed_at": "2026-09-11T11:10:07Z",
+      "locator": "https://github.com/ktogias/gnostoa/labels/roadmap%3Anow",
+      "identity": "roadmap:now=#15; 0 issues since 2026-11-11T19:00Z",
+      "observed_at": "2026-11-11T19:28:47Z",
       "required": true,
       "status": "complete"
     },
     {
-      "id": "reviewed-proposal",
+      "id": "owner-checkpoint",
       "kind": "recorded-observation",
-      "locator": "https://github.com/ktogias/gnostoa/issues/14#issuecomment-5633105771",
-      "identity": "sha256:64f85a9ec1a58b2e8fa22c69dd7a3051851c3ec91a6d91d8d4e7cebe0d8fe013",
-      "observed_at": "2026-09-11T10:32:08Z",
+      "locator": "https://github.com/ktogias/gnostoa/issues/14#issuecomment-6804946832",
+      "identity": "github-comment:6804946832@2026-11-11T19:12:50Z",
+      "observed_at": "2026-11-11T19:28:47Z",
       "required": true,
       "status": "complete"
     }
@@ -70,64 +70,67 @@
       "id": "purpose",
       "text": "Make project knowledge usable by people and interchangeable agents while preserving explicit authority and verifiable results.",
       "source_ids": [
-        "readme",
-        "reviewed-proposal"
+        "readme"
       ]
     },
     "implemented": [
       {
-        "id": "implemented",
-        "text": "Source and OCI toolkit, task-envelope projector, context-pack, experiment Capsule, scoped acceptance fixture and review-exchange fixtures exist with bounded evidence.",
+        "id": "landed",
+        "text": "On main: #490 admission read-back (#407, Decision 0135), #489 M13 archive (#389, Decision 0134), #396 bash parser (#393, Decision 0108), #487 reviewer tool bound (#326); #407 MA0 Phase 1b step 4/5 published.",
         "source_ids": [
-          "readme",
-          "roadmap"
+          "main-entrance",
+          "owner-checkpoint"
         ]
       }
     ],
     "proposed": [
       {
-        "id": "proposed",
-        "text": "Generic portfolio projection, broad controlled provider lifecycle, thin host dispatcher, protected acceptance and full Phase D remain proposals or unperformed work.",
+        "id": "queue",
+        "text": "Owner WSJF order, enablers first: 1 lessons ledger and research as knowledge; 2 prior-art Decision, templates, CI check (E1–E4); 3 PR portfolio policy and check, 0112 draft-to-ready addendum, first portfolio review; 4 Implementer efficiency; 5 port the host-interim autonomy core (S12–S26), provider-agnostic; 6 #369 follow-through, neutrality check, in parallel; 7 #491 mcpvenom research.",
         "source_ids": [
-          "roadmap",
-          "reviewed-proposal"
+          "owner-checkpoint"
         ]
       }
     ],
     "current": [
       {
         "id": "current",
-        "text": "Issue #14 / D14-O1 is the owner-selected bounded Gnostoa-self orientation construction.",
+        "text": "Provider roadmap:now is #15; the Owner-approved 2026-11-11 checkpoint orders its work; #14 / D14-O2 refreshes this view.",
         "source_ids": [
-          "issue-14-admission",
-          "decision-0065"
+          "provider-issues",
+          "owner-checkpoint"
         ]
       }
     ],
     "next_action": {
       "id": "next-action",
-      "text": "Verify the exact D14-O1 candidate and prepare it for owner review.",
+      "text": "Router opens one Work Item per queue row 1–6, linking the source comments, then routes row 1.",
       "source_ids": [
-        "issue-14-admission",
-        "decision-0065"
+        "owner-checkpoint"
       ]
     },
     "proposed_successor": {
       "id": "proposed-successor",
-      "text": "Evaluate #237's component-reuse recommendation after this slice is dispositioned.",
+      "text": "Queue row 1: admit the lessons ledger and research records as Gnostoa knowledge.",
       "source_ids": [
-        "issue-14-admission",
-        "reviewed-proposal"
+        "owner-checkpoint"
       ],
-      "admission_state": "PROPOSED; not admitted by D14-O1"
+      "admission_state": "PROPOSED; no Work Item yet, not admitted"
     },
     "blockers": [
       {
         "id": "adoption-boundary",
-        "text": "Full Phase D has not run and L10 protected-consumer refusal remains open. Neither is a prerequisite for D14-O1 or every adoption task; the selected future task determines which qualification defects block it.",
+        "text": "Strict INDEPENDENT B3 evidence is deferred; Phase B reported H-B FAIL, utility UNKNOWN. Neither is a prerequisite for D14-O2 or every adoption task; the selected future task determines which qualification defects block it.",
         "source_ids": [
-          "roadmap",
-          "reviewed-proposal"
+          "roadmap"
+        ]
+      },
+      {
+        "id": "work-items",
+        "text": "Rows 1–6 and the checkpoint's six in-force Owner directions have no Work Item yet, so none is admitted.",
+        "source_ids": [
+          "owner-checkpoint",
+          "provider-issues"
         ]
       }
     ],
@@ -136,24 +139,22 @@
         "id": "authority-boundary",
         "text": "This read-only view grants no semantic approval, provider mutation, merge, public-contract promotion or readiness claim.",
         "source_ids": [
-          "issue-14-admission",
           "decision-0065"
         ]
       },
       {
-        "id": "model-boundary",
-        "text": "Use suitable economical models for admitted evaluation; do not silently substitute Astra or a paid fallback, and retain actual requested/served identity when known.",
+        "id": "direction-capture",
+        "text": "Capture every relayed Owner direction as a Work Item within 24 h.",
         "source_ids": [
-          "issue-14-admission",
-          "decision-0065"
+          "owner-checkpoint"
         ]
       }
     ],
     "return_to_adoption": {
       "id": "return-to-adoption",
-      "text": "After D14-O1 disposition, select the future adoption task and apply only its actual oracle, qualification and launch gates; this view is not a prerequisite for every adoption task.",
+      "text": "After D14-O2 disposition, select the future adoption task and apply only its actual oracle, qualification and launch gates.",
       "source_ids": [
-        "reviewed-proposal",
+        "roadmap",
         "decision-0065"
       ]
     }

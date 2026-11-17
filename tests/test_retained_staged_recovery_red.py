@@ -37,12 +37,9 @@ import unittest
 from typing import Any
 from unittest import mock
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 
 def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:
@@ -82,7 +79,7 @@ class StagedWithoutIntentRecoveryTests(ConsumptionFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         effects: list[str] = []
 
         def qualify(*args: object, **kwargs: object) -> Any:
@@ -156,8 +153,8 @@ class UnresolvedIntentTests(ConsumptionFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
-        real_write = retained_commit._write_atomic
+        authority = self.consumption_authority(candidate)
+        real_write = _original(retained_commit, "_write_atomic")
 
         def crash(path: Any, payload: bytes) -> None:
             if (

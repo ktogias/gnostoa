@@ -271,6 +271,7 @@ class SymlinkBearingRunRetainsEvidenceTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(payload["status"], "PASS")
             observation = payload["workspace_size_observation"]
+            assert isinstance(observation, dict)
             self.assertEqual(observation["measurement"], _METHOD)
             # The work is not thrown away: retained artifacts exist on disk.
             self.assertTrue((evidence / "run-stdout.log").is_file())

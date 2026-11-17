@@ -27,12 +27,9 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 
 def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:
@@ -77,22 +74,23 @@ class ProvenanceFixture(ConsumptionFixture):
 
         return mock.patch.object(compiler, "qualify_subjects", side_effect=qualify)
 
-    def die_before_the_first_canonical_write(self) -> Any:
-        """Interrupt a publication after its intent and before any canonical byte."""
-        real_write = retained_commit._write_atomic
-
-        def crash(path: Path, payload: bytes) -> None:
-            if (
-                path.parent == self.workspace
-                and path.name == retained_commit.LEDGER_FILENAME
-            ):
-                raise RuntimeError("crash after the intent, before publishing")
-            return real_write(path, payload)
-
-        return mock.patch.object(retained_commit, "_write_atomic", side_effect=crash)
-
     def staged_member(self, transaction: str, name: str) -> Path:
         return retained_commit.staging_directory(self.workspace, transaction) / name
+
+
+def die_before_the_first_canonical_write(fixture: ProvenanceFixture) -> Any:
+    """Interrupt a publication after its intent and before any canonical byte."""
+    real_write = _original(retained_commit, "_write_atomic")
+
+    def crash(path: Path, payload: bytes) -> None:
+        if (
+            path.parent == fixture.workspace
+            and path.name == retained_commit.LEDGER_FILENAME
+        ):
+            raise RuntimeError("crash after the intent, before publishing")
+        return real_write(path, payload)
+
+    return mock.patch.object(retained_commit, "_write_atomic", side_effect=crash)
 
 
 class InterruptedPublicationDisplacementTests(ProvenanceFixture):
@@ -125,7 +123,7 @@ class InterruptedPublicationDisplacementTests(ProvenanceFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         effect_bearing_spec = self._spec()
         effects: list[str] = []
         interrupted: list[str] = []
@@ -139,7 +137,7 @@ class InterruptedPublicationDisplacementTests(ProvenanceFixture):
             if not interrupted:
                 interrupted.append("interrupted")
                 with self.patched_effect(effects):
-                    with self.die_before_the_first_canonical_write():
+                    with die_before_the_first_canonical_write(self):
                         with self.assertRaises(RuntimeError):
                             self.prepare_spec(effect_bearing_spec, authority)
             return real_stage(root, **kwargs)
@@ -192,9 +190,10 @@ class PublicationIntentBindingTests(ProvenanceFixture):
         before = (self.workspace / "experiment-state.json").read_text()
 
         with self.patched_effect():
-            with self.die_before_the_first_canonical_write():
+            with die_before_the_first_canonical_write(self):
+                authority = self.consumption_authority(candidate)
                 with self.assertRaises(RuntimeError):
-                    self.prepare(authority=self.authority(candidate))
+                    self.prepare(authority=authority)
 
         transaction = retained_commit.read_publication_intent(self.workspace)
         self.assertIsNotNone(transaction)
@@ -239,7 +238,7 @@ class ReadyLockChainTests(ProvenanceFixture):
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
         with self.patched_effect():
-            self.prepare(authority=self.authority(candidate))
+            self.prepare(authority=self.consumption_authority(candidate))
         self.assertEqual(
             compiler.status(self.workspace)["status"], "READY_FOR_OWNER_REVIEW"
         )

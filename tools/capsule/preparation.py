@@ -365,6 +365,16 @@ def declared_generated_paths(tree: Path) -> tuple[str, ...]:
     )
 
 
+def _missing_version_files(
+    tree: Path, targets: list[str], frozen_paths: frozenset[str] | None
+) -> tuple[str, ...]:
+    """The declared version files the frozen tree lacks: decided by its frozen paths
+    when supplied, and by file presence otherwise."""
+    if frozen_paths is None:
+        return tuple(target for target in targets if not (tree / target).exists())
+    return tuple(target for target in targets if target not in frozen_paths)
+
+
 def discover_preparation(
     tree: Path, *, frozen_paths: frozenset[str] | None = None
 ) -> PreparationRequirement:
@@ -397,10 +407,7 @@ def discover_preparation(
             targets.append(value)
             inference.append(f"{origin} [tool.setuptools_scm] {key} = {value}")
 
-    if frozen_paths is None:
-        missing = tuple(target for target in targets if not (tree / target).exists())
-    else:
-        missing = tuple(target for target in targets if target not in frozen_paths)
+    missing = _missing_version_files(tree, targets, frozen_paths)
     if not missing:
         return PreparationRequirement(
             required=False,

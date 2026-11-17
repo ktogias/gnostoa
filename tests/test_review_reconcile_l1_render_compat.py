@@ -6,10 +6,12 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from tests.quality_evidence_profile_support import _original
+
 
 def _fixtures() -> Any:
     """Reuse source-bound L1 fixtures independently of discovery's sys.path."""
-    path = Path(__file__).with_name("test_review_reconcile_l1.py")
+    path = Path(__file__).with_name("review_reconcile_l1_support.py")
     spec = importlib.util.spec_from_file_location("l1_render_compat_fixtures", path)
     if spec is None or spec.loader is None:
         raise AssertionError("L1_FIXTURES_UNAVAILABLE")
@@ -21,10 +23,10 @@ def _fixtures() -> Any:
 class UsefulL1RenderCompatibilityTests(unittest.TestCase):
     def test_owned_prior_render_remains_replaceable_from_valid_semantics(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
-        reducer = fixtures._reducer()
+        adapter = fixtures.adapter()
+        reducer = fixtures.reducer()
         projection = reducer.build_projection(
-            fixtures._snapshot(),
+            fixtures.snapshot(),
             protected_main_revision="e" * 40,
             outer_consumer={
                 "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
@@ -57,11 +59,11 @@ class UsefulL1RenderCompatibilityTests(unittest.TestCase):
             reducer.parse_projection_comment(prior_render),
         )
 
-        existing = adapter._existing_projection(
+        existing = _original(adapter, "_existing_projection")(
             [
                 {
                     "id": 77,
-                    "author": adapter._PROJECTION_AUTHOR,
+                    "author": _original(adapter, "_PROJECTION_AUTHOR"),
                     "body": prior_render,
                 }
             ],
@@ -75,9 +77,9 @@ class UsefulL1RenderCompatibilityTests(unittest.TestCase):
 
     def test_publish_updates_prior_render_in_place(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
-        reducer = fixtures._reducer()
-        snapshot = fixtures._snapshot()
+        adapter = fixtures.adapter()
+        reducer = fixtures.reducer()
+        snapshot = fixtures.snapshot()
         outer = {
             "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
             "runtime_revision": "9" * 40,
@@ -142,7 +144,7 @@ class UsefulL1RenderCompatibilityTests(unittest.TestCase):
                     [
                         {
                             "id": 77,
-                            "author": adapter._PROJECTION_AUTHOR,
+                            "author": _original(adapter, "_PROJECTION_AUTHOR"),
                             "body": prior_render,
                         }
                     ],
@@ -290,9 +292,9 @@ class UsefulL1RenderCompatibilityTests(unittest.TestCase):
 
     def test_publish_updates_pre_bound_long_check_label_in_place(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
-        reducer = fixtures._reducer()
-        snapshot = fixtures._snapshot()
+        adapter = fixtures.adapter()
+        reducer = fixtures.reducer()
+        snapshot = fixtures.snapshot()
         outer = {
             "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
             "runtime_revision": "9" * 40,
@@ -367,7 +369,7 @@ class UsefulL1RenderCompatibilityTests(unittest.TestCase):
                     [
                         {
                             "id": 77,
-                            "author": adapter._PROJECTION_AUTHOR,
+                            "author": _original(adapter, "_PROJECTION_AUTHOR"),
                             "body": prior_render,
                         }
                     ],

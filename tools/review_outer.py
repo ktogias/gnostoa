@@ -944,3 +944,34 @@ def run_prior_effective_current_advisory(
         input_document,
         acquire_consumer=acquire_gnostoa_current_advisory_consumer,
     )
+
+
+# The public names for what L1 (`ci/review_github_current_state.py`) uses (#389 F1).
+# Each calls its private implementation at call time, as the function above does, so
+# the private name stays the one implementation and the one test seam.
+
+
+def run_prior_effective_current_advisory_with_acquisition(
+    input_document: object,
+    *,
+    acquire_consumer: Callable[[], ProtectedMainDocument],
+) -> tuple[int, bytes]:
+    """Run current-advisory with the consumer the caller pinned, which the run still
+    restricts to the transport-compatible identities before any lifecycle effect."""
+
+    return _run_prior_effective_current_advisory_with_acquisition(
+        input_document,
+        acquire_consumer=acquire_consumer,
+    )
+
+
+def decode_outer_result(exit_code: int, raw: bytes) -> dict[str, Any]:
+    """Decode the protected outer runtime's bounded canonical result."""
+
+    return _decode_outer_result(exit_code, raw)
+
+
+def require_transport_compatible_consumer(consumer: dict[str, Any]) -> None:
+    """Refuse a consumer identity the outer transport is not admitted for."""
+
+    _require_transport_compatible_consumer(consumer)
