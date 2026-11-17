@@ -193,9 +193,12 @@ The two bases disagree on the verdict:
 | DRE | 33% | **87%** |
 | WIP shape | 0 → 36, monotonic | 0 for 22 h, then flat at **5–7** for 14 h |
 
-On the tracker basis the candidate looks unstable. On the substantive basis it is a
-bounded queue slightly above equilibrium, with **median fix latency of 23 minutes**
-(p90 83 min). Of the 7 live items, 3 were code defects raised six minutes before
+On the tracker basis the candidate looks unstable. On the substantive basis it is far
+less unstable but not stable: ρ is above 1 (1.15 overall, 1.33 trailing), so by the
+definition in section 1 it is mildly unstable and trending worse, even though WIP
+stayed flat at 5–7 and the **median fix latency was 23 minutes** (p90 83 min).
+Because arrivals are convex (below), the instrument would give no convergence verdict
+for this case and would name convexity; these figures are measurements, not a verdict. Of the 7 live items, 3 were code defects raised six minutes before
 measurement and 4 were documentation.
 
 **This is the finding that matters most in this research.** Every alarming figure in
@@ -246,7 +249,7 @@ precondition. It does not emit a number.
 - The worked case is a single candidate. The instrument set is *not* validated
   until it reproduces #319 from raw data and correctly declines to label #312
   and #314 — both of which converged — as divergent.
-- A flat arrival curve over eleven heads is evidence, not proof, of an
+- A sustained, accelerating arrival of findings over eleven heads is evidence, not proof, of an
   unbounded finding supply. Measure 8 on a frozen head is the experiment that
   would distinguish the two, and it has not been run.
 - Substantive DRE required reading the code to decide whether each finding was in
@@ -258,8 +261,10 @@ precondition. It does not emit a number.
   and it is the only one that currently needs human judgment.
 - Two of the detectors were initially mis-escaped and wrongly reported their finding
   as unfixed. Detector authorship is therefore itself a failure surface, and any
-  instrument built on this method needs a positive control — a finding known to be
-  unfixed — to catch a detector that never matches.
+  instrument built on this method needs both controls: a positive control — a finding
+  known to be fixed, where the detector must match — to catch a detector that never
+  matches, and a negative control — a finding known to be unfixed, where the detector
+  must not match — to catch one that always matches.
 
 ## Admission boundary
 
