@@ -2040,6 +2040,7 @@ def execute(
     backend_limits = _snapshot_limits(controller_limits)
     command_snapshot = _snapshot_command(command)
     evidence_snapshot = _snapshot_evidence(evidence)
+    _need(callable(getattr(backend, "run", None)), "EXECUTION_BACKEND")
     controller_backend = _controller_owned_backend(backend)
     command_sha256 = _identity_digest(list(command_snapshot))
     limits_sha256 = _limits_identity(controller_limits)

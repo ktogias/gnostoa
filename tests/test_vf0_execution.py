@@ -1601,6 +1601,23 @@ class VF0SubjectTests(unittest.TestCase):
                 )
             self.assertFalse(backend.called)
 
+    def test_backend_without_a_callable_run_is_a_bounded_rejection(self) -> None:
+        class NoRun:
+            run = "not callable"
+
+        for invalid in (None, object(), NoRun()):
+            with self.subTest(backend=type(invalid).__name__):
+                with tempfile.TemporaryDirectory() as td:
+                    repo, subject = _repo(Path(td))
+                    with self.assertRaisesRegex(ExecutionRejected, "EXECUTION_BACKEND"):
+                        execute(
+                            repo,
+                            subject,
+                            [_evidence("print('x')")],
+                            [sys.executable, "-c", "pass"],
+                            invalid,  # type: ignore[arg-type]
+                        )
+
     def test_repository_subdirectory_is_not_an_implicit_subject_root(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo, subject = _repo(Path(td))
