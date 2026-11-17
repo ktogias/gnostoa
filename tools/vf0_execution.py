@@ -1480,7 +1480,8 @@ class DockerBackend:
     def _require_cleanup_ownership(stdout: bytes, cleanup_nonce: str) -> None:
         try:
             raw = json.loads(stdout)
-        except (json.JSONDecodeError, TypeError) as exc:
+        except (ValueError, TypeError, RecursionError) as exc:
+            # ValueError covers JSONDecodeError and UnicodeDecodeError.
             raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED") from exc
         _need(
             isinstance(raw, list) and len(raw) == 1 and isinstance(raw[0], dict),

@@ -3133,6 +3133,50 @@ class VF0DockerBackendTests(unittest.TestCase):
                 docker_executable=SpoofedExecutable("/tmp/not-docker"),
             )
 
+    def test_cleanup_ownership_parser_fails_closed_on_unreadable_inspect_output(
+        self,
+    ) -> None:
+        nonce = "n" * 32
+        label = "gnostoa.vf0.cleanup-token"
+        unreadable = {
+            "invalid utf-8": b"\xff\xfe[",
+            "not json": b"not json",
+            "empty": b"",
+            "deeply nested": b"[" * 100_000,
+        }
+        for name, stdout in unreadable.items():
+            with self.subTest(case=name):
+                with self.assertRaisesRegex(
+                    ExecutionRejected, "^OCI_CLEANUP_UNVERIFIED$"
+                ):
+                    DockerBackend._require_cleanup_ownership(stdout, nonce)
+        for name, stdout in {
+            "object": b"{}",
+            "two entries": b"[{}, {}]",
+            "non-object entry": b"[1]",
+        }.items():
+            with self.subTest(case=name):
+                with self.assertRaisesRegex(
+                    ExecutionRejected, "^OCI_CLEANUP_UNVERIFIED$"
+                ):
+                    DockerBackend._require_cleanup_ownership(stdout, nonce)
+        for name, document in {
+            "no labels": [{"Config": {}}],
+            "labels not an object": [{"Config": {"Labels": []}}],
+            "config not an object": [{"Config": []}],
+            "other nonce": [{"Config": {"Labels": {label: "other"}}}],
+        }.items():
+            with self.subTest(case=name):
+                with self.assertRaisesRegex(
+                    ExecutionRejected, "^OCI_CLEANUP_OWNERSHIP$"
+                ):
+                    DockerBackend._require_cleanup_ownership(
+                        json.dumps(document).encode(), nonce
+                    )
+        DockerBackend._require_cleanup_ownership(
+            json.dumps([{"Config": {"Labels": {label: nonce}}}]).encode(), nonce
+        )
+
     def test_validated_backend_configuration_cannot_be_reassigned(self) -> None:
         for backend in (
             DockerBackend(self.image),
