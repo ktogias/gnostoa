@@ -136,6 +136,40 @@ class ProgressOwnerTests(unittest.TestCase):
             "IDENTITY_CAP",
         )
 
+    def test_characterization_future_stamp_same_utc_day_counts_toward_daily_cap(
+        self,
+    ) -> None:
+        # Characterizes current behavior, not a settled design choice; the origin
+        # of the daily/identity asymmetry is unproven (Decision 0136 keeps caps).
+        now = 1_800_000_000.0
+        future = (p.RequestStamp("a", now + 60),)
+        self.assertEqual(p.request_budget((), future, now, daily_cap=1), "DAILY_CAP")
+
+    def test_characterization_future_stamp_later_utc_day_not_in_daily_cap(
+        self,
+    ) -> None:
+        # Characterizes current behavior, not a settled design choice.
+        now = 1_800_000_000.0
+        future = (p.RequestStamp("a", now + 86400),)
+        self.assertIsNone(p.request_budget((), future, now, daily_cap=1))
+
+    def test_characterization_future_stamps_never_count_toward_identity_cap(
+        self,
+    ) -> None:
+        # Characterizes current behavior, not a settled design choice.
+        now = 1_800_000_000.0
+        future = tuple(p.RequestStamp(str(n), now + n) for n in (1, 2, 3))
+        self.assertIsNone(p.request_budget(future, future, now, daily_cap=100))
+
+    def test_characterization_unordered_first_scope_source_requests_refresh(
+        self,
+    ) -> None:
+        # Nothing held and no ordering: fail closed, ask for a refresh, add nothing.
+        source = p.Source("scope", "k", "fp", "gen", True, None)
+        self.assertIsNone(p._category_update(source, []))
+        merged, added, refresh = p.merge_sources((), (source,))
+        self.assertEqual((merged, added, refresh), ((), False, True))
+
     @staticmethod
     def evaluation() -> p.Evaluation:
         ref = Ref("ticket", "opaque-A")
