@@ -451,41 +451,48 @@ def _candidate(value: Any, request: dict[str, Any]) -> dict[str, Any]:
     return candidate
 
 
-def _mode_relation(request: dict[str, Any], evidence: dict[str, Any]) -> None:
+def _structural_relation(
+    request: dict[str, Any],
+    evidence: dict[str, Any],
+    exit_code: int,
+    cases: dict[str, Any],
+) -> None:
+    _need(
+        request["criterion"] == "NON_EXECUTABLE" and exit_code == 0 and not cases,
+        "STRUCTURAL_NOT_EXECUTABLE",
+    )
+    _need(evidence["accountable_review"] is not None, "ACCOUNTABLE_REVIEW_REQUIRED")
+
+
+def _executable_relation(
+    request: dict[str, Any], exit_code: int, cases: dict[str, Any]
+) -> None:
     mode = request["mode"]
-    expected, actual = _outcome(request["outcome"]), _outcome(evidence["outcome"])
-    _need(expected == actual, "ORACLE_RESULT_MISMATCH")
-    exit_code, cases = actual
-    if mode == "STRUCTURAL":
+    _need(
+        request["criterion"] == "EXECUTABLE"
+        and cases
+        and request["material"]["evidence_files"],
+        "NONVACUITY_REQUIRED",
+    )
+    for outcome, cause in cases.values():
         _need(
-            request["criterion"] == "NON_EXECUTABLE" and exit_code == 0 and not cases,
-            "STRUCTURAL_NOT_EXECUTABLE",
+            (outcome == "PASS" and cause == "NONE")
+            or (
+                outcome == "FAIL" and cause in {"ASSERTION_FAILURE", "EXPLICIT_FAILURE"}
+            ),
+            "NON_BEHAVIORAL_RESULT",
         )
-        _need(evidence["accountable_review"] is not None, "ACCOUNTABLE_REVIEW_REQUIRED")
+    failures = sum(outcome == "FAIL" for outcome, _ in cases.values())
+    if mode == "CHARACTERIZATION":
+        _need(exit_code == 0 and failures == 0, "CHARACTERIZATION_REQUIRES_SUCCESS")
+    elif mode == "RED":
+        _need(exit_code == 1 and failures > 0, "RED_REQUIRES_FAILURE")
     else:
-        _need(
-            request["criterion"] == "EXECUTABLE"
-            and cases
-            and request["material"]["evidence_files"],
-            "NONVACUITY_REQUIRED",
-        )
-        for outcome, cause in cases.values():
-            _need(
-                (outcome == "PASS" and cause == "NONE")
-                or (
-                    outcome == "FAIL"
-                    and cause in {"ASSERTION_FAILURE", "EXPLICIT_FAILURE"}
-                ),
-                "NON_BEHAVIORAL_RESULT",
-            )
-        failures = sum(outcome == "FAIL" for outcome, _ in cases.values())
-        if mode == "CHARACTERIZATION":
-            _need(exit_code == 0 and failures == 0, "CHARACTERIZATION_REQUIRES_SUCCESS")
-        elif mode == "RED":
-            _need(exit_code == 1 and failures > 0, "RED_REQUIRES_FAILURE")
-        else:
-            _need(exit_code == (1 if failures else 0), "EMERGENCY_RESULT")
-    if mode == "EMERGENCY_POST_EVENT":
+        _need(exit_code == (1 if failures else 0), "EMERGENCY_RESULT")
+
+
+def _chronology_relation(request: dict[str, Any], evidence: dict[str, Any]) -> None:
+    if request["mode"] == "EMERGENCY_POST_EVENT":
         _need(
             request["change_class"] == "emergency"
             and request["follow_up"] is not None
@@ -498,6 +505,17 @@ def _mode_relation(request: dict[str, Any], evidence: dict[str, Any]) -> None:
             and evidence["chronology"] == "PRE_CHANGE",
             "PRE_CHANGE_REQUIRED",
         )
+
+
+def _mode_relation(request: dict[str, Any], evidence: dict[str, Any]) -> None:
+    expected, actual = _outcome(request["outcome"]), _outcome(evidence["outcome"])
+    _need(expected == actual, "ORACLE_RESULT_MISMATCH")
+    exit_code, cases = actual
+    if request["mode"] == "STRUCTURAL":
+        _structural_relation(request, evidence, exit_code, cases)
+    else:
+        _executable_relation(request, exit_code, cases)
+    _chronology_relation(request, evidence)
 
 
 def _time_relation(
@@ -614,6 +632,37 @@ def evaluate_json(raw: bytes) -> dict[str, Any]:
         return _result("REJECTED", ["MALFORMED_JSON"])
 
 
+def _link_url(url: str) -> None:
+    _need(all(32 < ord(c) < 127 for c in url) and "\\" not in url, "LINK_URL")
+    parts = urlsplit(url)
+    _need(
+        parts.scheme == "https"
+        and parts.hostname
+        and not parts.username
+        and not parts.password
+        and not parts.query
+        and (
+            not parts.fragment
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", parts.fragment) is not None
+        )
+        and parts.port in {None, 443},
+        "LINK_URL",
+    )
+
+
+def _checked_link(value: object, expected: object) -> dict[str, Any]:
+    link = _mapping(value, {"subject", "label", "relation", "url"})
+    _need(_reference(link["subject"]) == expected, "LINK_SUBJECT")
+    label = _text(link["label"], 80)
+    _need(all(c.isalnum() or c in " .:_()/-" for c in label), "LINK_LABEL")
+    _need(
+        link["relation"] in {"run", "review", "approve", "report"},
+        "LINK_RELATION",
+    )
+    _link_url(_text(link["url"], 2048))
+    return link
+
+
 def resolve_links(
     subject: object, links: object
 ) -> tuple[list[dict[str, Any]], list[str]]:
@@ -626,34 +675,7 @@ def resolve_links(
         _need(type(values) is list and len(values) <= 32, "LINK_SET")
         for value in values:
             try:
-                link = _mapping(value, {"subject", "label", "relation", "url"})
-                _need(_reference(link["subject"]) == expected, "LINK_SUBJECT")
-                label = _text(link["label"], 80)
-                _need(all(c.isalnum() or c in " .:_()/-" for c in label), "LINK_LABEL")
-                _need(
-                    link["relation"] in {"run", "review", "approve", "report"},
-                    "LINK_RELATION",
-                )
-                url = _text(link["url"], 2048)
-                _need(
-                    all(32 < ord(c) < 127 for c in url) and "\\" not in url, "LINK_URL"
-                )
-                parts = urlsplit(url)
-                _need(
-                    parts.scheme == "https"
-                    and parts.hostname
-                    and not parts.username
-                    and not parts.password
-                    and not parts.query
-                    and (
-                        not parts.fragment
-                        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", parts.fragment)
-                        is not None
-                    )
-                    and parts.port in {None, 443},
-                    "LINK_URL",
-                )
-                retained.append(link)
+                retained.append(_checked_link(value, expected))
             except _Invalid as exc:
                 rejected.append(str(exc))
             except (ValueError, TypeError):
