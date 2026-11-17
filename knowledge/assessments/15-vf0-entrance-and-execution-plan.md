@@ -1595,8 +1595,8 @@ count. Overflow requires a proven child-byte lower bound above the caller
 budget. Transport-only overflow without that proof refuses instead of inventing
 a child count or completion. No producer authentication, authority enforcement,
 host isolation, cleanup-liveness fix or VF0 activation is introduced. Slow owned
-inspect, late-create and whole-call trusted-host limits remain separate original
-#15 obligations before activation; whole #6 is not a technical predecessor to
+inspect, late-create and whole-call trusted-host limits remain separate original Issue #15
+obligations before activation; whole #6 is not a technical predecessor to
 this inactive private normalization repair.
 
 ### AUD45 exact cleanup diagnostic reference and retained liveness limit
@@ -1709,8 +1709,8 @@ the sole open `roadmap:now` selection. The owner explicitly selected this
 narrow CPU-input correction to finish PR #319, characterizing it as an
 implementation detail that adds no abstraction, architecture or dependency.
 This records that selection; it does not claim a public-contract change, VF0
-activation, producer admission or a provider-side change to the broader Issue
-#15 readiness state.
+activation, producer admission or a provider-side change to the broader Issue #15
+readiness state.
 
 The exact CodeRabbit full review of `8aae675` reports that some fractional CPU
 limits pass `ExecutionLimits` and then fail Docker container creation. The
