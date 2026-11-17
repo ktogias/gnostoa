@@ -806,7 +806,7 @@ class VF0SubjectTests(unittest.TestCase):
             # `ls-tree -l` and `cat-file -s` trust the loose object's header,
             # while `cat-file blob` can emit the full inflated payload.
             raw_object = b"blob 1\0" + b"X" * (1024 * 1024)
-            blob_oid = hashlib.sha1(raw_object).hexdigest()
+            blob_oid = hashlib.sha1(raw_object, usedforsecurity=False).hexdigest()
             loose_object = repo / ".git" / "objects" / blob_oid[:2] / blob_oid[2:]
             loose_object.parent.mkdir(exist_ok=True)
             loose_object.write_bytes(zlib.compress(raw_object))
