@@ -37,6 +37,12 @@ sources:
   - id: github-reviews
     resource: https://docs.github.com/en/rest/pulls/reviews
     title: GitHub Pull Request review endpoints
+  - id: m13-admission
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6612057593
+    title: "The owner's admission of the comparison patch bound, for M13"
+  - id: m13-packet
+    resource: https://github.com/ktogias/gnostoa/issues/389#issuecomment-6606110648
+    title: "The patch bound's admission packet: the defect, its characterization and the smallest change"
   - id: github-review-comments
     resource: https://docs.github.com/en/rest/pulls/comments
     title: GitHub Pull Request review-comment endpoints
@@ -545,3 +551,28 @@ provider checks and fresh review convergence.
 The first end-to-end semantic dogfood is a naturally occurring eligible
 subsequent PR after this slice is integrated. This implementation must not
 self-certify its own semantic value.
+
+## Amendments
+
+### A comparison file's patch is bounded by the response budget (#389)
+
+This text amends the version on `main` at `7cb731af` (30,064 bytes, SHA-256
+`148d556666504b23724a9af6a16d6793d8e5d6ce2d00c5caf25ee6854c6309fb`), on the owner's admission of the
+M13 collector correction (source `m13-admission`, prepared in `m13-packet`).
+
+- **The defect:** L1 bounded a comparison file's `patch` with the 65,536-byte bound of
+  comments and messages. GitHub's comparison returns a longer patch whole, inside a response
+  the client admits; L1 cut it and marked it truncated, merge evidence then refused its added
+  lines, and M13 read PARTIAL. On #478, one test file's patch is 82,568 bytes, with 458 added
+  lines.
+- **The bound now:** a patch is bounded by the response budget, 4,194,304 bytes, which already
+  bounds the comparison that carries it, so the new bound adds no read and no budget. The
+  issue comment, review comment, pull-request body and commit message keep 65,536 bytes.
+- **Unchanged:** the response budget, the 300-file cap, the exact base-to-head comparison, the
+  check that a patch's added lines equal its `additions`, M13's suppression budgets, and the
+  refusal of absent, null, truncated or malformed evidence. A comparison the client refuses as
+  over the budget fails the whole collection, since L1 reads it first for the merge base.
+- **Verification:** `tests/test_merge_evidence_suppressions.py` keeps a patch past 65,536 bytes
+  whole and reads it COMPLETE, and that test failed before the change. Its long-patch cases are
+  re-pinned past the budget: such a patch is still cut and marked. The over-budget refusal, a
+  long patch with a wrong count, and a commit message's 65,536-byte bound still hold.

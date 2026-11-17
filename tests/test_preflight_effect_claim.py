@@ -13,17 +13,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
 from tools.capsule import compiler, effect_claim
 from tools.capsule.authority import (
     BASE_REFERENCE_QUALIFICATION,
     PreflightAuthority,
 )
 from tools.experiment.evidence import canonical_json_bytes
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 
 class FreshClaimIntegrationTests(ConsumptionFixture):
@@ -34,7 +30,7 @@ class FreshClaimIntegrationTests(ConsumptionFixture):
         candidate = observed.preflight_candidate_sha256
         self.assertIsNotNone(candidate)
         assert candidate is not None
-        first_authority = self.authority(candidate)
+        first_authority = self.consumption_authority(candidate)
         second_authority = PreflightAuthority(
             id="auth-197-second",
             experiment_id="E1",
@@ -89,7 +85,7 @@ class FreshClaimIntegrationTests(ConsumptionFixture):
             ),
         ):
             authorised = self.prepare(
-                authority=self.authority(candidate), receipt=receipt
+                authority=self.consumption_authority(candidate), receipt=receipt
             )
 
         self.assertTrue(authorised.task("T1").qualification_reused)

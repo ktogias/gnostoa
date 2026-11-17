@@ -1,0 +1,64 @@
+# Untrusted entry point for the mention reviewer (Decision 0096).
+#
+# Both admitted events run this workflow from the default branch. The two review
+# events, which resolved it from the Pull Request branch and so let a candidate edit
+# it, were withdrawn (owner decision on #339, Decision 0096 rule 13). Nothing here is
+# relied on even so.
+#
+# As committed it references no scopes and no secrets, and computes nothing: it relays
+# the event file GitHub wrote for the run, unchanged (Decision 0096 rules 2-3, amended
+# by #356). That describes this file, not a credential boundary: a candidate can edit
+# it to read any repository secret, as it can any workflow on any branch. The boundary
+# is the credential's own scoping (Decision 0096, "What the relay does not
+# establish"). What this design does guarantee is that nothing relayed here is
+# believed: the privileged reviewer derives the event's kind, ids and request digest
+# in protected code, re-reads the named object from the provider, and decides from
+# the provider's answer alone.
+name: Claude mention trigger
+
+on:
+  issue_comment:
+    types: [created]
+  issues:
+    types: [opened]
+
+# Empty, not omitted: an omitted block inherits the repository default, which is not
+# necessarily empty.
+permissions: {}
+
+jobs:
+  record:
+    # An efficiency filter, not a security control. It keeps ordinary comments -- the
+    # review bots alone post dozens per Pull Request -- from starting a privileged
+    # run at all: a skipped job concludes as `skipped`, and the reviewer only runs on
+    # `success`.
+    #
+    # It decides nothing that matters: the privileged workflow re-establishes the
+    # mention and the author's association from the provider and refuses when they do
+    # not hold.
+    if: >-
+      (github.event_name == 'issue_comment'
+        && contains(github.event.comment.body, '@claude')
+        && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                    github.event.comment.author_association))
+      || (github.event_name == 'issues'
+        && (contains(github.event.issue.body, '@claude')
+            || contains(github.event.issue.title, '@claude'))
+        && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                    github.event.issue.author_association))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      # The one step. No script, no checkout and no environment, so no rule of
+      # admission lives in this file: the event kind, the ids and the digest of the
+      # request GitHub delivered are derived by the GitHub adapter in the privileged
+      # job (`delivered_pointer`), which composes the text exactly as it composes its
+      # re-read. A forged or altered event can only refuse there, never admit.
+      - name: Relay the event GitHub delivered
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: claude-mention-event
+          path: ${{ github.event_path }}
+          if-no-files-found: error
+          retention-days: 1

@@ -23,13 +23,9 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
 from tools.capsule import authority as authority_module
 from tools.capsule import compiler, qualification, stages
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 
 class SameWorkspaceConcurrencyTests(ConsumptionFixture):
@@ -69,7 +65,7 @@ class SameWorkspaceConcurrencyTests(ConsumptionFixture):
             "qualify_subjects",
             side_effect=qualify_then_let_the_other_caller_run,
         ):
-            winner = self.prepare(authority=self.authority(candidate))
+            winner = self.prepare(authority=self.consumption_authority(candidate))
 
         self.assertEqual(
             effects, ["winner"], "the losing caller must never open a second effect"

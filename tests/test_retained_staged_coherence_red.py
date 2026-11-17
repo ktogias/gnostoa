@@ -28,12 +28,9 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 
 def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:
@@ -94,7 +91,7 @@ class StagedSubstitutionDuringPublicationTests(ConsumptionFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         before = (self.workspace / "experiment-state.json").read_text()
         effects: list[str] = []
         substituted: list[str] = []
@@ -108,8 +105,8 @@ class StagedSubstitutionDuringPublicationTests(ConsumptionFixture):
             assert isinstance(bound, dict)
             return _receipt(task_id, dict(bound))
 
-        real_digest = retained_commit._staged_manifest_digest
-        real_write = retained_commit._write_atomic
+        real_digest = _original(retained_commit, "_staged_manifest_digest")
+        real_write = _original(retained_commit, "_write_atomic")
 
         def substitute_then_digest(root: Path, transaction_id: str) -> Any:
             # The publication has read its members from the directory it opened and

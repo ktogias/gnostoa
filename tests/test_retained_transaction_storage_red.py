@@ -36,12 +36,9 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 
 def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:
@@ -91,7 +88,7 @@ class StorageFixture(ConsumptionFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         with self.patched_effect(effects):
             with mock.patch.object(
                 retained_commit,
@@ -128,7 +125,7 @@ class ShortWriteTests(StorageFixture):
             return real_write(descriptor, bytes(data)[: max(1, len(data) // 4)])
 
         with mock.patch("os.write", side_effect=short_write):
-            retained_commit._write_atomic(target, payload)
+            _original(retained_commit, "_write_atomic")(target, payload)
 
         self.assertEqual(
             target.read_bytes(),
@@ -267,7 +264,7 @@ class WaiterRecoversOwnerDeathTests(StorageFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
 
         owner_in_effect = threading.Event()
         waiter_observed_owner = threading.Event()
@@ -278,7 +275,7 @@ class WaiterRecoversOwnerDeathTests(StorageFixture):
         threads: dict[str, threading.Thread] = {}
 
         real_wait_for_owner = retained_commit.wait_for_owner
-        real_write = retained_commit._write_atomic
+        real_write = _original(retained_commit, "_write_atomic")
 
         def role_of() -> str:
             return roles.get(threading.get_ident(), "unattributed")

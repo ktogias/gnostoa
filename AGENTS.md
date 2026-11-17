@@ -44,17 +44,43 @@ Start with `README.md`. Load only the route required by the task.
 - When agent reviews are supplied for Gnostoa-self work, whether the owner
   forwards them or we commission them, follow
   [supplied-agent review capture](knowledge/runbooks/deliver-bounded-self-hosted-slice.md#supplied-agent-reviews).
+- Agent operating lessons for Gnostoa-self work (the supervisor rulebook): start
+  at [`knowledge/assessments/supervisor-rulebook-index.md`](knowledge/assessments/supervisor-rulebook-index.md)
+  and load only the theme file the task needs. It is a draft digest; where it
+  differs from a linked record, the record wins, except for the review
+  corrections its index lists.
 - Gnostoa version-bound source-and-OCI release series: after the ordinary
   self-hosted route, read
   `knowledge/runbooks/publish-version-bound-source-and-oci-release.md`.
 - Anonymous examples: use only generic vocabulary and never treat examples as
   approved project facts.
 
+- Opening a PR, pushing, requesting reviews, merging, or any agent identity,
+  credential or ruleset question for Gnostoa-self work: read
+  [`knowledge/runbooks/operate-the-merge-gate.md`](knowledge/runbooks/operate-the-merge-gate.md).
+  Agents act only as the App `gnostoa-agent` and the machine user
+  `gnostoa-agent-user`, never as the owner. A PR is merged only after the owner
+  has approved its exact head in GitHub, except through break glass, which only
+  the owner uses; until Phase 1b, the App checks that the approval's `commit_id`
+  is that head. The App then merges it with `--match-head-commit`, never with
+  `--admin`.
+
 Before creating or materially revising a Gnostoa-self Issue, Decision or PR, and
 before new code or implementation, apply **Prior-art and reuse checkpoint** in
 `knowledge/runbooks/deliver-bounded-self-hosted-slice.md`. Reuse applicable
 research; record alternatives, intended-use license compatibility and the
 remaining need before choosing custom work.
+
+Apply the **Architecture-inheritance entrance gate** in
+[the delivery runbook](knowledge/runbooks/deliver-bounded-self-hosted-slice.md#architecture-inheritance-entrance-gate)
+before the first semantic production mutation of any Gnostoa-self implementation
+slice. The active Work Item or Change Request carries an exact-base-bound lineage
+table that disposes every material responsibility against its existing owner. The
+dispositions are consume, extend, adapt, factor, supersede and new-residual.
+Without the table, implementation stops; a passing test suite does not waive it.
+Owner gates reach #14 and #15 before they reach source. So before relying on
+orientation, and before writing to either thread, read every #14 and #15 entry
+posted since the last one you read.
 
 Before changing normative behavior, read
 `guidance/guardrails/non-negotiable.md` and update
@@ -313,7 +339,7 @@ below only as an explicit restricted-environment or parity fallback, and state
 why the container route was not used:
 
 ```bash
-python -m unittest discover -s tests -v
+python -m tools.test_suite
 python -m tools.validate_bundle --profile guidance/profile.yaml --bundle guidance
 python -m tools.validate_bundle --profile knowledge/profile.yaml --bundle knowledge
 python -m tools.check_guardrails

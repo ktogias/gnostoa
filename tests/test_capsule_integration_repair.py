@@ -11,15 +11,11 @@ from __future__ import annotations
 import shutil
 import subprocess
 import unittest
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
-try:
-    # unittest discovery puts tests/ itself on sys.path, and the repository's own
-    # self-check runs that way against an installed artifact where `tests` is not
-    # an importable package.
-    from test_experiment_capsule import CapsuleFixture, git
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_experiment_capsule import CapsuleFixture, git
+from tests.experiment_capsule_support import CapsuleFixture, git
 from tools.capsule import compiler
 from tools.capsule.adapters import get as get_adapter
 from tools.capsule.spec import SpecError, load_spec
@@ -132,7 +128,7 @@ class OracleStagingRuleTests(unittest.TestCase):
 class OracleStagingCompilerTests(CapsuleFixture):
     """Defect 1, compiler level: staging preserves bytes and binds identity."""
 
-    def _spec_with_oracle_named(self, oracle_name: str) -> tuple[dict, Path]:
+    def _spec_with_oracle_named(self, oracle_name: str) -> tuple[dict[str, Any], Path]:
         repo = self.make_repo(
             "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
         )
@@ -168,8 +164,11 @@ class OracleStagingCompilerTests(CapsuleFixture):
         result = compiler.prepare(
             load_spec(self.write_spec(spec)), self.workspace, offline=True
         )
-        identity = result.task("T1").harness.identity
-        staged = result.task("T1").harness.invocation.argv
+        harness = result.task("T1").harness
+        if harness is None:
+            self.fail("harness must be set")
+        identity = harness.identity
+        staged = harness.invocation.argv
         self.assertTrue(
             any(arg.endswith(".py") and "oracle" in arg for arg in staged),
             "the staged oracle name must appear in the qualification invocation",
@@ -205,7 +204,9 @@ class OracleStagingCompilerTests(CapsuleFixture):
 class OracleStagingOccupancyTests(CapsuleFixture):
     """The reserved staging path is never followed, replaced or copied through."""
 
-    def _spec_with_occupant(self, make_occupant) -> dict:
+    def _spec_with_occupant(
+        self, make_occupant: Callable[[Path, str], None]
+    ) -> dict[str, Any]:
         repo = self.make_repo(
             "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
         )
@@ -305,6 +306,8 @@ class OracleStagingOciTests(CapsuleFixture):
         )
         receipt = result.task("T1").qualification
         self.assertIsNotNone(receipt)
+        if receipt is None:
+            self.fail("the task must hold a qualification receipt")
         # The whole point: this must be a real behavioural classification, not the
         # INFRASTRUCTURE collection failure the original basename produced.
         self.assertNotEqual(receipt.base.classification, "INFRASTRUCTURE")
@@ -318,7 +321,7 @@ class RelayImageBindingTests(CapsuleFixture):
 
     def _restricted_spec(
         self, repo: Path, base: str, ref: str, **runtime: object
-    ) -> dict:
+    ) -> dict[str, Any]:
         runtime_block: dict[str, object] = {"image": IMAGE_A}
         runtime_block.update(runtime)
         spec = self.base_spec(repo, base, ref, runtime=runtime_block)
@@ -351,6 +354,8 @@ class RelayImageBindingTests(CapsuleFixture):
             load_spec(self.write_spec(spec)), self.workspace, offline=True
         )
         profile = result.task("T1").execution_profile
+        if profile is None:
+            self.fail("profile must be set")
         self.assertEqual(profile["runtime"]["image"], IMAGE_A)
         self.assertEqual(profile["runtime"]["relay_image"], RELAY_DIGEST)
         codes = {b["code"] for b in result.blockers}
@@ -362,8 +367,11 @@ class RelayImageBindingTests(CapsuleFixture):
         result = compiler.prepare(
             load_spec(self.write_spec(spec)), self.workspace, offline=True
         )
+        profile = result.task("T1").execution_profile
+        if profile is None:
+            self.fail("profile must be set")
         self.assertEqual(
-            result.task("T1").execution_profile["runtime"]["relay_image"],
+            profile["runtime"]["relay_image"],
             RELAY_PINNED,
         )
 
@@ -381,8 +389,9 @@ class RelayImageBindingTests(CapsuleFixture):
         spec = self._restricted_spec(
             repo, base, ref, relay_image="registry/relay:latest"
         )
+        written = self.write_spec(spec)
         with self.assertRaises(SpecError):
-            load_spec(self.write_spec(spec))
+            load_spec(written)
 
     def test_relay_image_is_bound_into_the_frozen_identity(self) -> None:
         repo, base, ref = self._subject()
@@ -421,6 +430,8 @@ class RelayImageBindingTests(CapsuleFixture):
         codes = {b["code"] for b in result.blockers}
         self.assertIn("relay-image-requires-restricted-execution", codes)
         profile = result.task("T1").execution_profile
+        if profile is None:
+            self.fail("profile must be set")
         self.assertNotIn("relay_image", profile["runtime"])
 
     def test_relay_reaches_the_lock_task_payload(self) -> None:
@@ -432,11 +443,15 @@ class RelayImageBindingTests(CapsuleFixture):
         )
         # The lock binds exactly this payload for each task.
         payload = result.task("T1").as_json()
-        self.assertEqual(
-            payload["execution_profile"]["runtime"]["relay_image"], RELAY_DIGEST
-        )
+        execution = payload["execution_profile"]
+        qualification = payload["qualification_profiles"]
+        if not isinstance(execution, dict) or not isinstance(qualification, dict):
+            self.fail(
+                "the lock's execution and qualification profiles must be mappings"
+            )
+        self.assertEqual(execution["runtime"]["relay_image"], RELAY_DIGEST)
         # The qualification profiles never carry one.
-        for profile in payload["qualification_profiles"].values():
+        for profile in qualification.values():
             self.assertNotIn("relay_image", profile["runtime"])
 
     def test_relay_is_not_required_when_execution_network_is_none(self) -> None:
@@ -448,6 +463,8 @@ class RelayImageBindingTests(CapsuleFixture):
             load_spec(self.write_spec(spec)), self.workspace, offline=True
         )
         profile = result.task("T1").execution_profile
+        if profile is None:
+            self.fail("profile must be set")
         self.assertNotIn("relay_image", profile["runtime"])
 
 
@@ -484,6 +501,8 @@ class QualificationNetworkIsolationTests(CapsuleFixture):
                 self.assertEqual(profile["network"], {"mode": "none", "allow": []})
                 self.assertNotIn("relay_image", profile["runtime"])
         # The experimental envelope is untouched.
+        if task.execution_profile is None:
+            self.fail("task.execution_profile must be set")
         self.assertEqual(
             task.execution_profile["network"],
             {"mode": "restricted", "allow": ["provider.example:443"]},

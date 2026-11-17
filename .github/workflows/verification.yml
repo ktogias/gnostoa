@@ -140,20 +140,10 @@ jobs:
       - name: Run project style gate
         if: matrix.python-version == '3.12'
         run: ./ci/style --check
-      - name: Type-check experiment and review trust domains
+      # The scope pyproject.toml's [tool.mypy] declares, never a listed subset (#221).
+      - name: Type-check the declared strict scope
         if: matrix.python-version == '3.12'
-        run: |
-          python -m mypy \
-            tools/experiment_runner.py \
-            tools/experiment_handoff.py \
-            tools/experiment_packager.py \
-            tools/experiment \
-            tools/capsule \
-            tools/review_adapter_file.py \
-            tools/review_check.py \
-            tools/review_evaluate.py \
-            tools/review_model.py \
-            tools/review_policy.py
+        run: python -m mypy
       - name: Verify frozen-handoff package golden digest
         run: |
           python tests/test_experiment_packager.py \
@@ -166,38 +156,13 @@ jobs:
           python ci/release_smoke.py \
             --output-dir "${RUNNER_TEMP}/gnostoa-distributions"
 
-  regression:
-    name: regression
-    needs: [policy, security-fast, fast, python-compatibility, extended-route, extended]
-    if: always()
+  # Decision 0103: the regression suite runs beside extended; the gate named
+  # `regression` below asserts it with every other prerequisite.
+  regression-suite:
+    name: regression-suite
+    needs: [policy]
     runs-on: ubuntu-latest
     steps:
-      - name: Assert successful prerequisites
-        env:
-          POLICY_RESULT: ${{ needs.policy.result }}
-          SECURITY_FAST_RESULT: ${{ needs.security-fast.result }}
-          FAST_RESULT: ${{ needs.fast.result }}
-          PYTHON_COMPATIBILITY_RESULT: ${{ needs.python-compatibility.result }}
-          EXTENDED_ROUTE_RESULT: ${{ needs.extended-route.result }}
-          EXTENDED_DECISION: ${{ needs.extended-route.outputs.decision }}
-          EXTENDED_RESULT: ${{ needs.extended.result }}
-        run: |
-          test "${POLICY_RESULT}" = success
-          test "${SECURITY_FAST_RESULT}" = success
-          test "${FAST_RESULT}" = success
-          test "${PYTHON_COMPATIBILITY_RESULT}" = success
-          test "${EXTENDED_ROUTE_RESULT}" = success
-          case "${EXTENDED_DECISION}" in
-            RUN)
-              test "${EXTENDED_RESULT}" = success
-              ;;
-            NOT_APPLICABLE)
-              test "${EXTENDED_RESULT}" = skipped
-              ;;
-            *)
-              exit 1
-              ;;
-          esac
       # actions/checkout v6.0.2
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -216,9 +181,46 @@ jobs:
             "${GNOSTOA_CI_IMAGE}" \
             -ec './ci/verify regression'
 
+  regression:
+    name: regression
+    needs: [policy, security-fast, fast, python-compatibility, extended-route, extended, regression-suite, smoke]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert successful prerequisites
+        env:
+          POLICY_RESULT: ${{ needs.policy.result }}
+          SECURITY_FAST_RESULT: ${{ needs.security-fast.result }}
+          FAST_RESULT: ${{ needs.fast.result }}
+          PYTHON_COMPATIBILITY_RESULT: ${{ needs.python-compatibility.result }}
+          EXTENDED_ROUTE_RESULT: ${{ needs.extended-route.result }}
+          EXTENDED_DECISION: ${{ needs.extended-route.outputs.decision }}
+          EXTENDED_RESULT: ${{ needs.extended.result }}
+          REGRESSION_SUITE_RESULT: ${{ needs.regression-suite.result }}
+          SMOKE_RESULT: ${{ needs.smoke.result }}
+        run: |
+          test "${POLICY_RESULT}" = success
+          test "${SECURITY_FAST_RESULT}" = success
+          test "${FAST_RESULT}" = success
+          test "${PYTHON_COMPATIBILITY_RESULT}" = success
+          test "${REGRESSION_SUITE_RESULT}" = success
+          test "${SMOKE_RESULT}" = success
+          test "${EXTENDED_ROUTE_RESULT}" = success
+          case "${EXTENDED_DECISION}" in
+            RUN)
+              test "${EXTENDED_RESULT}" = success
+              ;;
+            NOT_APPLICABLE)
+              test "${EXTENDED_RESULT}" = skipped
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
+
   smoke:
     name: smoke
-    needs: regression
+    needs: [policy]
     runs-on: ubuntu-latest
     steps:
       # actions/checkout v6.0.2
@@ -305,6 +307,49 @@ jobs:
           test "$(wc -l < "${sb2_paths_file}")" -eq 19
           test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 19
 
+          # knowledge assurance-check (#408): the reducer and the vocabulary it
+          # imports join the supported entrypoints' source (Decision 0035).
+          cat >> "${sb2_paths_file}" <<'EOF'
+          tools/analyzer_readback.py
+          tools/assurance_completeness.py
+          EOF
+          test "$(wc -l < "${sb2_paths_file}")" -eq 21
+          test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 21
+
+          # knowledge merge-admission (#407, slice 1b.2): the verdict and the
+          # command-line boundary it shares with assurance-check.
+          cat >> "${sb2_paths_file}" <<'EOF'
+          tools/merge_admission.py
+          tools/verdict_cli.py
+          EOF
+          test "$(wc -l < "${sb2_paths_file}")" -eq 23
+          test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 23
+
+          # knowledge merge-evidence (#407, slice 1b.3a): the GitHub evidence
+          # adapter and the snapshot validator it imports.
+          cat >> "${sb2_paths_file}" <<'EOF'
+          tools/merge_evidence_github.py
+          tools/review_reconcile.py
+          EOF
+          test "$(wc -l < "${sb2_paths_file}")" -eq 25
+          test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 25
+
+          # knowledge merge-evidence's SonarCloud gate (#407, slice 1b.3c): the
+          # pure association helper it imports (Q-a, #424).
+          cat >> "${sb2_paths_file}" <<'EOF'
+          tools/sonarcloud_scope.py
+          EOF
+          test "$(wc -l < "${sb2_paths_file}")" -eq 26
+          test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 26
+
+          # knowledge merge-evidence's frozen-archive read (#389, Decision 0134):
+          # the bounded archive-member reader it shares with the tool acquisition.
+          cat >> "${sb2_paths_file}" <<'EOF'
+          tools/archive_members.py
+          EOF
+          test "$(wc -l < "${sb2_paths_file}")" -eq 27
+          test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 27
+
           source_sb2_manifest="${sb2_root}/source.sha256"
           runtime_sb2_manifest="${sb2_root}/runtime.sha256"
           vendored_sb2_manifest="${sb2_root}/vendored.sha256"
@@ -355,7 +400,7 @@ jobs:
           printf 'public_surface.source=%s\n' "${source_digest}"
           printf 'public_surface.runtime=%s\n' "${runtime_digest}"
           printf 'public_surface.vendored=%s\n' "${vendored_digest}"
-          printf 'sb2.membership=19\n'
+          printf 'sb2.membership=27\n'
           printf 'sb2.source.begin\n'
           cat "${source_sb2_manifest}"
           printf 'sb2.source.end\n'
