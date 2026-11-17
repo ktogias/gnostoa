@@ -1306,6 +1306,26 @@ class VF0SubjectTests(unittest.TestCase):
 
             self.assertTrue(replacement_attempted)
 
+    def test_subject_file_chmod_failure_is_bounded_rejection(self) -> None:
+        original_chmod = Path.chmod
+
+        def failing_file_chmod(path: Path, mode: int, **kwargs: object) -> None:
+            if path.is_file():
+                raise OSError("injected chmod failure")
+            original_chmod(path, mode, **kwargs)  # type: ignore[arg-type]
+
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            with mock.patch.object(Path, "chmod", failing_file_chmod):
+                with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_DESTINATION"):
+                    execute(
+                        repo,
+                        subject,
+                        [_evidence("print('x')\n", "tests/new_evidence.py")],
+                        ["/bin/true"],
+                        _DirectTestBackend(),
+                    )
+
     def test_restrictive_umask_normalizes_materialization_directory_modes(self) -> None:
         class ModeBackend:
             modes: dict[str, int]

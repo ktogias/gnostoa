@@ -742,7 +742,10 @@ def _materialize_subject(
     for name, mode, oid, size in planned:
         destination = target / name
         payload = _write_git_blob(root, oid, destination, size)
-        destination.chmod(0o755 if mode == "100755" else 0o644)
+        try:
+            destination.chmod(0o755 if mode == "100755" else 0o644)
+        except OSError as exc:
+            raise ExecutionRejected("SUBJECT_DESTINATION") from exc
         expected[name] = _MaterialFile(mode=mode, sha256=_sha256(payload), size=size)
     return expected
 
