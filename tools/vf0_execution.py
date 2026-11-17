@@ -25,7 +25,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path, PurePosixPath
-from typing import Protocol, cast
+from typing import IO, Protocol, cast
 
 _GIT_SHA1_RE = re.compile(r"[0-9a-f]{40}")
 _DOCKER_ID_RE = re.compile(r"[0-9a-f]{64}")
@@ -1062,6 +1062,79 @@ def _wait_for_exit_without_reap(
         time.sleep(min(0.01, remaining))
 
 
+def _capture_environment(
+    environment_overrides: dict[str, str] | None,
+) -> dict[str, str]:
+    if environment_overrides is None:
+        return _CLEAN_ENV
+    _need(
+        type(environment_overrides) is dict
+        and set(environment_overrides) == {_OCI_COMPLETION_TOKEN_ENV},
+        "BACKEND_ENVIRONMENT",
+    )
+    completion_token = environment_overrides[_OCI_COMPLETION_TOKEN_ENV]
+    _need(
+        type(completion_token) is str
+        and re.fullmatch(r"[0-9a-f]{64}", completion_token) is not None,
+        "BACKEND_ENVIRONMENT",
+    )
+    return {
+        **_CLEAN_ENV,
+        _OCI_COMPLETION_TOKEN_ENV: completion_token,  # nosemgrep: Semgrep_codacy.yaml.security.hard-coded-tokens -- generated per-run nonce, not a literal
+    }
+
+
+def _read_startup_sentinel(
+    selector: selectors.BaseSelector,
+    stream: IO[bytes],
+    sentinel: bytes,
+    deadline: float,
+) -> None:
+    startup = bytearray()
+    while len(startup) < len(sentinel):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ExecutionRejected("BACKEND_STARTUP_HANDSHAKE")
+        if not selector.select(timeout=min(0.05, remaining)):
+            continue
+        try:
+            chunk = os.read(stream.fileno(), len(sentinel) - len(startup))
+        except OSError as exc:
+            raise ExecutionRejected("BACKEND_STARTUP_HANDSHAKE") from exc
+        if not chunk:
+            raise ExecutionRejected("BACKEND_STARTUP_HANDSHAKE")
+        startup.extend(chunk)
+        if not sentinel.startswith(startup):
+            raise ExecutionRejected("BACKEND_STARTUP_HANDSHAKE")
+
+
+def _drain_streams(
+    selector: selectors.BaseSelector,
+    stdout: bytearray,
+    stderr: bytearray,
+    capture_output_bytes: int,
+    deadline: float,
+) -> tuple[str, int]:
+    """Read both streams until EOF, the deadline or the output limit."""
+    observed = 0
+    while selector.get_map():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return "timeout", observed
+        for key, _ in selector.select(timeout=min(0.05, remaining)):
+            chunk = os.read(key.fd, 8192)
+            if not chunk:
+                selector.unregister(key.fileobj)
+                continue
+            observed += len(chunk)
+            room = capture_output_bytes - len(stdout) - len(stderr)
+            if room > 0:
+                key.data.extend(chunk[:room])
+            if len(chunk) > room:
+                return "output_limit", observed
+    return "completed", observed
+
+
 def _capture_process(
     argv: Sequence[str],
     *,
@@ -1080,23 +1153,7 @@ def _capture_process(
     )
     if startup_sentinel is not None:
         _need(1 <= len(startup_sentinel) <= 256, "STARTUP_SENTINEL_BOUND")
-    process_environment = _CLEAN_ENV
-    if environment_overrides is not None:
-        _need(
-            type(environment_overrides) is dict
-            and set(environment_overrides) == {_OCI_COMPLETION_TOKEN_ENV},
-            "BACKEND_ENVIRONMENT",
-        )
-        completion_token = environment_overrides[_OCI_COMPLETION_TOKEN_ENV]
-        _need(
-            type(completion_token) is str
-            and re.fullmatch(r"[0-9a-f]{64}", completion_token) is not None,
-            "BACKEND_ENVIRONMENT",
-        )
-        process_environment = {
-            **_CLEAN_ENV,
-            _OCI_COMPLETION_TOKEN_ENV: completion_token,  # nosemgrep: Semgrep_codacy.yaml.security.hard-coded-tokens -- generated per-run nonce, not a literal
-        }
+    process_environment = _capture_environment(environment_overrides)
     capture_output_bytes = limits.output_bytes + output_headroom_bytes
     try:
         # Intentional private execution primitive: validated list argv, no shell, scrubbed env.
@@ -1116,8 +1173,8 @@ def _capture_process(
     selector: selectors.BaseSelector | None = None
     stdout = bytearray()
     stderr = bytearray()
-    observed = 0
     termination = "completed"
+    observed = 0
     deadline = time.monotonic() + limits.timeout_seconds
     try:
         try:
@@ -1126,48 +1183,15 @@ def _capture_process(
             selector = selectors.DefaultSelector()
             if startup_sentinel is not None:
                 selector.register(process_stderr, selectors.EVENT_READ)
-                startup = bytearray()
-                while len(startup) < len(startup_sentinel):
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise ExecutionRejected("BACKEND_STARTUP_HANDSHAKE")
-                    events = selector.select(timeout=min(0.05, remaining))
-                    if not events:
-                        continue
-                    try:
-                        chunk = os.read(
-                            process_stderr.fileno(),
-                            len(startup_sentinel) - len(startup),
-                        )
-                    except OSError as exc:
-                        raise ExecutionRejected("BACKEND_STARTUP_HANDSHAKE") from exc
-                    if not chunk:
-                        raise ExecutionRejected("BACKEND_STARTUP_HANDSHAKE")
-                    startup.extend(chunk)
-                    if not startup_sentinel.startswith(startup):
-                        raise ExecutionRejected("BACKEND_STARTUP_HANDSHAKE")
+                _read_startup_sentinel(
+                    selector, process_stderr, startup_sentinel, deadline
+                )
                 selector.unregister(process_stderr)
             selector.register(process_stdout, selectors.EVENT_READ, stdout)
             selector.register(process_stderr, selectors.EVENT_READ, stderr)
-            while selector.get_map():
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    termination = "timeout"
-                    break
-                for key, _ in selector.select(timeout=min(0.05, remaining)):
-                    chunk = os.read(key.fd, 8192)
-                    if not chunk:
-                        selector.unregister(key.fileobj)
-                        continue
-                    observed += len(chunk)
-                    room = capture_output_bytes - len(stdout) - len(stderr)
-                    if room > 0:
-                        key.data.extend(chunk[:room])
-                    if len(chunk) > room:
-                        termination = "output_limit"
-                        break
-                if termination != "completed":
-                    break
+            termination, observed = _drain_streams(
+                selector, stdout, stderr, capture_output_bytes, deadline
+            )
             if termination == "completed" and not _wait_for_exit_without_reap(
                 process, deadline
             ):
