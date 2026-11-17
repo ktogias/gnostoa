@@ -454,7 +454,7 @@ def _trusted_git_argv(repo: Path, *args: str) -> list[str]:
 def _trusted_git(repo: Path, *args: str) -> bytes:
     try:
         # Fixed /usr/bin/git, list argv, scrubbed env, no shell: intentional audit boundary.
-        result = subprocess.run(  # nosec B603  # nosemgrep
+        result = subprocess.run(  # nosec B603 -- fixed git, list argv, no shell  # nosemgrep -- same: fixed git, list argv, no shell
             _trusted_git_argv(repo, *args),
             check=False,
             stdin=subprocess.DEVNULL,
@@ -475,7 +475,7 @@ def _trusted_git_tree_entries(repo: Path, commit: str) -> list[bytes]:
     try:
         with open(os.devnull, "wb") as stderr:
             # Fixed /usr/bin/git, list argv, scrubbed env, no shell: intentional audit boundary.
-            process = subprocess.Popen(  # nosec B603  # nosemgrep
+            process = subprocess.Popen(  # nosec B603 -- fixed git, list argv, no shell  # nosemgrep -- same: fixed git, list argv, no shell
                 _trusted_git_argv(repo, "ls-tree", "-rzl", "--full-tree", commit),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -567,7 +567,7 @@ def _write_git_blob(
             selector: selectors.BaseSelector | None = None
             try:
                 # Fixed /usr/bin/git object read, list argv, scrubbed env, no shell.
-                process = subprocess.Popen(  # nosec B603  # nosemgrep
+                process = subprocess.Popen(  # nosec B603 -- fixed git object read, list argv, no shell  # nosemgrep -- same: fixed git, list argv, no shell
                     _trusted_git_argv(repo, "cat-file", "blob", oid),
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
@@ -1100,7 +1100,7 @@ def _capture_process(
     capture_output_bytes = limits.output_bytes + output_headroom_bytes
     try:
         # Intentional private execution primitive: validated list argv, no shell, scrubbed env.
-        process = subprocess.Popen(  # nosec B603  # nosemgrep
+        process = subprocess.Popen(  # nosec B603 -- validated list argv, no shell, scrubbed env  # nosemgrep -- same: validated list argv, no shell
             list(argv),
             cwd=str(cwd) if cwd is not None else None,
             env=process_environment,
