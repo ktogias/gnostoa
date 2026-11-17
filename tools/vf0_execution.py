@@ -1839,7 +1839,7 @@ def _unwrap_oci_completion(
     exit_code = int(raw_code)
     _need(0 <= exit_code <= 255, "OCI_ATTACH_STATE")
     if capture.termination == "completed":
-        _need(capture.exit_code in {0, exit_code}, "OCI_ATTACH_STATE")
+        _need(capture.exit_code == exit_code, "OCI_ATTACH_STATE")
     else:
         _need(capture.exit_code is None, "OCI_ATTACH_STATE")
     trailer_bytes = len(stderr) - marker_start

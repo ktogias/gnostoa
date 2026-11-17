@@ -3993,6 +3993,18 @@ class VF0DockerBackendTests(unittest.TestCase):
                     )
             self.assertTrue(backend.removed)
 
+    def test_zero_attachment_exit_cannot_stand_for_a_nonzero_wrapper_exit(self) -> None:
+        """The attachment's own status must equal the wrapper trailer's code: a
+        zero attachment exit never vouches for a nonzero wrapper exit (Kilo, #319)."""
+        module = importlib.import_module("tools.vf0_execution")
+        token = "a" * 64
+        for wrapper_exit in (1, 17, 255):
+            with self.subTest(wrapper_exit=wrapper_exit):
+                trailer = self._completed_capture(wrapper_exit)
+                capture = replace(trailer, exit_code=0)
+                with self.assertRaisesRegex(ExecutionRejected, "^OCI_ATTACH_STATE$"):
+                    module._unwrap_oci_completion(capture, token)
+
     def test_unique_final_wrapper_trailer_allows_nonzero_container_exit(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td).resolve()
