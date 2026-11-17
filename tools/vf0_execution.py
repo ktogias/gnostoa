@@ -786,8 +786,161 @@ def _same_snapshot_stat(left: os.stat_result, right: os.stat_result) -> bool:
     )
 
 
+class _SnapshotWalker:
+    """One bounded, descriptor-relative walk of a subject directory."""
+
+    def __init__(
+        self,
+        directory_flags: int,
+        file_flags: int,
+    ) -> None:
+        self.directory_flags = directory_flags
+        self.file_flags = file_flags
+        self.files: dict[str, _MaterialFile] = {}
+        self.directories: dict[str, str] = {}
+        self.total = 0
+        self.observed_entries = 0
+        self.total_path_bytes = 0
+
+    def _entry_path(self, child_name: str, prefix_bytes: int, prefix: str) -> int:
+        """Bound one entry's name and path; return its relative path byte length."""
+        self.observed_entries += 1
+        _need(self.observed_entries <= _MAX_SNAPSHOT_ENTRIES, "SUBJECT_ENTRY_BOUND")
+        _need(
+            type(child_name) is str and child_name not in {"", ".", ".."},
+            "SUBJECT_SNAPSHOT",
+        )
+        _need(str.casefold(child_name) != ".git", "SUBJECT_PATH")
+        try:
+            component_bytes = len(os.fsencode(child_name))
+        except UnicodeError as exc:
+            raise ExecutionRejected("SUBJECT_PATH") from exc
+        relative_bytes = prefix_bytes + (1 if prefix else 0) + component_bytes
+        _need(relative_bytes <= _MAX_SUBJECT_PATH_BYTES, "SUBJECT_PATH_BOUND")
+        self.total_path_bytes += relative_bytes
+        _need(
+            self.total_path_bytes <= _MAX_SNAPSHOT_TOTAL_PATH_BYTES,
+            "SUBJECT_PATH_TOTAL_BOUND",
+        )
+        return relative_bytes
+
+    def _hash_file(self, file_fd: int) -> tuple[str, int]:
+        """Read one open file under the file and total bounds; return digest, size."""
+        digest = hashlib.sha256()
+        file_size = 0
+        while True:
+            chunk = os.read(
+                file_fd,
+                min(_SNAPSHOT_READ_BYTES, _MAX_FILE_BYTES + 1 - file_size),
+            )
+            if not chunk:
+                return digest.hexdigest(), file_size
+            file_size += len(chunk)
+            _need(file_size <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
+            self.total += len(chunk)
+            _need(
+                self.total <= _MAX_SUBJECT_BYTES + _MAX_EVIDENCE_BYTES,
+                "SUBJECT_TOTAL_BOUND",
+            )
+            digest.update(chunk)
+
+    def _record_file(
+        self,
+        directory_fd: int,
+        child_name: str,
+        relative: str,
+        metadata: os.stat_result,
+    ) -> None:
+        """Open, hash and re-check one regular file, then record it."""
+        _need(metadata.st_size <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
+        file_fd = os.open(child_name, self.file_flags, dir_fd=directory_fd)
+        try:
+            opened = os.fstat(file_fd)
+            _need(
+                stat.S_ISREG(opened.st_mode) and _same_snapshot_stat(metadata, opened),
+                "SUBJECT_SNAPSHOT",
+            )
+            sha256, file_size = self._hash_file(file_fd)
+            after = os.fstat(file_fd)
+            current = os.stat(child_name, dir_fd=directory_fd, follow_symlinks=False)
+            _need(
+                file_size == opened.st_size
+                and _same_snapshot_stat(opened, after)
+                and _same_snapshot_stat(opened, current),
+                "SUBJECT_SNAPSHOT",
+            )
+            self.files[relative] = _MaterialFile(
+                mode=_file_mode(opened.st_mode), sha256=sha256, size=file_size
+            )
+        finally:
+            os.close(file_fd)
+
+    def _scan(
+        self, directory_fd: int, prefix: str, depth: int, prefix_bytes: int
+    ) -> list[tuple[str, str, int, int, os.stat_result]]:
+        """Record this directory's files; return its child directories to descend."""
+        children: list[tuple[str, str, int, int, os.stat_result]] = []
+        with os.scandir(directory_fd) as entries:
+            for entry in entries:
+                child_name = entry.name
+                relative_bytes = self._entry_path(child_name, prefix_bytes, prefix)
+                relative = f"{prefix}/{child_name}" if prefix else child_name
+                child_depth = depth + 1
+                _need(child_depth <= _MAX_SNAPSHOT_DEPTH, "SUBJECT_PATH_BOUND")
+                metadata = os.stat(
+                    child_name, dir_fd=directory_fd, follow_symlinks=False
+                )
+                mode = metadata.st_mode
+                _need(not stat.S_ISLNK(mode), "SUBJECT_SYMLINK")
+                if stat.S_ISDIR(mode):
+                    children.append(
+                        (child_name, relative, child_depth, relative_bytes, metadata)
+                    )
+                    continue
+                _need(stat.S_ISREG(mode), "SUBJECT_SPECIAL_FILE")
+                self._record_file(directory_fd, child_name, relative, metadata)
+        return children
+
+    def _descend(
+        self,
+        directory_fd: int,
+        child: tuple[str, str, int, int, os.stat_result],
+    ) -> None:
+        """Open one child directory, walk it and re-check it was not swapped."""
+        child_name, relative, child_depth, relative_bytes, metadata = child
+        child_fd = os.open(child_name, self.directory_flags, dir_fd=directory_fd)
+        try:
+            opened = os.fstat(child_fd)
+            _need(
+                stat.S_ISDIR(opened.st_mode) and _same_snapshot_stat(metadata, opened),
+                "SUBJECT_SNAPSHOT",
+            )
+            self.directories[relative] = _directory_mode(opened.st_mode)
+            self.walk(child_fd, relative, child_depth, relative_bytes)
+            after = os.fstat(child_fd)
+            current = os.stat(child_name, dir_fd=directory_fd, follow_symlinks=False)
+            _need(
+                _same_snapshot_stat(opened, after)
+                and _same_snapshot_stat(opened, current),
+                "SUBJECT_SNAPSHOT",
+            )
+        finally:
+            os.close(child_fd)
+
+    def walk(
+        self, directory_fd: int, prefix: str, depth: int, prefix_bytes: int
+    ) -> None:
+        before_directory = os.fstat(directory_fd)
+        for child in self._scan(directory_fd, prefix, depth, prefix_bytes):
+            self._descend(directory_fd, child)
+        after_directory = os.fstat(directory_fd)
+        _need(
+            _same_snapshot_stat(before_directory, after_directory),
+            "SUBJECT_SNAPSHOT",
+        )
+
+
 def _snapshot(root: Path) -> tuple[dict[str, _MaterialFile], dict[str, str]]:
-    files: dict[str, _MaterialFile] = {}
     directory_flag = getattr(os, "O_DIRECTORY", 0)
     nofollow_flag = getattr(os, "O_NOFOLLOW", 0)
     nonblock_flag = getattr(os, "O_NONBLOCK", 0)
@@ -807,166 +960,12 @@ def _snapshot(root: Path) -> tuple[dict[str, _MaterialFile], dict[str, str]]:
     except OSError as exc:
         raise ExecutionRejected("SUBJECT_SNAPSHOT") from exc
 
+    walker = _SnapshotWalker(directory_flags, file_flags)
     try:
         root_metadata = os.fstat(root_fd)
         _need(stat.S_ISDIR(root_metadata.st_mode), "SUBJECT_SNAPSHOT")
-        directories = {".": _directory_mode(root_metadata.st_mode)}
-        total = 0
-        observed_entries = 0
-        total_path_bytes = 0
-
-        def walk(directory_fd: int, prefix: str, depth: int, prefix_bytes: int) -> None:
-            nonlocal total, observed_entries, total_path_bytes
-            before_directory = os.fstat(directory_fd)
-            child_directories: list[tuple[str, str, int, int, os.stat_result]] = []
-            with os.scandir(directory_fd) as entries:
-                for entry in entries:
-                    observed_entries += 1
-                    _need(
-                        observed_entries <= _MAX_SNAPSHOT_ENTRIES,
-                        "SUBJECT_ENTRY_BOUND",
-                    )
-                    child_name = entry.name
-                    _need(
-                        type(child_name) is str and child_name not in {"", ".", ".."},
-                        "SUBJECT_SNAPSHOT",
-                    )
-                    _need(str.casefold(child_name) != ".git", "SUBJECT_PATH")
-                    try:
-                        component_bytes = len(os.fsencode(child_name))
-                    except UnicodeError as exc:
-                        raise ExecutionRejected("SUBJECT_PATH") from exc
-                    relative_bytes = (
-                        prefix_bytes + (1 if prefix else 0) + component_bytes
-                    )
-                    _need(
-                        relative_bytes <= _MAX_SUBJECT_PATH_BYTES,
-                        "SUBJECT_PATH_BOUND",
-                    )
-                    total_path_bytes += relative_bytes
-                    _need(
-                        total_path_bytes <= _MAX_SNAPSHOT_TOTAL_PATH_BYTES,
-                        "SUBJECT_PATH_TOTAL_BOUND",
-                    )
-                    relative = f"{prefix}/{child_name}" if prefix else child_name
-                    child_depth = depth + 1
-                    _need(child_depth <= _MAX_SNAPSHOT_DEPTH, "SUBJECT_PATH_BOUND")
-                    metadata = os.stat(
-                        child_name,
-                        dir_fd=directory_fd,
-                        follow_symlinks=False,
-                    )
-                    mode = metadata.st_mode
-                    _need(not stat.S_ISLNK(mode), "SUBJECT_SYMLINK")
-
-                    if stat.S_ISDIR(mode):
-                        child_directories.append(
-                            (
-                                child_name,
-                                relative,
-                                child_depth,
-                                relative_bytes,
-                                metadata,
-                            )
-                        )
-                        continue
-
-                    _need(stat.S_ISREG(mode), "SUBJECT_SPECIAL_FILE")
-                    _need(metadata.st_size <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
-                    file_fd = os.open(
-                        child_name,
-                        file_flags,
-                        dir_fd=directory_fd,
-                    )
-                    try:
-                        opened = os.fstat(file_fd)
-                        _need(
-                            stat.S_ISREG(opened.st_mode)
-                            and _same_snapshot_stat(metadata, opened),
-                            "SUBJECT_SNAPSHOT",
-                        )
-                        digest = hashlib.sha256()
-                        file_size = 0
-                        while True:
-                            chunk = os.read(
-                                file_fd,
-                                min(
-                                    _SNAPSHOT_READ_BYTES,
-                                    _MAX_FILE_BYTES + 1 - file_size,
-                                ),
-                            )
-                            if not chunk:
-                                break
-                            file_size += len(chunk)
-                            _need(file_size <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
-                            total += len(chunk)
-                            _need(
-                                total <= _MAX_SUBJECT_BYTES + _MAX_EVIDENCE_BYTES,
-                                "SUBJECT_TOTAL_BOUND",
-                            )
-                            digest.update(chunk)
-                        after = os.fstat(file_fd)
-                        current = os.stat(
-                            child_name,
-                            dir_fd=directory_fd,
-                            follow_symlinks=False,
-                        )
-                        _need(
-                            file_size == opened.st_size
-                            and _same_snapshot_stat(opened, after)
-                            and _same_snapshot_stat(opened, current),
-                            "SUBJECT_SNAPSHOT",
-                        )
-                        files[relative] = _MaterialFile(
-                            mode=_file_mode(opened.st_mode),
-                            sha256=digest.hexdigest(),
-                            size=file_size,
-                        )
-                    finally:
-                        os.close(file_fd)
-
-            for (
-                child_name,
-                relative,
-                child_depth,
-                relative_bytes,
-                metadata,
-            ) in child_directories:
-                child_fd = os.open(
-                    child_name,
-                    directory_flags,
-                    dir_fd=directory_fd,
-                )
-                try:
-                    opened = os.fstat(child_fd)
-                    _need(
-                        stat.S_ISDIR(opened.st_mode)
-                        and _same_snapshot_stat(metadata, opened),
-                        "SUBJECT_SNAPSHOT",
-                    )
-                    directories[relative] = _directory_mode(opened.st_mode)
-                    walk(child_fd, relative, child_depth, relative_bytes)
-                    after = os.fstat(child_fd)
-                    current = os.stat(
-                        child_name,
-                        dir_fd=directory_fd,
-                        follow_symlinks=False,
-                    )
-                    _need(
-                        _same_snapshot_stat(opened, after)
-                        and _same_snapshot_stat(opened, current),
-                        "SUBJECT_SNAPSHOT",
-                    )
-                finally:
-                    os.close(child_fd)
-
-            after_directory = os.fstat(directory_fd)
-            _need(
-                _same_snapshot_stat(before_directory, after_directory),
-                "SUBJECT_SNAPSHOT",
-            )
-
-        walk(root_fd, "", 0, 0)
+        walker.directories["."] = _directory_mode(root_metadata.st_mode)
+        walker.walk(root_fd, "", 0, 0)
         current_root = os.stat(root, follow_symlinks=False)
         _need(_same_snapshot_stat(root_metadata, current_root), "SUBJECT_SNAPSHOT")
     except (OSError, NotImplementedError, TypeError) as exc:
@@ -976,7 +975,7 @@ def _snapshot(root: Path) -> tuple[dict[str, _MaterialFile], dict[str, str]]:
             os.close(root_fd)
         except OSError as exc:
             raise ExecutionRejected("SUBJECT_SNAPSHOT") from exc
-    return files, directories
+    return walker.files, walker.directories
 
 
 def _manifest_digest(
