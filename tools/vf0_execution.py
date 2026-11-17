@@ -1822,77 +1822,86 @@ class DockerBackend:
                     )
 
 
-def _unwrap_oci_completion(
-    capture: UntrustedCapture, completion_token: str, *, output_bytes: int | None = None
-) -> UntrustedCapture:
-    """Normalize framing without promoting an incomplete attachment."""
+def _incomplete_marker_start(stderr: bytes, expected_prefix: bytes) -> int | None:
+    """Where an incomplete transport trailer starts in `stderr`, if one does."""
+    marker_count = stderr.count(_OCI_EXIT_SENTINEL_PREFIX)
+    if marker_count == 1:
+        start = stderr.find(_OCI_EXIT_SENTINEL_PREFIX)
+        fragment = stderr[start:]
+        if expected_prefix.startswith(fragment):
+            return start
+        if fragment.startswith(expected_prefix):
+            code_fragment = fragment[len(expected_prefix) :]
+            if (
+                1 <= len(code_fragment) <= 3
+                and code_fragment.isdigit()
+                and int(code_fragment) <= 255
+            ):
+                return start
+        return None
+    if marker_count == 0:
+        for length in range(len(_OCI_EXIT_SENTINEL_PREFIX) - 1, 0, -1):
+            if stderr.endswith(_OCI_EXIT_SENTINEL_PREFIX[:length]):
+                return len(stderr) - length
+    return None
+
+
+def _elide_overflowing_trailer(
+    capture: UntrustedCapture, expected_prefix: bytes, output_bytes: int
+) -> UntrustedCapture | None:
+    """Elide an incomplete trailer when child bytes alone already prove overflow."""
+    _need(1 <= output_bytes <= 4 * 1024 * 1024, "OUTPUT_BOUND")
+    stderr = capture.stderr
+    incomplete_start = _incomplete_marker_start(stderr, expected_prefix)
+    if incomplete_start is None:
+        return None
+    child_prefix_bytes = len(capture.stdout) + incomplete_start
+    if child_prefix_bytes <= output_bytes:
+        return None
+    # Independent child bytes already prove overflow. Elide the
+    # over-budget suffix, without authenticating it or adopting exit.
+    _need(capture.exit_code is None, "OCI_ATTACH_STATE")
+    return replace(
+        capture,
+        stderr=stderr[:incomplete_start],
+        observed_bytes_at_least=max(
+            child_prefix_bytes,
+            capture.observed_bytes_at_least - _OCI_EXIT_TRAILER_MAX,
+        ),
+    )
+
+
+def _unframed_capture(capture: UntrustedCapture) -> UntrustedCapture:
+    """An incomplete capture with no framing: its retained bytes stay a lower bound."""
+    stderr = capture.stderr
+    # The trusted wrapper appends framing only after child stderr ends.
+    # A retained partial header is ambiguous child/transport data: refuse it.
     _need(
-        type(completion_token) is str
-        and re.fullmatch(r"[0-9a-f]{64}", completion_token) is not None,
+        not any(
+            stderr.endswith(_OCI_EXIT_SENTINEL_PREFIX[:length])
+            for length in range(1, len(_OCI_EXIT_SENTINEL_PREFIX))
+        ),
         "OCI_ATTACH_STATE",
     )
-    stderr = capture.stderr
-    expected_prefix = (
-        _OCI_EXIT_SENTINEL_PREFIX + completion_token.encode("ascii") + b":"
+    retained_bytes = len(capture.stdout) + len(stderr)
+    # Unretained bytes may include up to one complete transport trailer.
+    # Retained bytes without framing remain a proven child-byte lower bound.
+    return replace(
+        capture,
+        observed_bytes_at_least=max(
+            retained_bytes,
+            capture.observed_bytes_at_least - _OCI_EXIT_TRAILER_MAX,
+        )
+        if capture.observed_bytes_at_least > retained_bytes
+        else capture.observed_bytes_at_least,
     )
-    if capture.termination != "completed" and output_bytes is not None:
-        _need(1 <= output_bytes <= 4 * 1024 * 1024, "OUTPUT_BOUND")
-        incomplete_start: int | None = None
-        marker_count = stderr.count(_OCI_EXIT_SENTINEL_PREFIX)
-        if marker_count == 1:
-            start = stderr.find(_OCI_EXIT_SENTINEL_PREFIX)
-            fragment = stderr[start:]
-            if expected_prefix.startswith(fragment):
-                incomplete_start = start
-            elif fragment.startswith(expected_prefix):
-                code_fragment = fragment[len(expected_prefix) :]
-                if (
-                    1 <= len(code_fragment) <= 3
-                    and code_fragment.isdigit()
-                    and int(code_fragment) <= 255
-                ):
-                    incomplete_start = start
-        elif marker_count == 0:
-            for length in range(len(_OCI_EXIT_SENTINEL_PREFIX) - 1, 0, -1):
-                if stderr.endswith(_OCI_EXIT_SENTINEL_PREFIX[:length]):
-                    incomplete_start = len(stderr) - length
-                    break
-        if incomplete_start is not None:
-            child_prefix_bytes = len(capture.stdout) + incomplete_start
-            if child_prefix_bytes > output_bytes:
-                # Independent child bytes already prove overflow. Elide the
-                # over-budget suffix, without authenticating it or adopting exit.
-                _need(capture.exit_code is None, "OCI_ATTACH_STATE")
-                return replace(
-                    capture,
-                    stderr=stderr[:incomplete_start],
-                    observed_bytes_at_least=max(
-                        child_prefix_bytes,
-                        capture.observed_bytes_at_least - _OCI_EXIT_TRAILER_MAX,
-                    ),
-                )
-    if capture.termination != "completed" and _OCI_EXIT_SENTINEL_PREFIX not in stderr:
-        # The trusted wrapper appends framing only after child stderr ends.
-        # A retained partial header is ambiguous child/transport data: refuse it.
-        _need(
-            not any(
-                stderr.endswith(_OCI_EXIT_SENTINEL_PREFIX[:length])
-                for length in range(1, len(_OCI_EXIT_SENTINEL_PREFIX))
-            ),
-            "OCI_ATTACH_STATE",
-        )
-        retained_bytes = len(capture.stdout) + len(stderr)
-        # Unretained bytes may include up to one complete transport trailer.
-        # Retained bytes without framing remain a proven child-byte lower bound.
-        return replace(
-            capture,
-            observed_bytes_at_least=max(
-                retained_bytes,
-                capture.observed_bytes_at_least - _OCI_EXIT_TRAILER_MAX,
-            )
-            if capture.observed_bytes_at_least > retained_bytes
-            else capture.observed_bytes_at_least,
-        )
+
+
+def _framed_capture(
+    capture: UntrustedCapture, expected_prefix: bytes
+) -> UntrustedCapture:
+    """Authenticate the one transport trailer and strip it from stderr."""
+    stderr = capture.stderr
     _need(stderr.count(_OCI_EXIT_SENTINEL_PREFIX) == 1, "OCI_ATTACH_STATE")
     marker_start = stderr.find(expected_prefix)
     _need(
@@ -1917,6 +1926,28 @@ def _unwrap_oci_completion(
         stderr=stderr[:marker_start],
         observed_bytes_at_least=capture.observed_bytes_at_least - trailer_bytes,
     )
+
+
+def _unwrap_oci_completion(
+    capture: UntrustedCapture, completion_token: str, *, output_bytes: int | None = None
+) -> UntrustedCapture:
+    """Normalize framing without promoting an incomplete attachment."""
+    _need(
+        type(completion_token) is str
+        and re.fullmatch(r"[0-9a-f]{64}", completion_token) is not None,
+        "OCI_ATTACH_STATE",
+    )
+    expected_prefix = (
+        _OCI_EXIT_SENTINEL_PREFIX + completion_token.encode("ascii") + b":"
+    )
+    incomplete = capture.termination != "completed"
+    if incomplete and output_bytes is not None:
+        elided = _elide_overflowing_trailer(capture, expected_prefix, output_bytes)
+        if elided is not None:
+            return elided
+    if incomplete and _OCI_EXIT_SENTINEL_PREFIX not in capture.stderr:
+        return _unframed_capture(capture)
+    return _framed_capture(capture, expected_prefix)
 
 
 def _enforce_output_limit(
