@@ -28,11 +28,34 @@ mutants:
   - name: a timeout is a survivor
     path: tools/mutation.py
     find: |
-      if status is None:
+      if stop is not None:
+          return Outcome(mutant.name, stop, last)
+    replace: |
+      if stop is not None:
+          return Outcome(mutant.name, "SURVIVED", last)
+  - name: a timeout is a kill
+    path: tools/mutation.py
+    find: |
+      if stop is not None:
+          return Outcome(mutant.name, stop, last)
+    replace: |
+      if stop is not None:
           return Outcome(mutant.name, "KILLED", last)
+  - name: a missing exit status is a kill
+    path: tools/mutation.py
+    find: |
+      if status is None:
+          return Outcome(mutant.name, "NOT RUN", "the tests ended without an exit status")
     replace: |
       if status is None:
-          return Outcome(mutant.name, "SURVIVED", last)
+          return Outcome(mutant.name, "KILLED", last)
+  - name: a tree run copies the root's files
+    path: tools/mutation.py
+    find: |
+      if tree is None:
+          return _copy(root, held)
+    replace: |
+      return _copy(root, held)
   - name: the original tree is mutated
     path: tools/mutation.py
     find: |
@@ -146,14 +169,20 @@ mutants:
     path: tools/mutation.py
     find: |
       if os.fstat(log).st_size > _OUTPUT_LIMIT_BYTES:
-          return None, f"the tests wrote more than {_OUTPUT_LIMIT_BYTES} bytes"
+          return None, (
+              _OUTPUT_LIMIT,
+              f"the tests wrote more than {_OUTPUT_LIMIT_BYTES} bytes",
+          )
       if status is not None:
           return status, None
     replace: |
       if status is not None:
           return status, None
       if os.fstat(log).st_size > _OUTPUT_LIMIT_BYTES:
-          return None, f"the tests wrote more than {_OUTPUT_LIMIT_BYTES} bytes"
+          return None, (
+              _OUTPUT_LIMIT,
+              f"the tests wrote more than {_OUTPUT_LIMIT_BYTES} bytes",
+          )
   - name: a missing root is copied
     path: tools/mutation.py
     find: |

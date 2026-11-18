@@ -69,7 +69,8 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
        - A copy holding a link that resolves outside it is refused, and the baseline reports why. The link is resolved in full, through any links it passes.
        - Output beyond 16 MiB stops the tests, as a timeout does. It is measured after every wait, so tests that pass the limit and exit within one poll are caught too.
      - **How the tests run.** They run with a scrubbed environment, in parallel workers (`--jobs`). They have a positive, finite timeout that ends their whole process group.
-     - **The result** is `KILLED`, `SURVIVED`, `NOT RUN`, `REFUSED`, `NOT FOUND`, `AMBIGUOUS` or `INVALID`. The command exits non-zero unless every mutant is killed.
+     - **The result** is `KILLED`, `SURVIVED`, `TIMED OUT`, `OUTPUT LIMIT`, `NOT RUN`, `REFUSED`, `NOT FOUND`, `AMBIGUOUS` or `INVALID`. Only tests that run to a failing exit kill a mutant: tests stopped at the timeout are `TIMED OUT`, tests stopped at the output limit are `OUTPUT LIMIT`, and tests that end with no exit status are `NOT RUN`. The command exits non-zero unless every mutant is killed.
+     - **The snapshot can be an exact tree.** With `--tree <full object name>`, the snapshot holds exactly that Git tree of the root's repository, written by `tools/exact_tree.py` (Decision 0131) and checked by its identity, plus the reduced Git metadata above. A file the tree does not track, an ignored one included, is never in it. The publication flow passes the prepared candidate's tree. Without `--tree`, the snapshot is the root's files as they are: use that for scratch experiments, not as evidence.
 2. **Anchors survive reformatting.**
    - In a Python file, an anchor that parses is located by AST:
      - a single expression, matched among the file's expressions;
@@ -167,6 +168,9 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
     - SonarCloud: the module-name pattern uses `\w` under `re.ASCII`, and an exception test has one call that can raise.
     - Two bounds are stated rather than changed: a token anchor can match a comment, which fails loudly, and the output limit is measured once per poll.
   - **CodeAnt: three ways out of the copy.** Windows-style table paths, unbounded test output, and links that resolve outside the copy. An absolute link let a test write outside on `d887443`. Each has a test that failed first.
+- **Stage 1 of completing the owner (Owner decision D-159, #325).** Main's decisions since 0103 run from 0106 to 0135, so 0104 is unused on main and keeps its number. Two defects are repaired, each with tests that failed first:
+  - a timeout, an output-limit overrun and a missing exit status were all credited as `KILLED`; the first two are now their own statuses and the third is `NOT RUN` (four pinned assertions changed and one test added);
+  - the snapshot copied every file of the root, ignored ones included (the open P1 thread), so a baseline and a mutant could run for a tree no one prepared; `--tree` now builds it from the exact tree.
 - **The nine round-1 kills were not evidence.** The new baseline then failed on the verification-workflow table itself. Two `tests.test_tools` tests read Git metadata (`git ls-files`, and the tracked-file scope), and a copy without `.git` fails them. So on `8ad4b4b` every one of the nine mutants was "killed" by those two errors, not by its own change.
   - The copy now keeps the repository's `.git` directory, with a test that failed first.
   - With that copy, all nine are killed for their own reasons.

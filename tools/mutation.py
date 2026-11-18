@@ -11,15 +11,24 @@ link is followed". Tables of them live with the code they guard, as
   many at once as the mutants will run. Only if every copy passes does a failure mean
   anything: otherwise no mutant runs, and each that applies is `NOT RUN`. It then
   applies each mutant in its own isolated copy and runs the tests there. A mutant is
-  `KILLED` when they fail or time out, and `SURVIVED` when they pass. A timeout ends
-  the tests' whole process group.
+  `KILLED` when they run to a failing exit, and `SURVIVED` when they pass. Tests
+  stopped at the timeout are `TIMED OUT`, tests stopped at the output limit are
+  `OUTPUT LIMIT`, and tests that end with no exit status are `NOT RUN`: none of them
+  says what the tests detect, so none counts as a kill. A stop ends the tests' whole
+  process group.
 - `check` and `run` both refuse a mutant whose path passes through a symbolic link,
   as `REFUSED`: writing through it would change a file outside the copy.
 - What the runner sets up stays in the copy. The tests themselves are not sandboxed;
   see below.
-  - Every copy is taken from one snapshot of the root, made when the run starts. The
-    snapshot is itself copied file by file, so an edit made during that copy can
-    still mix; it narrows the window from the whole run to the copy.
+  - Every copy is taken from one snapshot of the root, made when the run starts. With
+    `--tree`, the snapshot holds exactly that Git tree's bytes, written by the shared
+    owner `tools/exact_tree.py` (Decision 0131) and proved by its identity, so an
+    ignored or untracked file of the root is never in it and a run's evidence is for
+    that tree. Pass the prepared candidate's tree. Without `--tree` the snapshot is
+    the root's files as they are, ignored ones included: use it for a scratch
+    experiment, not for evidence. The snapshot is copied file by file, so an edit made
+    during that copy can still mix; it narrows the window from the whole run to the
+    copy.
   - A copy holding a link that resolves outside it is refused.
   - A copy's Git metadata keeps only the repository's format: no work tree, include,
     filter, hook or other program the repository configured. A copy that shares
@@ -81,6 +90,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from tools import exact_tree
 from tools.knowledge_common import KnowledgeFormatError, load_yaml
 
 DEFAULT_TIMEOUT = 300.0
@@ -111,6 +121,10 @@ for name in sys.argv[1:]:
 unittest.main(module=None, argv=["python -m unittest", *sys.argv[1:]])
 """
 _POLL_SECONDS = 0.2
+# The statuses of tests that were stopped: neither one says what the tests detect, so
+# neither is `KILLED` (#374 stage 1).
+_TIMED_OUT = "TIMED OUT"
+_OUTPUT_LIMIT = "OUTPUT LIMIT"
 _TOKEN = re.compile(r"\w+|[^\w\s]")
 _LINE_END = re.compile(r"\r\n|\r|\n")
 # How a node's source span is computed, and how a table problem is raised.
@@ -461,9 +475,10 @@ def check(root: Path, table: Table) -> list[str]:
 
 def _run_tests(
     work: Path, scratch: str, tests: tuple[str, ...], timeout: float
-) -> tuple[int | None, str]:
+) -> tuple[int | None, str, str | None]:
     """Run ``tests`` in ``work``: their exit status and their last line of output, or
-    None and why they were stopped.
+    None, why they were stopped and which limit stopped them (`_TIMED_OUT` or
+    `_OUTPUT_LIMIT`). A status of None with no limit is no verdict at all.
 
     The tests run in a new session, and their whole process group is killed when
     they end, so a child they leave behind dies with them. Their output goes to a
@@ -499,17 +514,17 @@ def _run_tests(
                 os.killpg(process.pid, signal.SIGKILL)
             process.wait()
     if stopped is not None:
-        return None, stopped
+        return None, stopped[1], stopped[0]
     with output.open("rb") as log:
         log.seek(max(0, output.stat().st_size - _OUTPUT_TAIL_BYTES))
         tail = log.read().decode("utf-8", errors="replace")
-    return status, (tail.strip().splitlines() or [""])[-1]
+    return status, (tail.strip().splitlines() or [""])[-1], None
 
 
 def _wait(
     process: subprocess.Popen[bytes], log: int, timeout: float
-) -> tuple[int | None, str | None]:
-    """Wait for ``process``: its exit status, or why it must be stopped.
+) -> tuple[int | None, tuple[str, str] | None]:
+    """Wait for ``process``: its exit status, or the limit that stops it and why.
 
     The output is measured after every wait, the last one too: tests that wrote past
     the limit and exited within one poll were credited with their exit status (Codex
@@ -519,13 +534,16 @@ def _wait(
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            return None, f"timed out after {timeout:g} s"
+            return None, (_TIMED_OUT, f"timed out after {timeout:g} s")
         try:
             status: int | None = process.wait(timeout=min(_POLL_SECONDS, remaining))
         except subprocess.TimeoutExpired:
             status = None
         if os.fstat(log).st_size > _OUTPUT_LIMIT_BYTES:
-            return None, f"the tests wrote more than {_OUTPUT_LIMIT_BYTES} bytes"
+            return None, (
+                _OUTPUT_LIMIT,
+                f"the tests wrote more than {_OUTPUT_LIMIT_BYTES} bytes",
+            )
         if status is not None:
             return status, None
 
@@ -539,6 +557,36 @@ def _copy(root: Path, scratch: str) -> Path:
     if escaping is not None:
         raise CopyRefused(f"the link {escaping} resolves outside the copy")
     _sanitize_git(work)
+    return work
+
+
+def _snapshot(root: Path, held: str, tree: str | None) -> Path:
+    """The run's one snapshot of ``root``: its files as they are when ``tree`` is None,
+    and otherwise exactly the Git tree ``tree``.
+
+    A tree is written by the shared owner, `exact_tree.materialize` (Decision 0131), so
+    a file the tree does not track, an ignored one included, is never in it, and the
+    result's identity is read back from its bytes and must be the tree. Only the
+    repository's own reduced Git metadata is added, as `_copy` keeps it, so tests that
+    read Git see a repository (Codex P1 on #374).
+    """
+    if tree is None:
+        return _copy(root, held)
+    work = Path(held) / "w"
+    limits = exact_tree.Limits.within()
+    try:
+        exact_tree.materialize(root, tree, work, limits=limits)
+        git = root / ".git"
+        if git.is_dir() and not git.is_symlink():
+            shutil.copytree(git, work / ".git", ignore=_ignored, symlinks=True)
+            _sanitize_git(work)
+        observed = exact_tree.observed_tree(root, work, limits=limits, ignore=[".git"])
+    except exact_tree.ExactTreeError as exc:
+        raise ValueError(
+            f"the tree {tree} cannot be written exactly: {exc.code}"
+        ) from exc
+    if observed != tree:
+        raise ValueError(f"the snapshot is tree {observed}, not {tree}")
     return work
 
 
@@ -657,7 +705,7 @@ def _baseline(root: Path, table: Table, timeout: float) -> str | None:
             # A full disk is no verdict on the tests (CodeAnt on #374).
             return f"the copy failed: {exc}"
         try:
-            status, last = _run_tests(work, scratch, table.tests, timeout)
+            status, last, _stop = _run_tests(work, scratch, table.tests, timeout)
         except OSError as exc:
             return f"the tests could not run: {exc}"
     return None if status == 0 else f"the unmutated tests fail: {last}"
@@ -685,11 +733,15 @@ def _run_one(root: Path, table: Table, mutant: Mutant, timeout: float) -> Outcom
                 mutant.name, "NOT RUN", f"the mutant could not be written: {exc}"
             )
         try:
-            status, last = _run_tests(work, scratch, table.tests, timeout)
+            status, last, stop = _run_tests(work, scratch, table.tests, timeout)
         except OSError as exc:
             return Outcome(mutant.name, "NOT RUN", f"the tests could not run: {exc}")
+    # Only tests that ran to a failing exit detect a mutant. A limit that stopped them,
+    # or no exit status at all, is no verdict (#374 stage 1).
+    if stop is not None:
+        return Outcome(mutant.name, stop, last)
     if status is None:
-        return Outcome(mutant.name, "KILLED", last)
+        return Outcome(mutant.name, "NOT RUN", "the tests ended without an exit status")
     if status == 0:
         return Outcome(mutant.name, "SURVIVED", "the tests passed")
     return Outcome(mutant.name, "KILLED", last)
@@ -702,8 +754,13 @@ def run(
     jobs: int = 1,
     timeout: float = DEFAULT_TIMEOUT,
     only: tuple[str, ...] = (),
+    tree: str | None = None,
 ) -> list[Outcome]:
     """Run ``table``'s mutants, or those named in ``only``, in ``jobs`` workers.
+
+    With ``tree``, the full object name of a Git tree of ``root``'s repository, every
+    copy is of exactly that tree (see `_snapshot`); a tree that cannot be written
+    exactly is a `ValueError`.
 
     The unmutated baseline ends before any mutant starts, and runs as many copies at
     once as the mutants will. A suite that cannot share the machine with itself, such
@@ -730,7 +787,7 @@ def run(
         # Every copy is taken from one snapshot, so a root that changes during the run
         # cannot give the baseline and the mutants different subjects (Codex on #374).
         try:
-            snapshot = _copy(root, held)
+            snapshot = _snapshot(root, held, tree)
         except CopyRefused as exc:
             return [_static(root, m, f"the copy is refused: {exc}") for m in selected]
         except OSError as exc:
@@ -788,6 +845,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true", help="only check every anchor")
     parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
+    parser.add_argument(
+        "--tree",
+        help="run over exactly this Git tree of the root's repository (the prepared"
+        " candidate's), not over the root's files as they are",
+    )
     parser.add_argument("names", nargs="*", help="run only these mutants")
     args = parser.parse_args(argv)
     try:
@@ -805,6 +867,7 @@ def main(argv: list[str] | None = None) -> int:
             jobs=args.jobs,
             timeout=args.timeout,
             only=tuple(args.names),
+            tree=args.tree,
         )
     except ValueError as exc:  # a KnowledgeFormatError, or a bad --timeout
         print(f"mutants: {exc}")

@@ -331,8 +331,36 @@ class RunTests(unittest.TestCase):
             started = time.monotonic()
             (outcome,) = mutation.run(root, table, jobs=1, timeout=2)
             self.assertLess(time.monotonic() - started, 30)
-            self.assertEqual("KILLED", outcome.status)
+            # A timeout says nothing about what the tests detect (#374 stage 1).
+            self.assertEqual("TIMED OUT", outcome.status)
             self.assertIn("timed out", outcome.detail)
+
+    def test_tests_that_end_without_a_status_kill_nothing(self) -> None:
+        # No exit status is no verdict: it was credited as a kill (#374 stage 1).
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: double triples\n    path: pkg/m.py\n"
+                    "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                )
+            )
+            real = mutation._run_tests  # skipcq: PYL-W0212
+
+            def lost(
+                work: pathlib.Path, scratch: str, tests: tuple[str, ...], timeout: float
+            ) -> tuple[int | None, str, str | None]:
+                # The baseline runs the real tests; a mutant's status is lost.
+                if (work / "pkg" / "m.py").read_text(encoding="utf-8").count("* 3"):
+                    return None, "", None
+                return real(work, scratch, tests, timeout)
+
+            with mock.patch.object(mutation, "_run_tests", lost):
+                (outcome,) = mutation.run(root, table, jobs=1)
+        self.assertEqual("NOT RUN", outcome.status, outcome.detail)
+        self.assertIn("exit status", outcome.detail)
 
     def test_mutants_run_in_parallel_workers(self) -> None:
         active = 0
@@ -496,7 +524,7 @@ class SoundnessTests(unittest.TestCase):
             (outcome,) = mutation.run(
                 root, mutation.load_table(table_path), jobs=1, timeout=3
             )
-            self.assertEqual("KILLED", outcome.status)
+            self.assertEqual("TIMED OUT", outcome.status)
             pid = int(pid_file.read_text(encoding="utf-8"))
             deadline = time.monotonic() + 5
             while _alive(pid) and time.monotonic() < deadline:
@@ -770,7 +798,7 @@ class ContainmentTests(unittest.TestCase):
                     root, mutation.load_table(table_path), jobs=1, timeout=15
                 )
             self.assertLess(time.monotonic() - started, 10)
-            self.assertEqual("KILLED", outcome.status)
+            self.assertEqual("OUTPUT LIMIT", outcome.status)
             self.assertIn("more than", outcome.detail)
 
     def test_output_beyond_the_limit_counts_after_the_tests_exit(self) -> None:
@@ -793,7 +821,7 @@ class ContainmentTests(unittest.TestCase):
                 mock.patch.object(mutation, "_POLL_SECONDS", 60),
             ):
                 (outcome,) = mutation.run(root, table, jobs=1, timeout=120)
-            self.assertEqual("KILLED", outcome.status, outcome.detail)
+            self.assertEqual("OUTPUT LIMIT", outcome.status, outcome.detail)
             self.assertIn("more than", outcome.detail)
 
     def test_a_link_out_of_the_copy_refuses_the_copy(self) -> None:
@@ -882,6 +910,52 @@ class CopyTests(unittest.TestCase):
             )
             (outcome,) = mutation.run(root, table, jobs=1)
             self.assertEqual("KILLED", outcome.status, outcome.detail)
+
+    def test_a_run_over_a_tree_leaves_out_what_the_tree_does_not_track(self) -> None:
+        # An ignored file the tests read is no part of the prepared candidate: a
+        # baseline and a mutant that ran with it were evidence for another tree (Codex
+        # P1 on #374).
+        git = shutil.which("git")
+        if git is None:
+            self.skipTest("git is not installed")
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            (root / ".gitignore").write_text("pkg/local_only.py\n", encoding="utf-8")
+            (root / "pkg" / "local_only.py").write_text("X = 1\n", encoding="utf-8")
+            (root / "tests" / "test_local.py").write_text(
+                "import os\nimport unittest\n\n\n"
+                "class L(unittest.TestCase):\n"
+                "    def test_absent(self):\n"
+                "        self.assertFalse(os.path.exists('pkg/local_only.py'))\n",
+                encoding="utf-8",
+            )
+            for command in (["init", "-q"], ["add", "-A"]):
+                subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                    [git, *command], cwd=root, env=clean, check=True
+                )
+            tree = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                [git, "write-tree"],
+                cwd=root,
+                env=clean,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: double triples\n    path: pkg/m.py\n"
+                    "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                    tests="[tests.test_local, tests.test_m]",
+                )
+            )
+            (outcome,) = mutation.run(root, table, jobs=1, tree=tree)
+            self.assertEqual("KILLED", outcome.status, outcome.detail)
+            # A tree that is no object of the repository is a usage error.
+            with self.assertRaises(ValueError):
+                mutation.run(root, table, jobs=1, tree="0" * 40)
 
     def test_git_metadata_that_routes_outside_is_dropped_from_the_copy(self) -> None:
         # Git in the copy took its work tree from the copied configuration (Codex on
@@ -1210,12 +1284,12 @@ class CopyTests(unittest.TestCase):
             )
             opened = pathlib.Path.open
 
-            def full_disk(
-                self: pathlib.Path, mode: str = "r", *args: Any, **kwargs: Any
-            ) -> Any:
+            def full_disk(self: pathlib.Path, *args: Any, **kwargs: Any) -> Any:
+                # The mode is the first argument, or a keyword.
+                mode = args[0] if args else kwargs.get("mode", "r")
                 if mode == "w":
                     raise OSError(28, "No space left on device")
-                return opened(self, mode, *args, **kwargs)
+                return opened(self, *args, **kwargs)
 
             with mock.patch.object(pathlib.Path, "open", full_disk):
                 (outcome,) = mutation.run(root, table, jobs=1)

@@ -741,8 +741,11 @@ order on 2026-10-05.
    - `extended`;
    - the runtime image's `self-check`, which finds working-directory and install
      defects that the development container hides;
-   - `knowledge mutants --table <table> --jobs <n>` for each table the change
-     touches.
+   - `knowledge mutants --table <table> --jobs <n> --tree <prepared tree>` for
+     each table the change touches. The prepared candidate's tree makes the
+     evidence exact: a file the tree does not track is never in the snapshot.
+     Only a failing exit is a kill; `TIMED OUT`, `OUTPUT LIMIT` and `NOT RUN`
+     are not.
 
    Stop the others as soon as one fails.
 5. **Leave `regression` to provider CI.** It is the same suite plus checks that
