@@ -76,7 +76,7 @@ receipt is easiest to obtain. Unknown applicability denies the compliance claim.
 
 | Mode | Permitted observation | Must not become |
 | --- | --- | --- |
-| RED | Exact parent production plus admitted evidence-only delta; expected non-vacuous failure | Any nonzero exit, missing import, timeout, zero tests or skip |
+| RED | Exact parent production plus admitted evidence-only delta; expected non-vacuous failure | Sufficient evidence merely because the exit was nonzero: a missing import, timeout, zero tests or skip never qualifies |
 | CHARACTERIZATION | Parent behavior observed green where policy permits the classified behavior-preserving change | A substitute for required failing evidence |
 | STRUCTURAL | Unmet non-executable criterion with accountable review where executable failure is inapplicable | A bypass for changed executable or normative behavior |
 | EMERGENCY_POST_EVENT | Effective emergency admission with its declared follow-up obligation | An executor-selected escape from ordinary chronology |

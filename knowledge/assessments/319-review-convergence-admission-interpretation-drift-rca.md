@@ -51,6 +51,11 @@ x-project-knowledge:
 
 ## Executive conclusion
 
+Evidence note: the provider comments and the mutable PR URL cited in the
+sources are unreproducible observations, not retained immutable snapshots, and
+no digest of them is claimed. The conclusions below rest on the repository
+records and commits cited, which are immutable.
+
 PR #319 exposed a **process interpretation failure**, not a newly introduced
 repository rule. The repository record did not contain a blanket #15 / D0092
 implementation admission: the one-time D0090 bootstrap-preparation approval was
