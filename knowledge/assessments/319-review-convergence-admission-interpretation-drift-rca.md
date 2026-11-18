@@ -274,7 +274,7 @@ all evidence sources. The source of the finding does not determine admission.
 
 ### F4 — Over-escalation is a real failure mode
 
-A process can preserve authority perfectly while still regress in usability and
+A process can preserve authority perfectly while still regressing in usability and
 autonomy. Unnecessary human gates should be observable, not normalized as
 harmless caution.
 
