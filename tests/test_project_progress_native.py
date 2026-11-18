@@ -1169,6 +1169,47 @@ class NativeProgressTests(unittest.TestCase):
                 job, self.frontier, self.row, refresh, decoded, [refresh]
             )
 
+    def test_malformed_decoded_assignments_are_refused_for_every_claim(self) -> None:
+        shapes: tuple[dict[str, Any], ...] = (
+            {},
+            {"assignments": None},
+            {"assignments": [None]},
+            {"assignments": [{}]},
+            {"assignments": [{"operation": None}]},
+        )
+        for decoded in shapes:
+            for mode, claim in self._claims_by_mode().items():
+                with (
+                    self.subTest(mode=mode, decoded=decoded),
+                    self.assertRaisesRegex(ValueError, "^PROJECT_PROGRESS "),
+                ):
+                    n.validate_progress(
+                        self.job,
+                        self.frontier,
+                        self.row,
+                        claim,
+                        decoded,
+                        [claim],
+                    )
+
+    def test_invalid_request_stamps_are_one_named_refusal(self) -> None:
+        for record in (
+            {"key": "a"},
+            {"at": "2026-11-17T00:00:00Z"},
+            {"key": "a", "at": "not a time"},
+            {"key": "a", "at": "2026-11-17T00:00:00"},
+            {"key": "a", "at": 5},
+            {"key": "", "at": "2026-11-17T00:00:00Z"},
+            None,
+        ):
+            with (
+                self.subTest(record=record),
+                self.assertRaisesRegex(ValueError, "^PROJECT_PROGRESS "),
+            ):
+                n._stamp(cast("n.Native", record))
+        stamp = n._stamp({"key": "a", "at": "2026-11-17T00:00:00Z"})
+        self.assertEqual(stamp.key, "a")
+
 
 if __name__ == "__main__":
     unittest.main()

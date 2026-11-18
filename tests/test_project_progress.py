@@ -136,14 +136,15 @@ class ProgressOwnerTests(unittest.TestCase):
             "IDENTITY_CAP",
         )
 
-    def test_characterization_future_stamp_same_utc_day_counts_toward_daily_cap(
+    def test_future_stamp_same_utc_day_does_not_count_toward_daily_cap(
         self,
     ) -> None:
-        # Characterizes current behavior, not a settled design choice; the origin
-        # of the daily/identity asymmetry is unproven (Decision 0136 keeps caps).
+        # Same rule as the rolling window: a stamp later than now is not used yet.
         now = 1_800_000_000.0
         future = (p.RequestStamp("a", now + 60),)
-        self.assertEqual(p.request_budget((), future, now, daily_cap=1), "DAILY_CAP")
+        self.assertIsNone(p.request_budget((), future, now, daily_cap=1))
+        past = (p.RequestStamp("b", now - 60),)
+        self.assertEqual(p.request_budget((), past, now, daily_cap=1), "DAILY_CAP")
 
     def test_characterization_future_stamp_later_utc_day_not_in_daily_cap(
         self,
@@ -166,7 +167,8 @@ class ProgressOwnerTests(unittest.TestCase):
     ) -> None:
         # Nothing held and no ordering: fail closed, ask for a refresh, add nothing.
         source = p.Source("scope", "k", "fp", "gen", True, None)
-        self.assertIsNone(p._category_update(source, []))
+        merged, added, refresh = p.merge_sources((), (source,))
+        self.assertEqual((merged, added, refresh), ((), False, True))
         merged, added, refresh = p.merge_sources((), (source,))
         self.assertEqual((merged, added, refresh), ((), False, True))
 
