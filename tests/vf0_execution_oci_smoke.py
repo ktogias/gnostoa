@@ -253,17 +253,30 @@ def _expect_observation_contract(
 ) -> None:
     """Check live observations against independent fixed-fixture expectations."""
 
-    def digest(value: object, *, newline: bool = False) -> str:
-        raw = json.dumps(value, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256((raw + ("\n" if newline else "")).encode()).hexdigest()
+    if type(observation) is not ExecutionObservation:
+        raise AssertionError("SMOKE_OBSERVATION_CONTRACT")
+    manifest = _expected_manifest(evidence, fixture_value)
+    if not _observation_matches(
+        observation, subject, evidence, command, limits, manifest
+    ):
+        raise AssertionError("SMOKE_OBSERVATION_CONTRACT")
+    if not _capture_matches(observation.capture, limits):
+        raise AssertionError("SMOKE_OBSERVATION_CONTRACT")
 
+
+def _digest(value: object, *, newline: bool = False) -> str:
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256((raw + ("\n" if newline else "")).encode()).hexdigest()
+
+
+def _expected_manifest(evidence: EvidenceFile, fixture_value: str) -> str:
     contents = {
         "subject.txt": (fixture_value + "\n").encode(),
         "tools/__init__.py": b"",
         "tools/vf0_execution.py": f"SUBJECT_MARKER = {fixture_value!r}\n".encode(),
         evidence.path: evidence.content,
     }
-    manifest = digest(
+    return _digest(
         {
             "directories": {".": "0755", "tools": "0755", "tests": "0755"},
             "files": {
@@ -277,45 +290,48 @@ def _expect_observation_contract(
         },
         newline=True,
     )
-    if type(observation) is not ExecutionObservation:
-        raise AssertionError("SMOKE_OBSERVATION_CONTRACT")
-    if (
-        type(observation.subject) is not GitSubject
-        or observation.subject != subject
-        or observation.evidence_sha256
-        != ((evidence.path, hashlib.sha256(evidence.content).hexdigest()),)
-        or observation.command_sha256 != "sha256:" + digest(command)
-        or observation.limits_sha256 != "sha256:" + digest(asdict(limits))
-        or observation.backend_identity != "gnostoa-docker-oci-v1"
-        or observation.runtime_identity != FIXED_IMAGE
-        or observation.before_manifest_sha256 != manifest
-        or observation.after_manifest_sha256 != manifest
-        or observation.subject_unchanged is not True
-        or type(observation.capture) is not UntrustedCapture
-    ):
-        raise AssertionError("SMOKE_OBSERVATION_CONTRACT")
-    capture = observation.capture
+
+
+def _observation_matches(
+    observation: ExecutionObservation,
+    subject: GitSubject,
+    evidence: EvidenceFile,
+    command: list[str],
+    limits: ExecutionLimits,
+    manifest: str,
+) -> bool:
+    return (
+        type(observation.subject) is GitSubject
+        and observation.subject == subject
+        and observation.evidence_sha256
+        == ((evidence.path, hashlib.sha256(evidence.content).hexdigest()),)
+        and observation.command_sha256 == "sha256:" + _digest(command)
+        and observation.limits_sha256 == "sha256:" + _digest(asdict(limits))
+        and observation.backend_identity == "gnostoa-docker-oci-v1"
+        and observation.runtime_identity == FIXED_IMAGE
+        and observation.before_manifest_sha256 == manifest
+        and observation.after_manifest_sha256 == manifest
+        and observation.subject_unchanged is True
+        and type(observation.capture) is UntrustedCapture
+    )
+
+
+def _capture_matches(capture: UntrustedCapture, limits: ExecutionLimits) -> bool:
     if type(capture.stdout) is not bytes or type(capture.stderr) is not bytes:
-        raise AssertionError("SMOKE_OBSERVATION_CONTRACT")
+        return False
     retained = len(capture.stdout) + len(capture.stderr)
-    if (
-        type(capture.observed_bytes_at_least) is not int
-        or capture.observed_bytes_at_least < retained
-        or retained > limits.output_bytes
-        or type(capture.termination) is not str
-        or capture.termination not in {"completed", "timeout", "output_limit"}
-        or (capture.termination == "completed" and type(capture.exit_code) is not int)
-        or (
-            capture.termination != "output_limit"
-            and capture.observed_bytes_at_least != retained
-        )
-        or (capture.termination != "completed" and capture.exit_code is not None)
-        or (
-            capture.termination == "output_limit"
-            and capture.observed_bytes_at_least <= limits.output_bytes
-        )
-    ):
-        raise AssertionError("SMOKE_OBSERVATION_CONTRACT")
+    seen = capture.observed_bytes_at_least
+    if type(seen) is not int or seen < retained or retained > limits.output_bytes:
+        return False
+    if type(capture.termination) is not str:
+        return False
+    if capture.termination == "completed":
+        return type(capture.exit_code) is int and seen == retained
+    if capture.exit_code is not None:
+        return False
+    if capture.termination == "timeout":
+        return seen == retained
+    return capture.termination == "output_limit" and seen > limits.output_bytes
 
 
 def _summary(observation: ExecutionObservation) -> dict[str, Any]:
