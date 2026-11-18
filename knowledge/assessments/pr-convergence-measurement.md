@@ -191,15 +191,27 @@ The two bases disagree on the verdict:
 | ρ = λ/μ overall | 3.00 | **1.15** |
 | ρ trailing 12 h | ∞ | **1.33** |
 | DRE | 33% | **87%** |
-| WIP shape | 0 → 36, monotonic | 0 for 22 h, then flat at **5–7** for 14 h |
+| WIP shape | 0 → 36, monotonic | 0 for 22 h, then 5–7 held for the last 12 h of the 40 h plotted |
 
-On the tracker basis the candidate looks unstable. On the substantive basis it is far
-less unstable but not stable: ρ is above 1 (1.15 overall, 1.33 trailing), so by the
-definition in section 1 it is mildly unstable and trending worse, even though WIP
-stayed flat at 5–7 and the **median fix latency was 23 minutes** (p90 83 min).
-Because arrivals are convex (below), the instrument would give no convergence verdict
-for this case and would name convexity; these figures are measurements, not a verdict. Of the 7 live items, 3 were code defects raised six minutes before
-measurement and 4 were documentation.
+On the tracker basis the candidate looks unstable. On the substantive basis the figures
+are far smaller: ρ is slightly above 1 (1.15 overall, 1.33 trailing), WIP stayed at 5–7
+and the **median fix latency was 23 minutes** (p90 83 min). Because arrivals are convex
+(below), the instrument would give **no convergence verdict** for this case and would
+name convexity, so these figures are measurements, not a verdict.
+
+The trailing ρ of 1.33 is **not reconciled** with the flat WIP of 5–7: the source
+comment reports ρ for the trailing 6 h and 12 h windows but not the arrival and
+departure counts in them, so they are not restated here.
+
+Two departure proxies are used and must not be conflated. For the 18 threads closed on
+the tracker basis, departure is the last-comment time, because GitHub exposes no
+`resolvedAt`. For the 47 substantive departures, it is the first commit after the
+finding was raised in which a detector finds the requested mechanism. Detection confirms
+that the mechanism is **present**; it does not prove the fix is correct in every edge
+case, or free of later regression.
+
+Of the 7 live items, 3 were code defects raised six minutes before measurement and 4
+were documentation.
 
 **This is the finding that matters most in this research.** Every alarming figure in
 the first measurement — ρ = 3.00, ρ = ∞, WIP climbing without bound — was the tracker
@@ -211,8 +223,9 @@ all of them.
 Two things survive the correction, and neither is the queue:
 
 1. **Arrival is genuinely accelerating** — 0.83 → 1.81 findings/h across the halves,
-   so the cumulative curve is convex. Departures keep pace, so this is not instability,
-   but it does mean no reliability-growth model can estimate what remains.
+   so the cumulative curve is convex. Departures kept pace over the window, which is a
+   measurement and not a verdict on stability; it does mean no reliability-growth model
+   can estimate what remains.
 2. **Remediation is 10.9× denser in findings than the implementation it repairs** —
    17.5/KLOC across 23 remediation commits against 1.6/KLOC for the original
    implementation. This is the arrival driver, and it is why the curve is convex
@@ -233,7 +246,8 @@ Computable from the GitHub API with no new runtime dependency.
 | 7 | Review size per pass | review-size study | 200–400 LOC |
 | 8 | Yield decay across passes on a **frozen** head | SRGM, properly conditioned | → 0 |
 
-**Proposed stopping rule.** A candidate is converged when ρ < 1 is sustained,
+**Proposed stopping rule** (illustrative: parameters are unset, it is advisory and not a
+threshold). A candidate is converged when ρ < 1 is sustained,
 cumulative arrivals are concave, tracked DRE ≈ substantive DRE, and yield on a
 frozen head decays to zero across successive passes.
 
