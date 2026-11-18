@@ -194,7 +194,7 @@ def _absorb(
     )
 
 
-def _stamp(request: Native) -> p.RequestStamp:
+def request_stamp(request: Native) -> p.RequestStamp:
     """A request's key and timezone-aware time, or one named refusal.
 
     The journal record is never rewritten or dropped here: an invalid one holds
@@ -221,7 +221,7 @@ def _history(obligation: object) -> tuple[p.RequestStamp, ...]:
     requests = obligation.get("requests") if isinstance(obligation, Mapping) else None
     if not isinstance(requests, list):
         raise ValueError("PROJECT_PROGRESS a request record list is missing or invalid")
-    return tuple(_stamp(r) for r in requests)
+    return tuple(request_stamp(r) for r in requests)
 
 
 def _targets(decoded: Native) -> tuple[Ref | None, ...]:
@@ -250,10 +250,10 @@ def _carry_requests(bound: Native, unbound: Native) -> None:
     carried = [dict(r, carried_from=unbound["id"]) for r in unbound["requests"]]
     # Native serialization retains every original request field and stable key.
     ordered = p.migrate_requests(
-        tuple(_stamp(r) for r in carried),
-        tuple(_stamp(r) for r in bound["requests"]),
+        tuple(request_stamp(r) for r in carried),
+        tuple(request_stamp(r) for r in bound["requests"]),
     )
-    remaining = [(_stamp(r), r) for r in carried + bound["requests"]]
+    remaining = [(request_stamp(r), r) for r in carried + bound["requests"]]
     preserved = []
     for stamp in ordered:
         index = next(

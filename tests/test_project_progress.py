@@ -169,8 +169,6 @@ class ProgressOwnerTests(unittest.TestCase):
         source = p.Source("scope", "k", "fp", "gen", True, None)
         merged, added, refresh = p.merge_sources((), (source,))
         self.assertEqual((merged, added, refresh), ((), False, True))
-        merged, added, refresh = p.merge_sources((), (source,))
-        self.assertEqual((merged, added, refresh), ((), False, True))
 
     @staticmethod
     def evaluation() -> p.Evaluation:

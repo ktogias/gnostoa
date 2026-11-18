@@ -142,8 +142,9 @@ def closed_reads(context: Mapping[str, Any]) -> tuple[Ref, ...]:
         ):
             continue
         ref = read_ref(pointer, held)
-        stated = isinstance(held.get("state"), str) and bool(held["state"])
-        if ref is not None and (not stated or pr_closed(held)):
+        state = held.get("state")
+        is_open = isinstance(state, str) and state.lower() == "open"
+        if ref is not None and (not is_open or pr_closed(held)):
             result.append(ref)
     return tuple(result)
 

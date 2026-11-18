@@ -99,7 +99,16 @@ class NativeProgressTests(unittest.TestCase):
         obligation = n.new_obligation("id", self.scope, self.now)
         self.assertEqual(n.merge_sources(obligation, [first]), (True, False))
         self.assertEqual(n.merge_sources(obligation, [later]), (False, False))
-        self.assertEqual(obligation["sources"], [first])
+        # The duplicate adds nothing, but it advances the held observation order.
+        self.assertEqual(obligation["sources"], [later])
+        middle = {
+            "kind": "scope",
+            "generation": "g9",
+            "observed": {"epoch": "reader-a", "seq": 2},
+        }
+        # A distinct source observed between the two is older than the held order.
+        self.assertEqual(n.merge_sources(obligation, [middle]), (False, False))
+        self.assertEqual(obligation["sources"], [later])
 
     def test_newer_observation_accepts_digest_reversion(self) -> None:
         store: n.Native = {}
@@ -354,6 +363,7 @@ class NativeProgressTests(unittest.TestCase):
                 "at": datetime.fromtimestamp(self.now, UTC).isoformat(),
             }
         ]
+        obligation = json.loads(json.dumps(obligation))
         action, _ = n.controller_decision(
             obligation,
             fate="DISCHARGE",
@@ -1181,7 +1191,12 @@ class NativeProgressTests(unittest.TestCase):
             for mode, claim in self._claims_by_mode().items():
                 with (
                     self.subTest(mode=mode, decoded=decoded),
-                    self.assertRaisesRegex(ValueError, "^PROJECT_PROGRESS "),
+                    self.assertRaisesRegex(
+                        ValueError,
+                        "^PROJECT_PROGRESS (the decoded result must be a mapping"
+                        "|assignments must be a list"
+                        "|each assignment needs its operation)$",
+                    ),
                 ):
                     n.validate_progress(
                         self.job,
@@ -1206,8 +1221,8 @@ class NativeProgressTests(unittest.TestCase):
                 self.subTest(record=record),
                 self.assertRaisesRegex(ValueError, "^PROJECT_PROGRESS "),
             ):
-                n._stamp(cast("n.Native", record))
-        stamp = n._stamp({"key": "a", "at": "2026-11-17T00:00:00Z"})
+                n.request_stamp(cast("n.Native", record))
+        stamp = n.request_stamp({"key": "a", "at": "2026-11-17T00:00:00Z"})
         self.assertEqual(stamp.key, "a")
 
 

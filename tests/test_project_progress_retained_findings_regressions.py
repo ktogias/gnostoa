@@ -58,7 +58,8 @@ class GenerationlessScopeUpdateTests(unittest.TestCase):
         self.assertFalse(refresh)
         replay = core.Source("scope", None, "after", None, True, ("reader-a", 3))
         merged, added, refresh = core.merge_sources((update,), (replay,))
-        self.assertEqual(merged, (update,))
+        # A replay adds nothing but advances the held observation order.
+        self.assertEqual(merged, (replay,))
         self.assertFalse(added)
         self.assertFalse(refresh)
 
@@ -96,8 +97,11 @@ class GenerationlessScopeUpdateTests(unittest.TestCase):
                     )
                     self.assertFalse(added)
                     self.assertIsNone(refresh)
-                    self.assertEqual(obligation["sources"], [update])
+                    self.assertEqual(
+                        obligation["sources"], [replay if sequence == 3 else update]
+                    )
                     self.assertEqual(obligation["status"], "DISCHARGED")
+                    update = obligation["sources"][0]
 
     def test_a_present_null_generation_is_absent_and_never_the_text_none(self) -> None:
         store: n.Native = {}
@@ -418,6 +422,16 @@ class CapturedClosedTargetTests(unittest.TestCase):
                         {self.pull: {"kind": "pr", "number": 600, **value}}
                     ),
                     expected,
+                )
+
+    def test_a_captured_read_with_an_unexpected_state_closes_its_target(self) -> None:
+        for state in ("draft", "locked", "unknown", "  ", "opened", "reopen"):
+            with self.subTest(state=state):
+                self.assertEqual(
+                    github.closed_reads(
+                        {self.pull: {"kind": "pr", "number": 600, "state": state}}
+                    ),
+                    (Ref("pr", "600"),),
                 )
 
     def test_a_retained_source_without_a_state_stays_assignable(self) -> None:

@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from tools.agent_review_model import Ref
@@ -77,6 +77,18 @@ def _duplicate(source: Source, held: Sequence[Source]) -> bool:
     )
 
 
+def _advance(source: Source, held: Sequence[Source]) -> list[Source]:
+    """A repeat of a held category source moves its observation order forward."""
+    return [
+        replace(s, observed=source.observed)
+        if s.category == source.category
+        and _already_held(source, [s])
+        and newer(source.observed, s.observed) is True
+        else s
+        for s in held
+    ]
+
+
 def merge_sources(
     current: Sequence[Source], additions: Sequence[Source]
 ) -> tuple[tuple[Source, ...], bool, bool]:
@@ -88,6 +100,8 @@ def merge_sources(
             update = _category_update(
                 source, [s for s in result if s.category == source.category]
             )
+            if update is False:
+                result = _advance(source, result)
             if update is None:
                 refresh = True
             if not update:
