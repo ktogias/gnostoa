@@ -47,6 +47,8 @@ x-project-knowledge:
       target: /runbooks/maintain-the-kit.md
     - kind: references
       target: /runbooks/publish-source-only-release.md
+    - kind: references
+      target: /runbooks/invoke-external-reviewers.md
 ---
 
 # Deliver a bounded self-hosted slice

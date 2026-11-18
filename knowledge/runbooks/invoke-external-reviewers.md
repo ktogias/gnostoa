@@ -39,9 +39,9 @@ reviewer qualification, independence, quorum or human approval. No dispatcher,
 review-policy change, recurring subscription or new integration is installed.
 
 The [existing registry proposal in #297](https://github.com/ktogias/gnostoa/pull/297)
-remains its own unmerged change at this checkpoint. Its
-[v0.17 snapshot](https://github.com/ktogias/gnostoa/blob/89cce586488459b24f2fdbd792cf6947ccfb3439/knowledge/assessments/reviewer-provider-capabilities.json)
-is historical reference, not effective machine-dispatch authority. This guide
+remains its own unmerged change at this checkpoint. Its v0.17 registry snapshot,
+which lives only on that proposal, is historical reference, not effective
+machine-dispatch authority. This guide
 adds practical code/security route instructions; it does not fork that JSON
 schema. Reconcile these additions in #297 when its selected sequence resumes.
 
@@ -122,11 +122,12 @@ a general `@claude` response does not prove managed Code Review is enabled.
 Gnostoa's [mention workflow](https://github.com/ktogias/gnostoa/blob/main/.github/workflows/claude.yml)
 was integrated in #320 and its exact-pinned Actions allowlist was verified in
 [#321](https://github.com/ktogias/gnostoa/issues/321). For a review through that
-route, note that it is write-capable: the action exchanges OIDC for a GitHub App
-token with `contents`, `pull_requests` and `issues` write, and the mention job
-has no enforced review-only tool allowlist. A prompt that requests review and
-prohibits edits does not constrain that token. **Do not trigger this route on an
-untrusted PR or issue, even when a trusted collaborator is the caller.** For
+route, note how the checked-in workflow splits authority: the reviewer job holds
+a read-only token (`contents`, `pull-requests` and `issues` read), omits
+`id-token`, and restricts the action to the `Read`, `Grep` and `Glob` tools.
+Separate posting jobs hold the write permissions and only post the result.
+**Do not trigger this route on an untrusted PR or issue, even when a trusted
+collaborator is the caller.** For
 trusted content, a bounded request can name the exact head, scope and report
 format; reconcile the returned run and substantive report with that head. The
 earlier head/WI smoke response is not review completion. This Actions route does
@@ -255,7 +256,7 @@ recovery route or ask the owner for the missing setup/report. Do not weaken
 qualification, change permissions or mark the review complete to continue.
 
 [selection]: https://github.com/ktogias/gnostoa/pull/319#issuecomment-5822265857
-[registry]: https://github.com/ktogias/gnostoa/blob/89cce586488459b24f2fdbd792cf6947ccfb3439/knowledge/assessments/reviewer-provider-capabilities.json
+[registry]: https://github.com/ktogias/gnostoa/pull/297
 [claude-review]: https://code.claude.com/docs/en/code-review
 [claude-older]: https://support.claude.com/en/articles/14233555-set-up-code-review-for-claude-code
 [claude-actions]: https://code.claude.com/docs/en/github-actions
