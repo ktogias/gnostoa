@@ -59,7 +59,7 @@ def read_ref(pointer: str, held: Mapping[str, Any]) -> Ref | None:
 
 
 def observation(value: Any) -> Observation:
-    return value if isinstance(value, (str, int, float)) or value is None else None
+    return value if type(value) in (str, int, float) else None
 
 
 def read_source(pointer: str, held: Mapping[str, Any]) -> Read:

@@ -105,16 +105,18 @@ def merge_sources(obligation: Native, sources: Iterable[Native]) -> tuple[bool, 
     retained = []
     for source in merged:
         candidates = raw[source.fingerprint]
-        retained.append(
-            next(
-                (
-                    value
-                    for value in candidates
-                    if _source(value).observed == source.observed
-                ),
-                candidates[0],
-            )
+        exact = next(
+            (v for v in candidates if _source(v).observed == source.observed), None
         )
+        if exact is None:
+            # The held record advanced to an observation its own content never had.
+            exact = dict(candidates[0])
+            fresh = next(
+                (v for v in added if _source(v).observed == source.observed), None
+            )
+            if fresh is not None:
+                exact["observed"] = copy.deepcopy(fresh.get("observed"))
+        retained.append(exact)
     obligation["sources"] = retained
     return changed, refresh
 
@@ -157,6 +159,8 @@ def open_obligation(
 ) -> tuple[Native, bool, str | None]:
     oid = scope_identity(scope, origin)
     obligation = obligations.get(oid)
+    if obligation is not None and not isinstance(obligation.get("status"), str):
+        raise ValueError("PROJECT_PROGRESS a stored obligation has no status")
     previous = str(obligation["status"]) if obligation is not None else None
     if obligation is None:
         obligation = obligations[oid] = new_obligation(oid, scope, now)

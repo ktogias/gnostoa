@@ -140,6 +140,15 @@ class GenerationlessScopeUpdateTests(unittest.TestCase):
         self.assertEqual(obligation["status"], "OPEN")
 
 
+class ObservationTypeTests(unittest.TestCase):
+    def test_a_boolean_is_not_an_observation(self) -> None:
+        self.assertIsNone(github.observation(True))
+        self.assertIsNone(github.observation(False))
+        self.assertEqual(github.observation(3), 3)
+        self.assertEqual(github.observation(1.5), 1.5)
+        self.assertEqual(github.observation("t"), "t")
+
+
 class ReviewSubmissionTimeTests(unittest.TestCase):
     def setUp(self) -> None:
         row: n.Native = {

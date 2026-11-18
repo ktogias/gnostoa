@@ -110,6 +110,39 @@ class NativeProgressTests(unittest.TestCase):
         self.assertEqual(n.merge_sources(obligation, [middle]), (False, False))
         self.assertEqual(obligation["sources"], [later])
 
+    def test_same_generation_changed_content_still_advances_observed_order(
+        self,
+    ) -> None:
+        held = {
+            "kind": "scope",
+            "generation": "g1",
+            "note": "a",
+            "observed": {"epoch": "reader-a", "seq": 1},
+        }
+        # Same generation, other content: the held record has another fingerprint.
+        later = {**held, "note": "b", "observed": {"epoch": "reader-a", "seq": 5}}
+        obligation = n.new_obligation("id", self.scope, self.now)
+        n.merge_sources(obligation, [held])
+        self.assertEqual(n.merge_sources(obligation, [later]), (False, False))
+        self.assertEqual(
+            obligation["sources"][0]["observed"], {"epoch": "reader-a", "seq": 5}
+        )
+        # An older generation observed between the two must not replace it.
+        older = {
+            "kind": "scope",
+            "generation": "g0",
+            "observed": {"epoch": "reader-a", "seq": 3},
+        }
+        self.assertEqual(n.merge_sources(obligation, [older]), (False, False))
+        self.assertEqual(obligation["sources"][0]["generation"], "g1")
+
+    def test_stored_obligation_without_a_text_status_is_refused(self) -> None:
+        store: n.Native = {}
+        oid = n.scope_identity(self.scope, None)
+        store[oid] = {"id": oid, "status": 7, "sources": [], "requests": []}
+        with self.assertRaisesRegex(ValueError, "stored obligation has no status"):
+            n.open_obligation(store, self.scope, [], None, self.now)
+
     def test_newer_observation_accepts_digest_reversion(self) -> None:
         store: n.Native = {}
         for generation, sequence in (("g1", 1), ("g2", 2), ("g1", 3)):
