@@ -389,6 +389,35 @@ def _execution_input(raw: object, where: str, base_dir: Path) -> ExecutionInput:
     )
 
 
+def _parse_control(item: object, where: str) -> Control:
+    if not isinstance(item, dict):
+        raise SpecError(f"{where}: each control must be a mapping")
+    case = _require_str(item, "case", f"{where}.controls")
+    corroboration_raw = item.get("corroboration")
+    corroboration: Corroboration | None = None
+    if corroboration_raw is not None:
+        if not isinstance(corroboration_raw, dict):
+            raise SpecError(f"{where}: control corroboration must be a mapping")
+        substitutions = corroboration_raw.get("value_substitutions", {})
+        if not isinstance(substitutions, dict):
+            raise SpecError(f"{where}: value_substitutions must be a mapping")
+        prior = corroboration_raw.get("prior_qualification_sha256")
+        path_value = corroboration_raw.get("path")
+        if path_value is None and prior is None:
+            raise SpecError(
+                f"{where}: corroboration needs either a base-tree path or a "
+                "prior_qualification_sha256"
+            )
+        symbol_value = corroboration_raw.get("symbol")
+        corroboration = Corroboration(
+            path=str(path_value) if path_value is not None else None,
+            symbol=str(symbol_value) if symbol_value is not None else None,
+            value_substitutions={str(k): str(v) for k, v in substitutions.items()},
+            prior_qualification_sha256=str(prior) if prior is not None else None,
+        )
+    return Control(case=case, corroboration=corroboration)
+
+
 def _parse_semantics(raw: Mapping[str, Any], where: str) -> Semantics:
     discriminator = _require(raw, "discriminator", where)
     if not isinstance(discriminator, dict):
@@ -407,34 +436,7 @@ def _parse_semantics(raw: Mapping[str, Any], where: str) -> Semantics:
     controls_raw = raw.get("controls", [])
     if not isinstance(controls_raw, list):
         raise SpecError(f"{where}: controls must be a list")
-    controls: list[Control] = []
-    for item in controls_raw:
-        if not isinstance(item, dict):
-            raise SpecError(f"{where}: each control must be a mapping")
-        case = _require_str(item, "case", f"{where}.controls")
-        corroboration_raw = item.get("corroboration")
-        corroboration: Corroboration | None = None
-        if corroboration_raw is not None:
-            if not isinstance(corroboration_raw, dict):
-                raise SpecError(f"{where}: control corroboration must be a mapping")
-            substitutions = corroboration_raw.get("value_substitutions", {})
-            if not isinstance(substitutions, dict):
-                raise SpecError(f"{where}: value_substitutions must be a mapping")
-            prior = corroboration_raw.get("prior_qualification_sha256")
-            path_value = corroboration_raw.get("path")
-            if path_value is None and prior is None:
-                raise SpecError(
-                    f"{where}: corroboration needs either a base-tree path or a "
-                    "prior_qualification_sha256"
-                )
-            symbol_value = corroboration_raw.get("symbol")
-            corroboration = Corroboration(
-                path=str(path_value) if path_value is not None else None,
-                symbol=str(symbol_value) if symbol_value is not None else None,
-                value_substitutions={str(k): str(v) for k, v in substitutions.items()},
-                prior_qualification_sha256=str(prior) if prior is not None else None,
-            )
-        controls.append(Control(case=case, corroboration=corroboration))
+    controls = [_parse_control(item, where) for item in controls_raw]
 
     return Semantics(
         requirement=_require_str(raw, "requirement", where),

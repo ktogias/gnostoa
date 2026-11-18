@@ -233,6 +233,53 @@ def _within(root: Path, candidate: Path) -> bool:
     return True
 
 
+def confine_to_root(path: Path, project_root: Path, *, label: str) -> tuple[Path, Path]:
+    """Resolve `path` and `project_root`, refusing a path outside the root.
+
+    Returns the canonical path and root. `label` names the document in errors.
+    """
+
+    resolved = path.resolve()
+    root = project_root.resolve()
+    if not root.is_dir():
+        raise KnowledgeFormatError(f"Project root {root} is not a directory")
+    if not _within(root, resolved):
+        raise KnowledgeFormatError(
+            f"{label} {resolved} is outside the project root {root}"
+        )
+    return resolved, root
+
+
+def resolve_parent_reference(
+    reference: object, *, child: Path, root: Path, label: str
+) -> Path:
+    """Resolve one `extends` reference of `child`, confined to `root`.
+
+    `extends` is project-controlled input (Decision 0033): a reference must be
+    relative, and its canonical target must lie inside the canonical root. It is
+    refused before the parent is opened, so a rejected reference cannot leak the
+    bytes it names. `label` names the document kind in errors, for example
+    "Parent profile".
+    """
+
+    if not isinstance(reference, str):
+        raise KnowledgeFormatError(f"{label} reference must be a string in {child}")
+    candidate = Path(reference)
+    if candidate.is_absolute():
+        raise KnowledgeFormatError(
+            f"{label} {reference!r} from {child} must be relative"
+        )
+    # Canonicalise first, so a symlink cannot pass a check its target fails.
+    parent_path = (child.parent / candidate).resolve()
+    if not _within(root, parent_path):
+        raise KnowledgeFormatError(
+            f"{label} {reference!r} from {child} escapes the project root {root}"
+        )
+    if not parent_path.is_file():
+        raise KnowledgeFormatError(f"{label} {reference!r} from {child} does not exist")
+    return parent_path
+
+
 def load_profile(path: Path, *, project_root: Path) -> dict[str, Any]:
     """Load a profile, bounding its inheritance chain by the project root.
 
@@ -242,14 +289,7 @@ def load_profile(path: Path, *, project_root: Path) -> dict[str, Any]:
     acquire it from ``--project-root``.
     """
 
-    resolved = path.resolve()
-    root = project_root.resolve()
-    if not root.is_dir():
-        raise KnowledgeFormatError(f"Project root {root} is not a directory")
-    if not _within(root, resolved):
-        raise KnowledgeFormatError(
-            f"Profile {resolved} is outside the project root {root}"
-        )
+    resolved, root = confine_to_root(path, project_root, label="Profile")
     return _load_profile(resolved, (), root)
 
 
@@ -265,26 +305,9 @@ def _load_profile(path: Path, stack: tuple[Path, ...], root: Path) -> dict[str, 
 
     merged: dict[str, Any] = {}
     for reference in extends:
-        if not isinstance(reference, str):
-            raise KnowledgeFormatError(f"Profile reference must be a string in {path}")
-        candidate = Path(reference)
-        if candidate.is_absolute():
-            raise KnowledgeFormatError(
-                f"Parent profile {reference!r} from {path} must be relative"
-            )
-        # Canonicalise first, so a symlink cannot pass a check its target fails,
-        # and refuse before the parent is opened: a rejected reference must not
-        # leak the bytes it points at.
-        parent_path = (path.parent / candidate).resolve()
-        if not _within(root, parent_path):
-            raise KnowledgeFormatError(
-                f"Parent profile {reference!r} from {path} escapes "
-                f"the project root {root}"
-            )
-        if not parent_path.is_file():
-            raise KnowledgeFormatError(
-                f"Parent profile {reference!r} from {path} does not exist"
-            )
+        parent_path = resolve_parent_reference(
+            reference, child=path, root=root, label="Parent profile"
+        )
         parent = _load_profile(parent_path, (*stack, path), root)
         merged = deep_merge(merged, parent)
 

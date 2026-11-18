@@ -32,12 +32,9 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 
 def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:
@@ -69,18 +66,9 @@ def _receipt(task_id: str, bound: dict[str, str]) -> qualification.Qualification
 
 
 class ContainmentFixture(ConsumptionFixture):
-    def patched_effect(self) -> Any:
-        return mock.patch.object(
-            compiler,
-            "qualify_subjects",
-            side_effect=lambda *a, **k: _receipt(
-                k.get("task_id", "T1"), dict(k.get("bound") or {})
-            ),
-        )
-
     def crash_writing(self, filename: str) -> Any:
         """Patch the atomic writer to die when it reaches one canonical file."""
-        real_write = retained_commit._write_atomic
+        real_write = _original(retained_commit, "_write_atomic")
 
         def crash(path: Path, payload: bytes) -> None:
             if path.name == filename and path.parent == self.workspace:
@@ -100,6 +88,16 @@ class ContainmentFixture(ConsumptionFixture):
         payload = json.loads(path.read_text())
         payload.update(overrides)
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def patched_effect(fixture: ContainmentFixture) -> Any:
+    return mock.patch.object(
+        compiler,
+        "qualify_subjects",
+        side_effect=lambda *a, **k: _receipt(
+            k.get("task_id", "T1"), dict(k.get("bound") or {})
+        ),
+    )
 
 
 class NonReservingTornPublicationTests(ContainmentFixture):
@@ -155,10 +153,11 @@ class TransactionIdentifierContainmentTests(ContainmentFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        with self.patched_effect():
+        with patched_effect(self):
             with self.crash_writing(retained_commit.COMMIT_RECORD_FILENAME):
+                authority = self.consumption_authority(candidate)
                 with self.assertRaises(RuntimeError):
-                    self.prepare(authority=self.authority(candidate))
+                    self.prepare(authority=authority)
 
         self.tamper_reservation(transaction_id=str(escaped))
         with self.assertRaises(retained_commit.RetainedTransactionError):
@@ -181,10 +180,11 @@ class TransactionIdentifierContainmentTests(ContainmentFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        with self.patched_effect():
+        with patched_effect(self):
             with self.crash_writing(retained_commit.COMMIT_RECORD_FILENAME):
+                authority = self.consumption_authority(candidate)
                 with self.assertRaises(RuntimeError):
-                    self.prepare(authority=self.authority(candidate))
+                    self.prepare(authority=authority)
 
         relative = "../../outside-the-workspace/traversed"
         self.tamper_reservation(transaction_id=relative)
@@ -210,8 +210,9 @@ class TransactionIdentifierContainmentTests(ContainmentFixture):
                     )
                 except retained_commit.RetainedTransactionError:
                     continue
-                self.assertTrue(
-                    self.workspace.resolve() in directory.resolve().parents,
+                self.assertIn(
+                    self.workspace.resolve(),
+                    directory.resolve().parents,
                     f"{identifier!r} resolved to {directory} outside the workspace",
                 )
 
@@ -266,8 +267,8 @@ class CommitRecordLockProvenanceTests(ContainmentFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        with self.patched_effect():
-            self.prepare(authority=self.authority(candidate))
+        with patched_effect(self):
+            self.prepare(authority=self.consumption_authority(candidate))
         self.assertEqual(
             compiler.status(self.workspace)["status"], "READY_FOR_OWNER_REVIEW"
         )
@@ -310,12 +311,13 @@ class RecoveryBindingTests(ContainmentFixture):
         assert candidate is not None
         before = (self.workspace / "experiment-state.json").read_text()
 
-        with self.patched_effect():
+        with patched_effect(self):
             # Dies before any canonical file moves, so what recovery does next is
             # visible in the canonical state rather than already applied.
             with self.crash_writing(retained_commit.LEDGER_FILENAME):
+                authority = self.consumption_authority(candidate)
                 with self.assertRaises(RuntimeError):
-                    self.prepare(authority=self.authority(candidate))
+                    self.prepare(authority=authority)
 
             reservation = retained_commit.read_reservation(self.workspace)
             self.assertIsNotNone(reservation)

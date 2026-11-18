@@ -33,6 +33,11 @@ from pathlib import Path
 from typing import Any, Self, TypeVar, cast
 from unittest import mock
 
+from tests.claude_actions_workflows_support import (
+    _PROMPT_EXPRESSION,
+    _PROMPT_LITERAL,
+    _expression_secrets,
+)
 from tools import agent_review_claude_code as claude_adapter
 from tools import agent_review_report as report_core
 from tools.knowledge_common import load_yaml
@@ -80,12 +85,10 @@ _BOUNDED_PROMPT_SOURCES = frozenset(
 )
 # Expressions may be compound (a trust check guarding a field), so the contract
 # is on the identifiers they read, not on the expression text.
-_PROMPT_EXPRESSION = re.compile(r"\$\{\{(.+?)\}\}", re.DOTALL)
 # A parser that recognises only the contexts already in use is not a contract: a
 # future `secrets.*` or `env.*` interpolation would contribute no identifier and
 # leave the exhaustive-source test green. Every token an expression contains is
 # therefore classified, and anything unrecognised fails the test.
-_PROMPT_LITERAL = re.compile(r"'(?:[^']|'')*'")
 _PROMPT_TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
 _PROMPT_FUNCTIONS = frozenset(
     {
@@ -129,46 +132,9 @@ _CLAUDE_CREDENTIAL = "secrets.CLAUDE_CODE_OAUTH_TOKEN"
 _CREDENTIAL_ENVIRONMENT = "claude-review"
 # A reference to the `secrets` context, as opposed to a property of that name or the
 # word inside a string literal. Context names are case-insensitive.
-_SECRETS_CONTEXT = re.compile(r"(?<![\w.])secrets\b", re.IGNORECASE)
 # What may follow it and still name exactly one secret: a dotted name, or an index that
 # is a single literal. Anything else -- the bare context, an object filter, a computed
 # index -- names none, so it can reach every secret.
-_NAMED_SECRET = re.compile(
-    r"\s*(?:\.\s*([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\*)|\[\s*'((?:[^']|'')*)'\s*\])"
-)
-
-
-def _secret_references(expression: str) -> list[str | None]:
-    """Return, for each `secrets` reference in ``expression``, the secret it names.
-
-    None stands for a reference that names no single secret, which reaches them all.
-    The first detector listed the spellings that reach the credential, and each review
-    found another: an index, whole-context `toJSON(secrets)`, then the same with a
-    space before the parenthesis. The spellings that name one secret are the small
-    set, so those are recognised and everything else is treated as reaching it.
-    """
-    literals = [match.span() for match in _PROMPT_LITERAL.finditer(expression)]
-    names: list[str | None] = []
-    for match in _SECRETS_CONTEXT.finditer(expression):
-        if any(start <= match.start() < end for start, end in literals):
-            continue
-        named = _NAMED_SECRET.match(expression, match.end())
-        if named is None:
-            names.append(None)
-        elif named.group(1) is not None:
-            names.append(named.group(1))
-        else:
-            names.append(named.group(2).replace("''", "'"))
-    return names
-
-
-def _expression_secrets(text: str) -> list[str | None]:
-    """Return the secret each expression in ``text`` names, as `_secret_references`."""
-    return [
-        name
-        for expression in _PROMPT_EXPRESSION.findall(text)
-        for name in _secret_references(expression)
-    ]
 
 
 def _reaches_claude_credential(workflow: dict[str, Any], job: dict[str, Any]) -> bool:
@@ -315,6 +281,46 @@ def _prompt_contexts(prompt: str) -> set[str]:
                 continue
             contexts.add(token)
     return contexts
+
+
+def _prompt_clauses(prompt: str) -> list[str]:
+    """Return the prompt's clauses outside expressions.
+
+    Each paragraph is split after every '.' or ';', so the unpunctuated header lines
+    stay out of the paragraph's first clause.
+    """
+    return [
+        clause
+        for paragraph in re.split(r"\n\s*\n", _outside_expressions(prompt))
+        if paragraph.strip()
+        for clause in re.split(r"(?<=[.;])\s+", " ".join(paragraph.split()))
+    ]
+
+
+_REVIEW_REQUEST = ".gnostoa-review-context/request/request"
+
+# A clause that sets the reviewer's reading order. Every one must name the request, so
+# a "Start with AGENTS.md" beside the request-first entry fails, before it or after it.
+_READING_ORDER = re.compile(
+    r"\b(?:first|start(?:ing)?\s+(?:with|by|from)|begin(?:ning)?\s+(?:with|by))\b",
+    re.IGNORECASE,
+)
+
+# A clause about retrieval, the turn budget or limits must carry one of the reviewed
+# completion instructions below. Any other is guidance this test cannot tell from a
+# contradiction ("keep retrieving", "omit the limits"), so it fails until it is
+# reviewed and added. Closed on purpose, like _DISOWNED_ABSENCE.
+_COMPLETION_SUBJECT = re.compile(
+    r"retriev|\bturns?\b|\bbudget\b|\bcap\b|\blimits?\b", re.IGNORECASE
+)
+_COMPLETION_INSTRUCTIONS = (
+    "agentic turns for the entire review",
+    "reserve the final response for findings, examined scope and remaining limits",
+    "stop retrieving before the cap",
+    "state the limits and finish",
+    "unavailable evidence is a review limit",
+    "report any provider-cap or unavailable notice",
+)
 
 
 # Markers that can only be retirement or denial. The set of ways to *assert* that a
@@ -9555,6 +9561,97 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             ).split()
         )
         self.assertRegex(args, r"--max-turns \d+")
+
+    def test_mention_reviewer_inventory_is_the_granted_read_tools(self) -> None:
+        """A permission allowlist alone leaves other built-ins visible to the model.
+
+        The measured 40-turn failure reported three denials, without their tool
+        identities. This proves the configured inventory, not what caused those
+        particular denials or whether a model will finish within the budget.
+        """
+        args = str(_claude_step(load_yaml(MENTION_WORKFLOW))["with"]["claude_args"])
+        for flag in ("tools", "allowedTools"):
+            with self.subTest(flag=flag):
+                values = re.findall(rf"--{flag}\s+[\"']?([^\s\"']+)", args)
+                self.assertEqual(1, len(values), f"one explicit --{flag} is required")
+                self.assertEqual({"Read", "Grep", "Glob"}, set(values[0].split(",")))
+        self.assertRegex(args, r"--max-turns\s+40(?:\s|$)")
+
+    def _assert_request_first(self, prompt: str) -> None:
+        clauses = _prompt_clauses(prompt)
+        text = " ".join(clauses)
+        self.assertIn(f"First read {_REVIEW_REQUEST}.", clauses)
+        # Nothing before the request names a file or a path to read instead.
+        self.assertNotRegex(text[: text.index(_REVIEW_REQUEST)], r"\w\.\w|/")
+        for clause in clauses:
+            if _READING_ORDER.search(clause):
+                self.assertIn("request/request", clause, "a second reading order")
+        self.assertLess(text.index(_REVIEW_REQUEST), text.index("README.md"))
+        self.assertIn("README.md, then AGENTS.md", text)
+        self.assertIn("only the route needed for this read-only review", text)
+        self.assertIn("Do not perform implementation", text)
+        self.assertIn("unavailable evidence is a review limit", text)
+
+    def test_mention_review_entry_is_request_first_and_task_scoped(self) -> None:
+        """Structural review criterion: one first action, with the declared route.
+
+        The runtime reviewer cannot perform the operational route's provider or
+        implementation work. It must retain that limitation rather than trying
+        unavailable tools or silently treating a partial view as current. A second
+        reading order, before the request or after it, contradicts the first action.
+        """
+        prompt = str(_claude_step(load_yaml(MENTION_WORKFLOW))["with"]["prompt"])
+        self._assert_request_first(prompt)
+        for before, conflict in (
+            ("First read", "Start with AGENTS.md and follow the route it names. "),
+            ("First read", "Read docs/ROUTE.md before anything else. "),
+            ("Report correctness", "Start with README.md before the request. "),
+        ):
+            variant = prompt.replace(before, conflict + before, 1)
+            with self.subTest(conflict=conflict), self.assertRaises(AssertionError):
+                self._assert_request_first(variant)
+
+    def _assert_truthful_completion(self, prompt: str, args: str) -> None:
+        clauses = _prompt_clauses(prompt)
+        # One budget, and it is the session's.
+        self.assertEqual(
+            re.findall(r"--max-turns\s+(\d+)", args),
+            re.findall(r"(\d+) agentic turns", " ".join(clauses)),
+        )
+        for clause in clauses:
+            if _COMPLETION_SUBJECT.search(clause):
+                self.assertTrue(
+                    any(i in clause.lower() for i in _COMPLETION_INSTRUCTIONS),
+                    f"unreviewed completion guidance: {clause}",
+                )
+        for instruction in (
+            "Reserve the final response for findings, examined scope and remaining"
+            " limits;",
+            "stop retrieving before the cap.",
+            "If the budget or evidence is insufficient, state the limits and finish;",
+            "do not claim the unexamined work was reviewed.",
+        ):
+            self.assertIn(instruction, clauses)
+
+    def test_mention_review_reserves_a_truthful_final_response(self) -> None:
+        """Prompt conformance cannot establish actual model turn-budget success.
+
+        Guidance that keeps the reviewer retrieving, hides its limits or states
+        another budget contradicts the reserved final response.
+        """
+        claude = _claude_step(load_yaml(MENTION_WORKFLOW))
+        prompt, args = str(claude["with"]["prompt"]), str(claude["with"]["claude_args"])
+        self._assert_truthful_completion(prompt, args)
+        for conflict in (
+            "Keep retrieving until every changed file is read. ",
+            "Omit the limits from the final response. ",
+            "Budget: 60 agentic turns for the entire review. ",
+        ):
+            variant = prompt.replace(
+                "Report correctness", conflict + "Report correctness", 1
+            )
+            with self.subTest(conflict=conflict), self.assertRaises(AssertionError):
+                self._assert_truthful_completion(variant, args)
 
     def test_a_reviewer_that_never_started_is_still_reported(self) -> None:
         """The publish step was gated on the action having produced an execution file,

@@ -34,14 +34,10 @@ import json
 import unittest
 from unittest import mock
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
 from tools.capsule import compiler, qualification, retained_commit
 from tools.capsule import lock as lock_module
 from tools.capsule.identity import digest_of
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 
 def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:
@@ -88,7 +84,7 @@ class EffectBearingTransactionTests(ConsumptionFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         effects: list[str] = []
 
         def qualify_then_let_a_zero_effect_prepare_commit(*args, **kwargs):  # type: ignore[no-untyped-def]
@@ -130,7 +126,7 @@ class EffectBearingTransactionTests(ConsumptionFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
 
         def qualify_then_commit_elsewhere(*args, **kwargs):  # type: ignore[no-untyped-def]
             del args
@@ -167,7 +163,7 @@ class RetainedLockBindingTests(ConsumptionFixture):
                 k.get("task_id", "T1"), dict(k.get("bound") or {})
             ),
         ):
-            self.prepare(authority=self.authority(candidate))
+            self.prepare(authority=self.consumption_authority(candidate))
         return candidate
 
     def test_substituted_lock_with_recomputed_digest_cannot_prove_currentness(
@@ -226,7 +222,7 @@ class ConcurrentReconciliationTests(ConsumptionFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
 
         owner_in_effect = threading.Event()
         waiter_observed_owner = threading.Event()
@@ -320,6 +316,10 @@ class ConcurrentReconciliationTests(ConsumptionFixture):
 
         owner_result = results["owner"]
         waiter_result = results["waiter"]
+        if not isinstance(owner_result, compiler.PrepareResult):
+            self.fail("owner_result must be a compiler.PrepareResult")
+        if not isinstance(waiter_result, compiler.PrepareResult):
+            self.fail("waiter_result must be a compiler.PrepareResult")
         self.assertEqual(owner_result.status, "READY_FOR_OWNER_REVIEW")
         self.assertEqual(
             waiter_result.status,
@@ -369,11 +369,14 @@ class ConcurrentAuthorityLessCallerTests(ConsumptionFixture):
             "qualify_subjects",
             side_effect=qualify_then_let_an_authority_less_caller_run,
         ):
-            owner = self.prepare(authority=self.authority(candidate))
+            owner = self.prepare(authority=self.consumption_authority(candidate))
 
         self.assertEqual(effects, ["qualify_subjects"])
         # The authority-less caller is entitled to remain blocked ...
-        self.assertEqual(results["authority_less"].status, "BLOCKED")
+        authority_less = results["authority_less"]
+        if not isinstance(authority_less, compiler.PrepareResult):
+            self.fail("authority_less must be a compiler.PrepareResult")
+        self.assertEqual(authority_less.status, "BLOCKED")
         # ... but not to cost the owner its committed transaction.
         self.assertEqual(owner.status, "READY_FOR_OWNER_REVIEW")
         current = compiler.status(self.workspace)

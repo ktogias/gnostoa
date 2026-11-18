@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import copy
+import functools
 import json
 import os
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -15,6 +18,8 @@ from tools.review_protected import ProtectedMainDocument
 
 _SENTINEL = "GNOSTOA_R2_PROTECTED_INPUT_SENTINEL_2f74c97d"
 _SYNTHETIC_RECEIPT = "https://github.com/ktogias/gnostoa/issues/11#issuecomment-1"
+# The users a local candidate may run as: the name, or its numeric form (Decision 0125).
+_LOCAL_CANDIDATE_USERS = frozenset({"kit", "10001:10001"})
 
 
 def _required_environment(name: str) -> str:
@@ -153,7 +158,13 @@ def _verify_local_candidate(
         .decode("utf-8", errors="strict")
         .strip()
     )
-    if observed.split("|") != ["linux", "amd64", "kit", expected_revision]:
+    fields = observed.split("|")
+    if (
+        len(fields) != 4
+        or fields[:2] != ["linux", "amd64"]
+        or fields[2] not in _LOCAL_CANDIDATE_USERS
+        or fields[3] != expected_revision
+    ):
         raise RuntimeError("local R2 candidate runtime identity changed")
 
     ids = (
@@ -220,6 +231,125 @@ def _verify_local_candidate(
         raise RuntimeError("local R2 candidate public surface changed")
 
 
+@dataclass
+class _CandidateRun:
+    """One `main()` call's state, made fresh for each call: the candidate image and its
+    synthetic stand-in, the daemon image the original plan names, and the shared tmp
+    residue proof."""
+
+    candidate_image: str
+    synthetic_runtime_image: str
+    daemon_image: str | None = None
+    tmp_volume_checked: bool = False
+    sentinel_absent: bool = False
+
+
+def _build_candidate_plan(
+    original_plan: Callable[..., dict[str, object]],
+    run: _CandidateRun,
+    *,
+    consumer: dict[str, Any],
+    socket_volume: str,
+    tmp_volume: str,
+    daemon_name: str,
+    outer_name: str,
+) -> dict[str, object]:
+    """The original plan, with its synthetic runtime image replaced by the candidate
+    exactly once. Its daemon image is kept first, so that the residue probe has it even
+    when the plan is then refused."""
+    plan = original_plan(
+        consumer=consumer,
+        socket_volume=socket_volume,
+        tmp_volume=tmp_volume,
+        daemon_name=daemon_name,
+        outer_name=outer_name,
+    )
+    daemon_image = plan.get("daemon_image")
+    if isinstance(daemon_image, str):
+        run.daemon_image = daemon_image
+    outer = plan.get("outer")
+    if not isinstance(outer, list):
+        raise RuntimeError("R2 outer execution plan is malformed")
+    replacements = sum(item == run.synthetic_runtime_image for item in outer)
+    if replacements != 1:
+        raise RuntimeError("R2 outer plan did not bind one candidate image")
+    plan["outer"] = [
+        run.candidate_image if item == run.synthetic_runtime_image else item
+        for item in outer
+    ]
+    return plan
+
+
+def _tmp_residue_issue(
+    run: _CandidateRun, volume_name: str, config_dir: Path
+) -> str | None:
+    """Whether the shared tmp volume holds the protected input sentinel; None once the
+    probe proves it absent. Without the original plan's daemon image there is no probe."""
+    image = run.daemon_image
+    if image is None:
+        return "R2 shared tmp residue inspection had no daemon image"
+    try:
+        probe = _run_docker(
+            [
+                "run",
+                "--rm",
+                "--interactive",
+                "--pull=never",
+                "--network",
+                "none",
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges",
+                "--mount",
+                f"type=volume,source={volume_name},target=/probe,readonly",
+                "--entrypoint",
+                "sh",
+                image,
+                "-ec",
+                (
+                    "set +e; "
+                    "grep -R -F -q -f /dev/stdin /probe 2>/dev/null; "
+                    "status=$?; "
+                    'case "$status" in 0) exit 42 ;; '
+                    "1) exit 0 ;; *) exit 43 ;; esac"
+                ),
+            ],
+            config_dir=config_dir,
+            timeout=30,
+            input_bytes=(_SENTINEL + "\n").encode("utf-8"),
+            reject_incomplete_input=True,
+        )
+    except Exception as exc:
+        return f"R2 shared tmp residue inspection failed ({type(exc).__name__})"
+    if probe.returncode == 0:
+        run.sentinel_absent = True
+        return None
+    if probe.returncode == 42:
+        return (
+            "R2 candidate persisted protected input in host-backed shared tmp storage"
+        )
+    return "R2 shared tmp residue inspection did not complete"
+
+
+def _inspect_then_remove(
+    original_remove_volume: Callable[[str, Path], str | None],
+    run: _CandidateRun,
+    volume_name: str,
+    config_dir: Path,
+) -> str | None:
+    """The shared tmp volume's residue proof, then the original removal of any volume;
+    every issue is joined."""
+    probe_issue: str | None = None
+    if "-tmp-" in volume_name:
+        run.tmp_volume_checked = True
+        probe_issue = _tmp_residue_issue(run, volume_name, config_dir)
+    cleanup_issue = original_remove_volume(volume_name, config_dir)
+    issues = [issue for issue in (probe_issue, cleanup_issue) if issue]
+    return "; ".join(issues) if issues else None
+
+
 def main() -> int:
     candidate_image = _required_environment("GNOSTOA_R2A_CANDIDATE_IMAGE")
     source_revision = _required_environment("GNOSTOA_R2_EXPECTED_SOURCE_REVISION")
@@ -252,37 +382,10 @@ def main() -> int:
     admitted_identity = canonical_json(consumer)
     input_document = _live_input(protected_bundle)
 
-    original_plan = review_outer._build_isolated_execution_plan
-    original_remove_volume = review_outer._remove_volume
-    tmp_volume_checked = False
-    sentinel_absent = False
-
-    def build_candidate_plan(
-        *,
-        consumer: dict[str, Any],
-        socket_volume: str,
-        tmp_volume: str,
-        daemon_name: str,
-        outer_name: str,
-    ) -> dict[str, object]:
-        plan = original_plan(
-            consumer=consumer,
-            socket_volume=socket_volume,
-            tmp_volume=tmp_volume,
-            daemon_name=daemon_name,
-            outer_name=outer_name,
-        )
-        outer = plan.get("outer")
-        if not isinstance(outer, list):
-            raise RuntimeError("R2 outer execution plan is malformed")
-        replacements = sum(item == synthetic_runtime_image for item in outer)
-        if replacements != 1:
-            raise RuntimeError("R2 outer plan did not bind one candidate image")
-        plan["outer"] = [
-            candidate_image if item == synthetic_runtime_image else item
-            for item in outer
-        ]
-        return plan
+    run = _CandidateRun(
+        candidate_image=candidate_image,
+        synthetic_runtime_image=synthetic_runtime_image,
+    )
 
     def verify_candidate(consumer: dict[str, Any], config_dir: Path) -> None:
         _verify_local_candidate(
@@ -293,63 +396,6 @@ def main() -> int:
             consumer=consumer,
             config_dir=config_dir,
         )
-
-    def inspect_then_remove(volume_name: str, config_dir: Path) -> str | None:
-        nonlocal tmp_volume_checked, sentinel_absent
-        probe_issue: str | None = None
-        if "-tmp-" in volume_name:
-            tmp_volume_checked = True
-            try:
-                probe = _run_docker(
-                    [
-                        "run",
-                        "--rm",
-                        "--interactive",
-                        "--pull=never",
-                        "--network",
-                        "none",
-                        "--read-only",
-                        "--cap-drop",
-                        "ALL",
-                        "--security-opt",
-                        "no-new-privileges",
-                        "--mount",
-                        f"type=volume,source={volume_name},target=/probe,readonly",
-                        "--entrypoint",
-                        "sh",
-                        review_outer._DAEMON_IMAGE,
-                        "-ec",
-                        (
-                            "set +e; "
-                            "grep -R -F -q -f /dev/stdin /probe 2>/dev/null; "
-                            "status=$?; "
-                            'case "$status" in 0) exit 42 ;; '
-                            "1) exit 0 ;; *) exit 43 ;; esac"
-                        ),
-                    ],
-                    config_dir=config_dir,
-                    timeout=30,
-                    input_bytes=(_SENTINEL + "\n").encode("utf-8"),
-                    reject_incomplete_input=True,
-                )
-            except Exception as exc:
-                probe_issue = (
-                    f"R2 shared tmp residue inspection failed ({type(exc).__name__})"
-                )
-            else:
-                if probe.returncode == 0:
-                    sentinel_absent = True
-                elif probe.returncode == 42:
-                    probe_issue = (
-                        "R2 candidate persisted protected input in host-backed "
-                        "shared tmp storage"
-                    )
-                else:
-                    probe_issue = "R2 shared tmp residue inspection did not complete"
-
-        cleanup_issue = original_remove_volume(volume_name, config_dir)
-        issues = [issue for issue in (probe_issue, cleanup_issue) if issue]
-        return "; ".join(issues) if issues else None
 
     with (
         mock.patch.object(
@@ -370,12 +416,18 @@ def main() -> int:
         mock.patch.object(
             review_outer,
             "_build_isolated_execution_plan",
-            side_effect=build_candidate_plan,
+            spec=True,
+            new_callable=lambda *, spec: mock.Mock(
+                side_effect=functools.partial(_build_candidate_plan, spec, run)
+            ),
         ),
         mock.patch.object(
             review_outer,
             "_remove_volume",
-            side_effect=inspect_then_remove,
+            spec=True,
+            new_callable=lambda *, spec: mock.Mock(
+                side_effect=functools.partial(_inspect_then_remove, spec, run)
+            ),
         ),
     ):
         code, raw = review_outer.run_prior_effective_current_advisory(input_document)
@@ -400,7 +452,7 @@ def main() -> int:
         )
     if payload.get("binding") is not False:
         raise RuntimeError("R2 layered candidate attempted a binding result")
-    if not tmp_volume_checked or not sentinel_absent:
+    if not run.tmp_volume_checked or not run.sentinel_absent:
         raise RuntimeError("R2 shared tmp residue proof was not completed")
 
     receipt = {

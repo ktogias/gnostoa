@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -171,7 +172,7 @@ class ExperimentHandoffContractTests(unittest.TestCase):
             swapped = False
 
             def swap_after_bundle(
-                path: object,
+                path: str | os.PathLike[str],
                 mode: int = 0o777,
                 *,
                 dir_fd: int | None = None,

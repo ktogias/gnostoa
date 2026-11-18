@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import ast
+import hashlib
+import io
 import json
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from itertools import pairwise
 from typing import Any
 
 SCHEMA = "gnostoa-analyzer-readback/v1"
+# The bundle the authenticated readback workflow records (ci/analyzer_readback.py).
+BUNDLE_SCHEMA = "gnostoa-analyzer-readback-bundle/v1"
 COVERAGE_STATUSES = frozenset(
     {"COMPLETE", "INCOMPLETE", "PARTIAL", "RATE_LIMITED", "UNAVAILABLE", "ERROR"}
 )
@@ -15,9 +21,20 @@ COMPLETENESS_STATES = frozenset(
 _READBACK_UNAVAILABLE_COVERAGE = frozenset(
     {"PARTIAL", "RATE_LIMITED", "UNAVAILABLE", "ERROR"}
 )
-SCOPES = frozenset({"DIFF", "FULL"})
+# A provider's read of the change (DIFF), of the whole tree (FULL), or of the pull
+# request's merge base (BASE), which only an optional provider gives, so its findings
+# there can be compared with the head's (Decision 0132).
+SCOPES = frozenset({"DIFF", "FULL", "BASE"})
 MAX_FINDINGS = 10_000
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
+# A SHA-256 digest as the readback and the verdict write it (Q on #480: one pattern).
+SHA256_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+# A finding's enclosing scope: the smallest function or class whose lines hold it. It
+# is the content identity M17's debt ledger matches, whatever the line number (#389).
+# Its `scope_line` places the finding inside it, 1 at its first line, so the same
+# occurrence is known in a byte-identical scope wherever the scope moved (Decision 0132).
+ENCLOSING_KINDS = frozenset({"function", "class"})
+_ENCLOSING_KEYS = frozenset({"kind", "name", "sha256"})
 _OWNER_SEGMENT = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$")
 _REPOSITORY_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -139,6 +156,85 @@ def _tool_identity(value: object) -> dict[str, str] | None:
     return result
 
 
+def _enclosing(value: object) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise AnalyzerReadbackError("finding enclosing scope must be an object")
+    # A scope without its place still parses, and places nothing (PAO 6681312300).
+    if set(value) - {"scope_line"} != _ENCLOSING_KEYS:
+        raise AnalyzerReadbackError(
+            "finding enclosing scope has missing or unknown fields"
+        )
+    kind = _required_text(value["kind"], "finding enclosing kind")
+    if kind not in ENCLOSING_KINDS:
+        raise AnalyzerReadbackError("finding enclosing kind is unsupported")
+    digest = _required_text(value["sha256"], "finding enclosing sha256")
+    if SHA256_DIGEST.fullmatch(digest) is None:
+        raise AnalyzerReadbackError("finding enclosing sha256 must be 64 lowercase hex")
+    scope: dict[str, Any] = {
+        "kind": kind,
+        "name": _required_text(value["name"], "finding enclosing name"),
+        "sha256": digest,
+    }
+    if "scope_line" in value:
+        scope["scope_line"] = _positive_int(
+            value["scope_line"], "finding enclosing scope_line"
+        )
+    return scope
+
+
+def enclosing_scope(source: str, line: int) -> dict[str, Any] | None:
+    """The smallest function or class of Python `source` whose lines hold `line`, as a
+    finding's `enclosing`: its kind, its name, the SHA-256 of its exact lines,
+    decorators included, and `line`'s place among them. None at module level, past
+    the source, or when it does not parse: such a finding is never matched to
+    inherited debt."""
+
+    return scope_reader(source)(line)
+
+
+def scope_reader(source: str) -> Callable[[int], dict[str, Any] | None]:
+    """`enclosing_scope` for each line of `source`, from one parse (Revix on #480).
+    The lines are Python's own, split only at a line feed, a carriage return or
+    both, and hashed with their endings: a Unicode line separator inside a literal
+    is part of its line (Codex on #480)."""
+
+    # Python reads past a leading UTF-8 BOM, and so does the scope (cubic on #480).
+    source = source.removeprefix("\ufeff")
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return lambda _line: None
+    scopes: list[tuple[int, int, str, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            kind = "function"
+        elif isinstance(node, ast.ClassDef):
+            kind = "class"
+        else:
+            continue
+        first = min([node.lineno, *(item.lineno for item in node.decorator_list)])
+        scopes.append((first, node.end_lineno or node.lineno, kind, node.name))
+    lines = io.StringIO(source, newline="").readlines()
+
+    def scope_of(line: int) -> dict[str, Any] | None:
+        holding = [scope for scope in scopes if scope[0] <= line <= scope[1]]
+        if not holding:
+            return None
+        first, last, kind, name = min(holding, key=lambda scope: scope[1] - scope[0])
+        text = "".join(lines[first - 1 : last])
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        return {
+            "kind": kind,
+            "name": name,
+            "sha256": digest,
+            "scope_line": line - first + 1,
+        }
+
+    return scope_of
+
+
 def normalize_finding(value: Mapping[str, Any]) -> dict[str, Any]:
     finding: dict[str, Any] = {
         "id": _required_text(value.get("id"), "finding id"),
@@ -154,6 +250,9 @@ def normalize_finding(value: Mapping[str, Any]) -> dict[str, Any]:
     location = _range(value.get("range"))
     if location is not None:
         finding["range"] = location
+    enclosing = _enclosing(value.get("enclosing"))
+    if enclosing is not None:
+        finding["enclosing"] = enclosing
     provenance = _provenance(value.get("provenance"))
     if provenance:
         finding["provenance"] = provenance
@@ -232,6 +331,30 @@ def coverage(
     return result
 
 
+def _check_completeness_pairing(completeness: str, coverage_status: str) -> None:
+    """A readback's completeness and its coverage status must agree."""
+
+    if completeness not in COMPLETENESS_STATES:
+        raise AnalyzerReadbackError("completeness state is unsupported")
+    if completeness == "FULL_RUN" and coverage_status != "COMPLETE":
+        raise AnalyzerReadbackError("FULL_RUN requires COMPLETE coverage")
+    if completeness == "AMBIGUOUS" and coverage_status != "INCOMPLETE":
+        raise AnalyzerReadbackError("AMBIGUOUS requires INCOMPLETE coverage")
+    if coverage_status == "INCOMPLETE" and completeness != "AMBIGUOUS":
+        raise AnalyzerReadbackError(
+            "INCOMPLETE coverage requires AMBIGUOUS completeness"
+        )
+    if completeness == "AUTH_UNAVAILABLE" and coverage_status != "UNAVAILABLE":
+        raise AnalyzerReadbackError("AUTH_UNAVAILABLE requires UNAVAILABLE coverage")
+    if (
+        completeness == "READBACK_UNAVAILABLE"
+        and coverage_status not in _READBACK_UNAVAILABLE_COVERAGE
+    ):
+        raise AnalyzerReadbackError(
+            "READBACK_UNAVAILABLE requires unavailable or incomplete read coverage"
+        )
+
+
 def build_readback(
     *,
     provider: str,
@@ -280,29 +403,7 @@ def build_readback(
         ),
     )
     normalized_completeness = _required_text(completeness, "completeness")
-    if normalized_completeness not in COMPLETENESS_STATES:
-        raise AnalyzerReadbackError("completeness state is unsupported")
-    coverage_status = normalized_coverage["status"]
-    if normalized_completeness == "FULL_RUN" and coverage_status != "COMPLETE":
-        raise AnalyzerReadbackError("FULL_RUN requires COMPLETE coverage")
-    if normalized_completeness == "AMBIGUOUS" and coverage_status != "INCOMPLETE":
-        raise AnalyzerReadbackError("AMBIGUOUS requires INCOMPLETE coverage")
-    if coverage_status == "INCOMPLETE" and normalized_completeness != "AMBIGUOUS":
-        raise AnalyzerReadbackError(
-            "INCOMPLETE coverage requires AMBIGUOUS completeness"
-        )
-    if (
-        normalized_completeness == "AUTH_UNAVAILABLE"
-        and coverage_status != "UNAVAILABLE"
-    ):
-        raise AnalyzerReadbackError("AUTH_UNAVAILABLE requires UNAVAILABLE coverage")
-    if (
-        normalized_completeness == "READBACK_UNAVAILABLE"
-        and coverage_status not in _READBACK_UNAVAILABLE_COVERAGE
-    ):
-        raise AnalyzerReadbackError(
-            "READBACK_UNAVAILABLE requires unavailable or incomplete read coverage"
-        )
+    _check_completeness_pairing(normalized_completeness, normalized_coverage["status"])
     requested = _sha(requested_head, "requested head")
     observed = None if observed_head is None else _sha(observed_head, "observed head")
     if normalized_coverage["status"] == "COMPLETE" and observed != requested:
@@ -334,6 +435,529 @@ def build_readback(
             raise AnalyzerReadbackError("native provenance must be an object")
         document["native"] = dict(native)
     return document
+
+
+_READBACK_KEYS = frozenset(
+    {
+        "schema",
+        "provider",
+        "adapter",
+        "repository",
+        "pull_number",
+        "requested_head",
+        "scope",
+        "completeness",
+        "native_mode",
+        "observed_at",
+        "run_state",
+        "coverage",
+        "findings",
+    }
+)
+_READBACK_OPTIONAL_KEYS = frozenset({"observed_head", "analysis_id", "native"})
+_BUNDLE_KEYS = frozenset(
+    {
+        "schema",
+        "repository",
+        "pull_number",
+        "requested_head",
+        "observed_head",
+        "observed_at",
+        "subject_binding",
+        "readbacks",
+    }
+)
+_BINDING_KEYS = {
+    "BOUND": _BUNDLE_KEYS | {"github_projection"},
+    "INCOMPLETE": _BUNDLE_KEYS | {"reason"},
+}
+_PROJECTION_KEYS = frozenset({"statuses", "check_runs", "review_comments"})
+
+
+def _mapping(value: object, label: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise AnalyzerReadbackError(f"{label} must be an object")
+    return value
+
+
+def parse_readback(value: object) -> dict[str, Any]:
+    """A recorded readback, accepted only when `build_readback` rebuilds it
+    exactly from its own fields: one contract for writing and reading it
+    (#407, slice 1b.3b-2)."""
+
+    readback = _mapping(value, "readback")
+    keys = set(readback)
+    if not _READBACK_KEYS <= keys or keys - _READBACK_KEYS - _READBACK_OPTIONAL_KEYS:
+        raise AnalyzerReadbackError("readback has missing or unknown fields")
+    if readback["schema"] != SCHEMA:
+        raise AnalyzerReadbackError(f"readback schema must be {SCHEMA!r}")
+    findings = readback["findings"]
+    if not isinstance(findings, list):
+        raise AnalyzerReadbackError("readback findings must be an array")
+    for finding in findings:
+        _mapping(finding, "readback finding")
+    if not isinstance(readback["scope"], str):
+        raise AnalyzerReadbackError("readback scope must be text")
+    rebuilt = build_readback(
+        provider=readback["provider"],
+        adapter=readback["adapter"],
+        repository=readback["repository"],
+        pull_number=readback["pull_number"],
+        requested_head=readback["requested_head"],
+        observed_head=readback.get("observed_head"),
+        analysis_id=readback.get("analysis_id"),
+        scope=readback["scope"],
+        completeness=readback["completeness"],
+        native_mode=readback["native_mode"],
+        observed_at=readback["observed_at"],
+        run_state=readback["run_state"],
+        coverage_record=_mapping(readback["coverage"], "readback coverage"),
+        findings=findings,
+        native=readback.get("native"),
+    )
+    if canonical_json(rebuilt) != canonical_json(readback):
+        raise AnalyzerReadbackError("readback is not what its contract builds")
+    return rebuilt
+
+
+def parse_bundle(value: object) -> dict[str, Any]:
+    """A recorded readback bundle. A `BOUND` one observed its requested head and
+    holds only readbacks of its own subject; an `INCOMPLETE` one says why and
+    holds none (#407, slice 1b.3b-2)."""
+
+    bundle = _mapping(value, "bundle")
+    binding = bundle.get("subject_binding")
+    if not isinstance(binding, str) or binding not in _BINDING_KEYS:
+        raise AnalyzerReadbackError("bundle subject binding is unsupported")
+    if set(bundle) != _BINDING_KEYS[binding]:
+        raise AnalyzerReadbackError("bundle has missing or unknown fields")
+    if bundle["schema"] != BUNDLE_SCHEMA:
+        raise AnalyzerReadbackError(f"bundle schema must be {BUNDLE_SCHEMA!r}")
+    subject = (
+        normalize_repository(bundle["repository"]),
+        _positive_int(bundle["pull_number"], "bundle pull number"),
+        _sha(bundle["requested_head"], "bundle requested head"),
+    )
+    observed = _sha(bundle["observed_head"], "bundle observed head")
+    _required_text(bundle["observed_at"], "bundle observed at")
+    if not isinstance(bundle["readbacks"], list):
+        raise AnalyzerReadbackError("bundle readbacks must be an array")
+    readbacks = [parse_readback(item) for item in bundle["readbacks"]]
+    if binding == "BOUND":
+        _check_bound(bundle, subject, observed, readbacks)
+    else:
+        _check_incomplete(bundle, readbacks)
+    return {**bundle, "readbacks": readbacks}
+
+
+# The private capability record (#389 F3 R0b; Router 6269272533 and entry
+# 6292521425). An analyzer provider's current capability: the analyzers it has
+# enabled, each one's rule catalogue, its ignore rules and whether a configuration is
+# present. It is not bound to a head, so it is never a readback; its catalogues are an
+# observed inventory, never the effective rule selection or an assurance claim. Each
+# adapter translates its native discovery into it; nothing here branches on one.
+CAPABILITY_SCHEMA = "gnostoa-analyzer-capability/v1"
+# An analysis or run id alone never binds a capability to a run (Router 6269272533):
+# no provider evidence of that binding is admitted, so RUN_BOUND is not a value.
+CAPABILITY_BINDINGS = frozenset({"CURRENT_NOT_RUN_BOUND", "UNKNOWN"})
+# A catalogue read whole, one a request was made for but not read whole, or one never
+# requested. Unknown is never an empty COMPLETE catalogue (Router 6280406609).
+CATALOGUE_STATES = frozenset({"COMPLETE", "PARTIAL", "UNREAD"})
+# What a provider said of its configuration: never reached, not offered, none, or one.
+CONFIGURATION_STATES = frozenset({"UNREAD", "UNSUPPORTED", "ABSENT", "PRESENT"})
+_IGNORE_RULES = "capability ignore rules"
+_INVENTORY_STATUSES = COVERAGE_STATUSES | {"UNREAD"}
+_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+_CAPABILITY_KEYS = frozenset(
+    {
+        "schema",
+        "provider",
+        "adapter",
+        "repository",
+        "observed_at",
+        "binding",
+        "coverage",
+        "configuration",
+        "activated",
+        "enabled",
+        "catalogues",
+        "ignore_rules",
+        "effective_configuration",
+        "unknown",
+    }
+)
+_CAPABILITY_OPTIONAL_KEYS = frozenset({"native"})
+
+
+def _closed(
+    value: object,
+    label: str,
+    required: frozenset[str],
+    optional: frozenset[str] = frozenset(),
+) -> Mapping[str, Any]:
+    record = _mapping(value, label)
+    keys = set(record)
+    if not required <= keys or keys - required - optional:
+        raise AnalyzerReadbackError(f"{label} has missing or unknown fields")
+    return record
+
+
+def _array(value: object, label: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise AnalyzerReadbackError(f"{label} must be an array")
+    return value
+
+
+def _unique_sorted(
+    items: list[dict[str, Any]], key: str, label: str
+) -> list[dict[str, Any]]:
+    ordered = sorted(items, key=lambda item: item[key])
+    for first, second in pairwise(ordered):
+        if first[key] == second[key]:
+            raise AnalyzerReadbackError(f"{label} repeats the identity {first[key]!r}")
+    return ordered
+
+
+def _capability_coverage(value: object) -> dict[str, Any]:
+    record = _closed(
+        value,
+        "capability coverage",
+        frozenset({"status", "pages", "count"}),
+        frozenset({"total", "reason"}),
+    )
+    status = record["status"]
+    if not isinstance(status, str):
+        raise AnalyzerReadbackError("coverage status is unsupported")
+    return coverage(
+        status,
+        pages=record["pages"],
+        count=record["count"],
+        total=record.get("total"),
+        reason=record.get("reason"),
+    )
+
+
+def _capability_configuration(value: object) -> dict[str, Any]:
+    record = _closed(
+        value, "capability configuration", frozenset({"state"}), frozenset({"digest"})
+    )
+    state = record["state"]
+    if not isinstance(state, str) or state not in CONFIGURATION_STATES:
+        raise AnalyzerReadbackError("capability configuration state is unsupported")
+    if state != "PRESENT":
+        if "digest" in record:
+            raise AnalyzerReadbackError("only a present configuration has a digest")
+        return {"state": state}
+    digest = _required_text(record.get("digest"), "capability configuration digest")
+    if _DIGEST.fullmatch(digest) is None:
+        raise AnalyzerReadbackError("capability configuration digest is not sha256")
+    return {"state": state, "digest": digest}
+
+
+def _inventory_status(value: object, label: str) -> str:
+    if not isinstance(value, str) or value not in _INVENTORY_STATUSES:
+        raise AnalyzerReadbackError(f"{label} status is unsupported")
+    return value
+
+
+def _enabled(value: object) -> dict[str, Any]:
+    record = _closed(value, "capability enabled", frozenset({"status", "analyzers"}))
+    status = _inventory_status(record["status"], "capability enabled")
+    if status != "COMPLETE":
+        # Descriptors not read whole are unknown, never an empty inventory.
+        if record["analyzers"] is not None:
+            raise AnalyzerReadbackError(
+                "an enabled list not read whole has no analyzers"
+            )
+        return {"status": status, "analyzers": None}
+    analyzers = [
+        {
+            "id": _required_text(item["id"], "enabled analyzer id"),
+            "version": _optional_text(item["version"], "enabled analyzer version"),
+            "declared_entries": None
+            if item["declared_entries"] is None
+            else _nonnegative_int(item["declared_entries"], "enabled analyzer entries"),
+        }
+        for item in (
+            _closed(
+                entry,
+                "enabled analyzer",
+                frozenset({"id", "version", "declared_entries"}),
+            )
+            for entry in _array(record["analyzers"], "capability enabled analyzers")
+        )
+    ]
+    return {
+        "status": status,
+        "analyzers": _unique_sorted(analyzers, "id", "enabled analyzers"),
+    }
+
+
+def _catalogue(
+    value: object, enabled: Mapping[str, Mapping[str, Any]]
+) -> dict[str, Any]:
+    record = _closed(
+        value,
+        "capability catalogue",
+        frozenset({"analyzer", "state", "version", "entries"}),
+    )
+    analyzer = _required_text(record["analyzer"], "catalogue analyzer")
+    descriptor = enabled.get(analyzer)
+    if descriptor is None:
+        raise AnalyzerReadbackError(
+            f"a catalogue names no enabled analyzer: {analyzer!r}"
+        )
+    state = record["state"]
+    if not isinstance(state, str) or state not in CATALOGUE_STATES:
+        raise AnalyzerReadbackError("catalogue state is unsupported")
+    version = _optional_text(record["version"], "catalogue version")
+    if version != descriptor["version"]:
+        raise AnalyzerReadbackError("a catalogue's version is not its analyzer's")
+    if state != "COMPLETE":
+        if record["entries"] is not None:
+            raise AnalyzerReadbackError("only a catalogue read whole has entries")
+        return {
+            "analyzer": analyzer,
+            "state": state,
+            "version": version,
+            "entries": None,
+        }
+    if descriptor["declared_entries"] is None:
+        raise AnalyzerReadbackError("a catalogue of unknown size cannot be complete")
+    entries = [
+        {
+            "id": _required_text(item["id"], "catalogue entry id"),
+            "title": _optional_text(item.get("title"), "catalogue entry title"),
+        }
+        for item in (
+            _closed(entry, "catalogue entry", frozenset({"id"}), frozenset({"title"}))
+            for entry in _array(record["entries"], "catalogue entries")
+        )
+    ]
+    if len(entries) != descriptor["declared_entries"]:
+        raise AnalyzerReadbackError(
+            "a complete catalogue disagrees with its declared size"
+        )
+    return {
+        "analyzer": analyzer,
+        "state": state,
+        "version": version,
+        "entries": _unique_sorted(entries, "id", "catalogue entries"),
+    }
+
+
+def _ignore_rules(value: object) -> dict[str, Any]:
+    record = _closed(value, _IGNORE_RULES, frozenset({"status", "rules"}))
+    status = _inventory_status(record["status"], _IGNORE_RULES)
+    if status != "COMPLETE":
+        if record["rules"] is not None:
+            raise AnalyzerReadbackError("ignore rules not read whole are unknown")
+        return {"status": status, "rules": None}
+    rules = [
+        _ignore_rule(
+            _closed(
+                entry,
+                "ignore rule",
+                frozenset({"id", "rule", "path", "glob"}),
+                frozenset({"native"}),
+            )
+        )
+        for entry in _array(record["rules"], _IGNORE_RULES)
+    ]
+    return {"status": status, "rules": _unique_sorted(rules, "id", "ignore rules")}
+
+
+def _ignore_rule(item: Mapping[str, Any]) -> dict[str, Any]:
+    rule: dict[str, Any] = {
+        "id": _required_text(item["id"], "ignore rule id"),
+        "rule": _required_text(item["rule"], "ignore rule target"),
+        # A path and a glob are each kept, never one for the other (Amazon Q on #444).
+        "path": _optional_text(item["path"], "ignore rule path"),
+        "glob": _optional_text(item["glob"], "ignore rule glob"),
+    }
+    if "native" in item:
+        # A provider's own terms for a rule, such as its level or duration: carried,
+        # and never interpreted here (Sourcery on #444).
+        rule["native"] = dict(_mapping(item["native"], "ignore rule native"))
+    return rule
+
+
+def build_capability(
+    *,
+    provider: object,
+    adapter: object,
+    repository: object,
+    observed_at: object,
+    binding: object,
+    coverage: object,
+    configuration: object,
+    activated: object,
+    enabled: object,
+    catalogues: object,
+    ignore_rules: object,
+    unknown: object,
+    native: object = None,
+) -> dict[str, Any]:
+    """One capability record from an adapter's translation, or a refusal. Its
+    coverage is the whole read's: COMPLETE only when every part was read whole, and
+    its count is the entries of the catalogues read whole."""
+
+    if not isinstance(binding, str) or binding not in CAPABILITY_BINDINGS:
+        raise AnalyzerReadbackError("capability binding is unsupported")
+    if activated is not None and type(activated) is not bool:
+        raise AnalyzerReadbackError("capability activation must be a boolean or null")
+    read = _capability_coverage(coverage)
+    inventory = _enabled(enabled)
+    descriptors = {item["id"]: item for item in inventory["analyzers"] or []}
+    catalogue_list = [
+        _catalogue(item, descriptors)
+        for item in _array(catalogues, "capability catalogues")
+    ]
+    catalogue_list = _unique_sorted(catalogue_list, "analyzer", "capability catalogues")
+    if [item["analyzer"] for item in catalogue_list] != sorted(descriptors):
+        # Each enabled analyzer has one catalogue state, and none is invented.
+        raise AnalyzerReadbackError("catalogues are not one per enabled analyzer")
+    rules = _ignore_rules(ignore_rules)
+    config = _capability_configuration(configuration)
+    entries = sum(
+        len(item["entries"]) for item in catalogue_list if item["entries"] is not None
+    )
+    if read["count"] != entries:
+        raise AnalyzerReadbackError(
+            "capability coverage count is not its catalogue entries"
+        )
+    if read["status"] == "COMPLETE" and (
+        inventory["status"] != "COMPLETE"
+        or rules["status"] != "COMPLETE"
+        or config["state"] == "UNREAD"
+        or any(item["state"] != "COMPLETE" for item in catalogue_list)
+    ):
+        raise AnalyzerReadbackError("complete capability coverage has an unread part")
+    record: dict[str, Any] = {
+        "schema": CAPABILITY_SCHEMA,
+        "provider": _required_text(provider, "capability provider"),
+        "adapter": _required_text(adapter, "capability adapter"),
+        "repository": normalize_repository(repository),
+        "observed_at": _required_text(observed_at, "capability observed at"),
+        "binding": binding,
+        "coverage": read,
+        "configuration": config,
+        "activated": activated,
+        "enabled": inventory,
+        "catalogues": catalogue_list,
+        "ignore_rules": rules,
+        # A catalogue inventory never proves which rules a run applies.
+        "effective_configuration": "UNPROVEN",
+        "unknown": [
+            _required_text(item, "capability unknown")
+            for item in _array(unknown, "capability unknown")
+        ],
+    }
+    if native is not None:
+        record["native"] = dict(_mapping(native, "capability native"))
+    try:
+        text = canonical_json(record)
+    except (TypeError, ValueError, RecursionError) as exc:
+        # A value JSON cannot hold, or one nested past the stack, is a contract
+        # refusal too (Amazon Q and CodeAnt on #444).
+        raise AnalyzerReadbackError("capability record is not canonical JSON") from exc
+    if json.loads(text) != record:
+        # JSON turns a non-string key into a string and a tuple into an array; a
+        # record holding either is not its own JSON form, so it is refused as one
+        # class rather than case by case (cubic on #444).
+        raise AnalyzerReadbackError("capability is not its own JSON form")
+    return record
+
+
+def parse_capability(value: object) -> dict[str, Any]:
+    """A recorded capability, accepted only when `build_capability` rebuilds it
+    exactly from its own fields, as `parse_readback` does a readback."""
+
+    record = _closed(value, "capability", _CAPABILITY_KEYS, _CAPABILITY_OPTIONAL_KEYS)
+    if record["schema"] != CAPABILITY_SCHEMA:
+        raise AnalyzerReadbackError(f"capability schema must be {CAPABILITY_SCHEMA!r}")
+    if record["effective_configuration"] != "UNPROVEN":
+        raise AnalyzerReadbackError(
+            "a capability never proves its effective configuration"
+        )
+    rebuilt = build_capability(
+        provider=record["provider"],
+        adapter=record["adapter"],
+        repository=record["repository"],
+        observed_at=record["observed_at"],
+        binding=record["binding"],
+        coverage=record["coverage"],
+        configuration=record["configuration"],
+        activated=record["activated"],
+        enabled=record["enabled"],
+        catalogues=record["catalogues"],
+        ignore_rules=record["ignore_rules"],
+        unknown=record["unknown"],
+        native=record.get("native"),
+    )
+    try:
+        recorded = canonical_json(record)
+    except (TypeError, ValueError, RecursionError) as exc:
+        # A record that is not plain JSON, such as a read-only mapping, is refused by
+        # the contract, never by a raw error (CodeAnt on #444).
+        raise AnalyzerReadbackError("capability is not canonical JSON") from exc
+    if canonical_json(rebuilt) != recorded:
+        raise AnalyzerReadbackError("capability is not what its contract builds")
+    return rebuilt
+
+
+def catalogue_inventory(value: object) -> dict[str, Any]:
+    """The neutral reading of a capability record: whether its enabled list is known,
+    and each enabled analyzer's catalogue state and entry identities. It reads only
+    the contract's own fields, never a provider's."""
+
+    record = parse_capability(value)
+    return {
+        "enabled": record["enabled"]["status"],
+        "analyzers": [
+            {
+                "id": item["analyzer"],
+                "version": item["version"],
+                "state": item["state"],
+                "entries": None
+                if item["entries"] is None
+                else [entry["id"] for entry in item["entries"]],
+            }
+            for item in record["catalogues"]
+        ],
+        "complete": record["coverage"]["status"] == "COMPLETE",
+        "reason": record["coverage"].get("reason"),
+    }
+
+
+def _check_bound(
+    bundle: Mapping[str, Any],
+    subject: tuple[str, int, str],
+    observed: str,
+    readbacks: list[dict[str, Any]],
+) -> None:
+    if observed != subject[2]:
+        raise AnalyzerReadbackError("a bound bundle must observe its requested head")
+    projection = _mapping(bundle["github_projection"], "bundle projection")
+    if set(projection) != _PROJECTION_KEYS:
+        raise AnalyzerReadbackError("bundle projection has missing or unknown fields")
+    for key in sorted(projection):
+        _nonnegative_int(projection[key], f"bundle projection {key}")
+    for readback in readbacks:
+        # A merge-base read names the base, not the head (Decision 0132); its
+        # repository and pull request are still the subject's.
+        own = (readback["repository"], readback["pull_number"])
+        head = readback["requested_head"]
+        if own != subject[:2] or (readback["scope"] != "BASE" and head != subject[2]):
+            raise AnalyzerReadbackError("a readback is not the bundle's subject")
+
+
+def _check_incomplete(
+    bundle: Mapping[str, Any], readbacks: list[dict[str, Any]]
+) -> None:
+    _required_text(bundle["reason"], "bundle reason")
+    if readbacks:
+        raise AnalyzerReadbackError("an incomplete bundle holds no readbacks")
 
 
 def canonical_json(value: object) -> str:

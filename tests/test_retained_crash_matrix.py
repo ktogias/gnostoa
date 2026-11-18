@@ -27,12 +27,9 @@ import unittest
 from typing import Any
 from unittest import mock
 
+from tests.preflight_authority_consumption_support import ConsumptionFixture
+from tests.quality_evidence_profile_support import _original
 from tools.capsule import compiler, qualification, retained_commit
-
-try:
-    from test_preflight_authority_consumption import ConsumptionFixture
-except ImportError:  # invoked as tests.<module> from the repository root
-    from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 
 def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:
@@ -87,7 +84,7 @@ class RetainedDurableWriteCrashMatrixTests(ConsumptionFixture):
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
         seen: list[str] = []
-        real = retained_commit._write_at
+        real = _original(retained_commit, "_write_at")
 
         def record(directory_fd: int, name: str, payload: bytes) -> None:
             seen.append(name)
@@ -95,7 +92,7 @@ class RetainedDurableWriteCrashMatrixTests(ConsumptionFixture):
 
         with self._patched_effect([]):
             with mock.patch.object(retained_commit, "_write_at", side_effect=record):
-                self.prepare(authority=self.authority(candidate))
+                self.prepare(authority=self.consumption_authority(candidate))
         return seen
 
     def _crash_at(self, index: int, *, keep_blockers: bool = False) -> Outcome:
@@ -104,10 +101,10 @@ class RetainedDurableWriteCrashMatrixTests(ConsumptionFixture):
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        authority = self.authority(candidate)
+        authority = self.consumption_authority(candidate)
         effects: list[str] = []
         seen: list[str] = []
-        real = retained_commit._write_at
+        real = _original(retained_commit, "_write_at")
 
         def crash(directory_fd: int, name: str, payload: bytes) -> None:
             seen.append(name)

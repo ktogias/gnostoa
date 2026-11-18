@@ -896,6 +896,16 @@ def _candidate_workspace(
         workspace = Path(directory) / "worktree"
         workspace.mkdir()
         env = _isolated_git_env(git_dir, workspace)
+        # The disposable metadata names its own resolved work tree, so Git that
+        # discovers it through the gitfile, without this routing, agrees with it.
+        _git_text(
+            workspace,
+            "config",
+            "--local",
+            "core.worktree",
+            str(workspace.resolve()),
+            env=env,
+        )
         _git_text(workspace, "read-tree", tree, env=env)
         _assert_no_candidate_symlinks(workspace, git_dir)
         (workspace / ".git").write_text(

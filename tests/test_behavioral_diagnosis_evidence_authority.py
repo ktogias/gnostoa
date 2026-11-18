@@ -29,8 +29,12 @@ class BehavioralDiagnosisEvidenceAuthorityTests(unittest.TestCase):
         self.assertEqual(
             "behavioral-diagnosis-evidence-authority/v1", fixture["version"]
         )
-        hypotheses = {item["id"]: item for item in fixture["hypotheses"]}
-        evidence = {item["id"]: item for item in fixture["evidence"]}
+        hypothesis_items = fixture["hypotheses"]
+        assert isinstance(hypothesis_items, list)
+        evidence_items = fixture["evidence"]
+        assert isinstance(evidence_items, list)
+        hypotheses = {item["id"]: item for item in hypothesis_items}
+        evidence = {item["id"]: item for item in evidence_items}
 
         selected = hypotheses["hypothesis-a"]
         self.assertEqual("CONFIRMED", selected["resolution"])
@@ -52,15 +56,18 @@ class BehavioralDiagnosisEvidenceAuthorityTests(unittest.TestCase):
         self.assertIn("larger", rejected["rejected_reason"].lower())
 
         classifier = fixture["suspect_classifier"]
+        assert isinstance(classifier, dict)
         self.assertTrue(classifier["on_questioned_behavior_path"])
         self.assertFalse(classifier["independently_validated"])
         self.assertTrue(classifier["used_as_correctness_definition"])
 
         review = fixture["review"]
+        assert isinstance(review, dict)
         self.assertEqual("ACCEPT", review["recommendation"])
         self.assertFalse(review["independent_task_to_code_pass"])
 
         expected = fixture["expected_contract_outcome"]
+        assert isinstance(expected, dict)
         self.assertFalse(expected["review_ready"])
         self.assertEqual("OPEN", expected["hypothesis_a_resolution"])
         self.assertEqual("UNKNOWN", expected["task_identification"])

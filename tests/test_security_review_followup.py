@@ -9,13 +9,28 @@ import sys
 import tempfile
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from test_security_gates import _report
-
+from tests.quality_evidence_profile_support import _original
+from tests.security_gates_support import _report
 from tools import quality_evidence, repository_scope, review_current, security_scan
+from tools.review_current import (
+    _CLEANUP_SELECTOR_CLOSE_ISSUE,
+    _CLEANUP_STREAM_CLOSE_ISSUE,
+    _ContainerRunIdentity,
+    _run_docker,
+    _run_identity,
+)
+from tools.security_scan import (
+    _MAX_CANDIDATE_PATH_DEPTH,
+    _immutable_candidate_snapshot,
+    _read_document,
+    _validated_candidate_paths,
+    _write_all,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 PRIVATE = "private exception body must never be published"
@@ -63,9 +78,7 @@ class ReviewFollowupTests(unittest.TestCase):
                         review_current.ProtectedJudgeUnavailable
                     ) as raised,
                 ):
-                    review_current._run_docker(
-                        ["run", "--rm", "fixture"], config_dir=Path(directory)
-                    )
+                    _run_docker(["run", "--rm", "fixture"], config_dir=Path(directory))
                 message = str(raised.exception)
                 self.assertIn("cleanup identity file", message)
                 if child_code:
@@ -100,9 +113,7 @@ class ReviewFollowupTests(unittest.TestCase):
             mock.patch.object(review_current, "_discard_cidfile", return_value=None),
             self.assertRaises(review_current.ProtectedJudgeUnavailable) as raised,
         ):
-            review_current._run_docker(
-                ["run", "--rm", "fixture"], config_dir=Path(directory)
-            )
+            _run_docker(["run", "--rm", "fixture"], config_dir=Path(directory))
         message = str(raised.exception)
         self.assertEqual(
             "protected Docker process finished without a reaped child status",
@@ -131,9 +142,9 @@ class ReviewFollowupTests(unittest.TestCase):
                             ),
                             mock.patch("os.read", return_value=prefix),
                         ):
-                            code, detail = review_current._cleanup_diagnostic(
-                                ["docker", "rm", "fixture"], config_dir=Path(directory)
-                            )
+                            code, detail = _original(
+                                review_current, "_cleanup_diagnostic"
+                            )(["docker", "rm", "fixture"], config_dir=Path(directory))
                         self.assertEqual(child_code, code)
                         self.assertIn("cleanup selector could not be closed", detail)
                         self.assertIn("cleanup stderr pipe could not be closed", detail)
@@ -158,6 +169,7 @@ class ReviewFollowupTests(unittest.TestCase):
                     selector = mock.Mock()
                     selector.get_map.return_value = {10: True}
                     selector.select.side_effect = error
+                    run_bounded_scan = _original(security_scan, "_run_bounded_scan")
                     with (
                         tempfile.TemporaryDirectory() as directory,
                         mock.patch(
@@ -168,9 +180,7 @@ class ReviewFollowupTests(unittest.TestCase):
                         mock.patch("selectors.DefaultSelector", return_value=selector),
                         self.assertRaises(security_scan.SecurityScanError) as raised,
                     ):
-                        security_scan._run_bounded_scan(
-                            ["fixture"], cwd=Path(directory), timeout=5
-                        )
+                        run_bounded_scan(["fixture"], cwd=Path(directory), timeout=5)
                     self.assertIn(symbol, str(raised.exception))
                     self.assertNotIn(PRIVATE, str(raised.exception))
                     self.assertLess(len(str(raised.exception)), 256)
@@ -192,9 +202,7 @@ class ReviewFollowupTests(unittest.TestCase):
                 mock.patch("subprocess.Popen", side_effect=error),
                 self.assertRaises(review_current.ProtectedJudgeUnavailable) as raised,
             ):
-                review_current._run_docker(
-                    ["run", "--rm", "fixture"], config_dir=Path(directory)
-                )
+                _run_docker(["run", "--rm", "fixture"], config_dir=Path(directory))
             self.assertIn(symbol, str(raised.exception))
             self.assertNotIn(PRIVATE, str(raised.exception))
 
@@ -203,7 +211,7 @@ class ReviewFollowupTests(unittest.TestCase):
                 tempfile.TemporaryDirectory() as directory,
                 mock.patch("subprocess.Popen", side_effect=error),
             ):
-                code, detail = review_current._cleanup_diagnostic(
+                code, detail = _original(review_current, "_cleanup_diagnostic")(
                     ["docker", "rm", "fixture"], config_dir=Path(directory)
                 )
             self.assertIsNone(code)
@@ -216,17 +224,18 @@ class ReviewFollowupTests(unittest.TestCase):
             mock.patch.object(Path, "open", side_effect=error),
             self.assertRaises(security_scan.SecurityScanError) as read_error,
         ):
-            security_scan._read_document(
-                Path("private-baseline"), "detect-secrets baseline"
-            )
+            _read_document(Path("private-baseline"), "detect-secrets baseline")
         self.assertIn("EACCES", str(read_error.exception))
         self.assertNotIn(PRIVATE, str(read_error.exception))
 
+        copy_candidate_to_snapshot = _original(
+            security_scan, "_copy_candidate_to_snapshot"
+        )
         with (
             mock.patch.object(security_scan.os, "dup", side_effect=error),
             self.assertRaises(security_scan.SecurityScanError) as snapshot_error,
         ):
-            security_scan._copy_candidate_to_snapshot(
+            copy_candidate_to_snapshot(
                 10,
                 Path("."),
                 Path("tracked.txt"),
@@ -242,7 +251,7 @@ class ReviewFollowupTests(unittest.TestCase):
                 mock.patch.object(Path, "lstat", side_effect=error),
                 self.assertRaises(security_scan.SecurityScanError) as inspect_error,
             ):
-                security_scan._validated_candidate_paths(Path("."), [relative])
+                _validated_candidate_paths(Path("."), [relative])
             self.assertIn("EACCES", str(inspect_error.exception))
             self.assertNotIn(PRIVATE, str(inspect_error.exception))
 
@@ -299,9 +308,7 @@ class ReviewFollowupTests(unittest.TestCase):
                                 review_current.ProtectedJudgeUnavailable
                             ) as raised,
                         ):
-                            review_current._run_docker(
-                                ["version"], config_dir=Path(directory)
-                            )
+                            _run_docker(["version"], config_dir=Path(directory))
                         message = str(raised.exception)
                         self.assertTrue(
                             message.startswith(
@@ -334,7 +341,7 @@ class ReviewFollowupTests(unittest.TestCase):
                         descriptor: int | None,
                         role: str,
                         *,
-                        real_close: object = real_close,
+                        real_close: Callable[[int], None] = real_close,
                         failed_role: str = failed_role,
                     ) -> str | None:
                         if descriptor is not None:
@@ -357,6 +364,9 @@ class ReviewFollowupTests(unittest.TestCase):
                             )
 
                     try:
+                        copy_candidate_to_snapshot = _original(
+                            security_scan, "_copy_candidate_to_snapshot"
+                        )
                         with (
                             mock.patch.object(
                                 security_scan,
@@ -372,7 +382,7 @@ class ReviewFollowupTests(unittest.TestCase):
                                 security_scan.SecurityScanError
                             ) as raised,
                         ):
-                            security_scan._copy_candidate_to_snapshot(
+                            copy_candidate_to_snapshot(
                                 root_descriptor,
                                 snapshot,
                                 Path("tracked.txt"),
@@ -427,7 +437,7 @@ class ReviewFollowupTests(unittest.TestCase):
                     role: str,
                     *,
                     observed_roles: list[str] = observed_roles,
-                    real_close: object = real_close,
+                    real_close: Callable[[int], None] = real_close,
                     failed_role: str = failed_role,
                 ) -> str | None:
                     nonlocal failed
@@ -443,6 +453,9 @@ class ReviewFollowupTests(unittest.TestCase):
                     return None
 
                 try:
+                    copy_candidate_to_snapshot = _original(
+                        security_scan, "_copy_candidate_to_snapshot"
+                    )
                     with (
                         mock.patch.object(
                             security_scan,
@@ -451,7 +464,7 @@ class ReviewFollowupTests(unittest.TestCase):
                         ),
                         self.assertRaises(security_scan.SecurityScanError) as raised,
                     ):
-                        security_scan._copy_candidate_to_snapshot(
+                        copy_candidate_to_snapshot(
                             root_descriptor,
                             snapshot,
                             Path("nested/tracked.txt"),
@@ -484,7 +497,7 @@ class ReviewFollowupTests(unittest.TestCase):
                     descriptor: int | None,
                     role: str,
                     *,
-                    real_close: object = real_close,
+                    real_close: Callable[[int], None] = real_close,
                 ) -> str | None:
                     if descriptor is not None:
                         real_close(descriptor)
@@ -503,7 +516,7 @@ class ReviewFollowupTests(unittest.TestCase):
                     ),
                     self.assertRaises(security_scan.SecurityScanError) as raised,
                 ):
-                    with security_scan._immutable_candidate_snapshot(root, []):
+                    with _immutable_candidate_snapshot(root, []):
                         if primary:
                             raise security_scan.SecurityScanError(
                                 "synthetic root snapshot primary"
@@ -534,7 +547,9 @@ class ReviewFollowupTests(unittest.TestCase):
                 def failing_cleanup(
                     workspace: tempfile.TemporaryDirectory[str],
                     *,
-                    real_cleanup: object = real_cleanup,
+                    real_cleanup: Callable[
+                        [tempfile.TemporaryDirectory[str]], None
+                    ] = real_cleanup,
                 ) -> None:
                     real_cleanup(workspace)
                     raise OSError(errno.EIO, PRIVATE, PRIVATE)
@@ -547,7 +562,7 @@ class ReviewFollowupTests(unittest.TestCase):
                     ),
                     self.assertRaises(security_scan.SecurityScanError) as raised,
                 ):
-                    with security_scan._immutable_candidate_snapshot(root, []):
+                    with _immutable_candidate_snapshot(root, []):
                         if primary:
                             raise security_scan.SecurityScanError(
                                 "synthetic workspace primary"
@@ -583,7 +598,9 @@ class ReviewFollowupTests(unittest.TestCase):
                 def recursing_cleanup(
                     workspace: tempfile.TemporaryDirectory[str],
                     *,
-                    real_cleanup: object = real_cleanup,
+                    real_cleanup: Callable[
+                        [tempfile.TemporaryDirectory[str]], None
+                    ] = real_cleanup,
                 ) -> None:
                     real_cleanup(workspace)
                     raise RecursionError(PRIVATE)
@@ -593,7 +610,7 @@ class ReviewFollowupTests(unittest.TestCase):
                     role: str,
                     *,
                     closed: list[int] = closed,
-                    real_close: object = real_close,
+                    real_close: Callable[[int], None] = real_close,
                 ) -> str | None:
                     if descriptor is not None:
                         closed.append(descriptor)
@@ -613,7 +630,7 @@ class ReviewFollowupTests(unittest.TestCase):
                     ),
                     self.assertRaises(security_scan.SecurityScanError) as raised,
                 ):
-                    with security_scan._immutable_candidate_snapshot(root, []):
+                    with _immutable_candidate_snapshot(root, []):
                         if primary:
                             raise security_scan.SecurityScanError(
                                 "synthetic workspace primary"
@@ -645,7 +662,9 @@ class ReviewFollowupTests(unittest.TestCase):
                 def surprising_cleanup(
                     workspace: tempfile.TemporaryDirectory[str],
                     *,
-                    real_cleanup: object = real_cleanup,
+                    real_cleanup: Callable[
+                        [tempfile.TemporaryDirectory[str]], None
+                    ] = real_cleanup,
                 ) -> None:
                     real_cleanup(workspace)
                     raise RuntimeError(PRIVATE)
@@ -655,7 +674,7 @@ class ReviewFollowupTests(unittest.TestCase):
                     role: str,
                     *,
                     closed: list[int] = closed,
-                    real_close: object = real_close,
+                    real_close: Callable[[int], None] = real_close,
                 ) -> str | None:
                     if descriptor is not None:
                         closed.append(descriptor)
@@ -675,7 +694,7 @@ class ReviewFollowupTests(unittest.TestCase):
                     ),
                     self.assertRaises(security_scan.SecurityScanError) as raised,
                 ):
-                    with security_scan._immutable_candidate_snapshot(root, []):
+                    with _immutable_candidate_snapshot(root, []):
                         if primary:
                             raise security_scan.SecurityScanError(
                                 "synthetic workspace primary"
@@ -695,7 +714,7 @@ class ReviewFollowupTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             config_dir = Path(directory)
-            identity = review_current._ContainerRunIdentity(
+            identity = _ContainerRunIdentity(
                 name="gnostoa-protected-test",
                 cidfile=config_dir / "candidate.cid",
             )
@@ -715,7 +734,9 @@ class ReviewFollowupTests(unittest.TestCase):
                 ),
                 mock.patch.object(review_current, "_cleanup_diagnostic", cleanup),
             ):
-                issue = review_current._cleanup_container(identity, config_dir)
+                issue = _original(review_current, "_cleanup_container")(
+                    identity, config_dir
+                )
 
         self.assertIsNotNone(issue)
         assert issue is not None
@@ -726,15 +747,15 @@ class ReviewFollowupTests(unittest.TestCase):
         """A zero exit does not clear a local finalization failure."""
 
         for role in (
-            review_current._CLEANUP_SELECTOR_CLOSE_ISSUE,
-            review_current._CLEANUP_STREAM_CLOSE_ISSUE,
+            _CLEANUP_SELECTOR_CLOSE_ISSUE,
+            _CLEANUP_STREAM_CLOSE_ISSUE,
         ):
             with (
                 self.subTest(role=role),
                 tempfile.TemporaryDirectory() as directory,
             ):
                 config_dir = Path(directory)
-                identity = review_current._ContainerRunIdentity(
+                identity = _ContainerRunIdentity(
                     name="gnostoa-protected-test",
                     cidfile=config_dir / "candidate.cid",
                 )
@@ -746,7 +767,9 @@ class ReviewFollowupTests(unittest.TestCase):
                     ),
                     mock.patch.object(review_current, "_cleanup_diagnostic", cleanup),
                 ):
-                    issue = review_current._cleanup_container(identity, config_dir)
+                    issue = _original(review_current, "_cleanup_container")(
+                        identity, config_dir
+                    )
 
                 self.assertIsNotNone(issue)
                 assert issue is not None
@@ -758,14 +781,14 @@ class ReviewFollowupTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             config_dir = Path(directory)
-            identity = review_current._ContainerRunIdentity(
+            identity = _ContainerRunIdentity(
                 name="gnostoa-protected-test",
                 cidfile=config_dir / "candidate.cid",
             )
             absent = f"Error response from daemon: No such container: {identity.name}"
             cleanup = mock.Mock(
                 side_effect=[
-                    (1, f"{absent}; {review_current._CLEANUP_STREAM_CLOSE_ISSUE}"),
+                    (1, f"{absent}; {_CLEANUP_STREAM_CLOSE_ISSUE}"),
                     (1, absent),
                     (1, absent),
                 ]
@@ -776,7 +799,9 @@ class ReviewFollowupTests(unittest.TestCase):
                 ),
                 mock.patch.object(review_current, "_cleanup_diagnostic", cleanup),
             ):
-                issue = review_current._cleanup_container(identity, config_dir)
+                issue = _original(review_current, "_cleanup_container")(
+                    identity, config_dir
+                )
 
         self.assertIsNotNone(issue)
         assert issue is not None
@@ -790,7 +815,7 @@ class ReviewFollowupTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             config_dir = Path(directory)
-            identity = review_current._ContainerRunIdentity(
+            identity = _ContainerRunIdentity(
                 name="gnostoa-protected-test",
                 cidfile=config_dir / "candidate.cid",
             )
@@ -806,7 +831,9 @@ class ReviewFollowupTests(unittest.TestCase):
                 ),
                 mock.patch.object(review_current, "_cleanup_diagnostic", cleanup),
             ):
-                issue = review_current._cleanup_container(identity, config_dir)
+                issue = _original(review_current, "_cleanup_container")(
+                    identity, config_dir
+                )
 
         self.assertIsNone(issue)
         cleanup.assert_called_once()
@@ -845,6 +872,7 @@ class ReviewFollowupTests(unittest.TestCase):
                     if runner == "docker"
                     else security_scan.SecurityScanError
                 )
+                run_bounded_scan = _original(security_scan, "_run_bounded_scan")
                 with (
                     mock.patch("subprocess.Popen", return_value=process),
                     mock.patch("selectors.DefaultSelector", return_value=selector),
@@ -860,15 +888,13 @@ class ReviewFollowupTests(unittest.TestCase):
                     self.assertRaises(error_type) as raised,
                 ):
                     if runner == "docker":
-                        review_current._run_docker(
+                        _run_docker(
                             ["run", "--rm", "fixture"],
                             config_dir=Path(directory),
                             input_bytes=b"payload",
                         )
                     else:
-                        security_scan._run_bounded_scan(
-                            ["fixture"], cwd=Path(directory), timeout=10
-                        )
+                        run_bounded_scan(["fixture"], cwd=Path(directory), timeout=10)
 
                 message = str(raised.exception)
                 self.assertIn("unexpected MemoryError", message)
@@ -881,20 +907,14 @@ class ReviewFollowupTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(review_current.ProtectedJudgeUnavailable) as raised:
-                review_current._run_identity(
-                    ["run", "--pull=never", "example-image"], Path(directory)
-                )
+                _run_identity(["run", "--pull=never", "example-image"], Path(directory))
             self.assertIn("--rm", str(raised.exception))
 
             # The accepted shape is unchanged, and a non-run command still
             # takes no identity at all.
-            identity = review_current._run_identity(
-                ["run", "--rm", "example-image"], Path(directory)
-            )
+            identity = _run_identity(["run", "--rm", "example-image"], Path(directory))
             self.assertIsNotNone(identity)
-            self.assertIsNone(
-                review_current._run_identity(["image", "inspect"], Path(directory))
-            )
+            self.assertIsNone(_run_identity(["image", "inspect"], Path(directory)))
 
     def test_an_unexpected_body_failure_still_reports_snapshot_residue(self) -> None:
         """Finalization evidence must survive a body failure of any type."""
@@ -906,7 +926,9 @@ class ReviewFollowupTests(unittest.TestCase):
             def failing_cleanup(
                 workspace: tempfile.TemporaryDirectory[str],
                 *,
-                real_cleanup: object = real_cleanup,
+                real_cleanup: Callable[
+                    [tempfile.TemporaryDirectory[str]], None
+                ] = real_cleanup,
             ) -> None:
                 real_cleanup(workspace)
                 raise RuntimeError(PRIVATE)
@@ -917,7 +939,7 @@ class ReviewFollowupTests(unittest.TestCase):
                 ),
                 self.assertRaises(security_scan.SecurityScanError) as raised,
             ):
-                with security_scan._immutable_candidate_snapshot(root, []):
+                with _immutable_candidate_snapshot(root, []):
                     raise ValueError(PRIVATE)
 
             message = str(raised.exception)
@@ -959,7 +981,7 @@ class ReviewFollowupTests(unittest.TestCase):
     def test_candidate_paths_are_bounded_in_depth(self) -> None:
         """A path deep enough to break recursive removal is refused up front."""
 
-        depth = security_scan._MAX_CANDIDATE_PATH_DEPTH
+        depth = _MAX_CANDIDATE_PATH_DEPTH
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             accepted = Path(*(["d"] * (depth - 1)), "tracked.txt")
@@ -967,12 +989,12 @@ class ReviewFollowupTests(unittest.TestCase):
             (root / accepted).write_bytes(b"")
             self.assertEqual(
                 [accepted],
-                security_scan._validated_candidate_paths(root, [accepted]),
+                _validated_candidate_paths(root, [accepted]),
             )
 
             refused = Path(*(["d"] * depth), "tracked.txt")
             with self.assertRaises(security_scan.SecurityScanError) as raised:
-                security_scan._validated_candidate_paths(root, [refused])
+                _validated_candidate_paths(root, [refused])
             self.assertIn("depth bound", str(raised.exception))
 
     def test_quality_evidence_sanitizes_repository_scope_failures(self) -> None:
@@ -1018,7 +1040,7 @@ class ReviewFollowupTests(unittest.TestCase):
                 security_scan.SecurityScanError, "snapshot timed out"
             ),
         ):
-            security_scan._write_all(10, b"abc", deadline=60.0)
+            _write_all(10, b"abc", deadline=60.0)
         self.assertEqual([b"abc"], writes)
 
     def test_expired_snapshot_never_reaches_scanner(self) -> None:
@@ -1031,7 +1053,7 @@ class ReviewFollowupTests(unittest.TestCase):
                 (root / "tracked.txt").write_text("hello\n")
                 (root / ".secrets.baseline").write_text(json.dumps(_report({})))
                 now = [0.0]
-                real_copy = security_scan._copy_candidate_to_snapshot
+                real_copy = _original(security_scan, "_copy_candidate_to_snapshot")
                 real_read = os.read
 
                 def copy(
@@ -1148,7 +1170,7 @@ class ReviewFollowupTests(unittest.TestCase):
                             review_current.ProtectedJudgeUnavailable,
                             "before the envelope was delivered",
                         ):
-                            review_current._run_docker(
+                            _run_docker(
                                 args,
                                 config_dir=Path(directory),
                                 input_bytes=b"x" * 1_048_576,
@@ -1156,7 +1178,7 @@ class ReviewFollowupTests(unittest.TestCase):
                                 reject_incomplete_input=True,
                             )
                     else:
-                        result = review_current._run_docker(
+                        result = _run_docker(
                             args,
                             config_dir=Path(directory),
                             input_bytes=b"x" * 1_048_576,
@@ -1170,7 +1192,7 @@ class ReviewFollowupTests(unittest.TestCase):
             with mock.patch.object(
                 review_current, "_docker_executable", return_value=sys.executable
             ):
-                result = review_current._run_docker(
+                result = _run_docker(
                     [
                         "-c",
                         "import sys; data=sys.stdin.buffer.read(); print(len(data))",
@@ -1206,7 +1228,7 @@ class ReviewFollowupTests(unittest.TestCase):
                 "before the envelope was delivered",
             ) as raised,
         ):
-            review_current._run_docker(
+            _run_docker(
                 ["run", "--rm", "fixture"],
                 config_dir=Path(directory),
                 input_bytes=b"abc",
@@ -1259,9 +1281,9 @@ class ReviewFollowupTests(unittest.TestCase):
                     ),
                 ):
                     if runner == "docker":
-                        review_current._run_docker(args, config_dir=Path(directory))
+                        _run_docker(args, config_dir=Path(directory))
                     else:
-                        security_scan._run_bounded_scan(
+                        _original(security_scan, "_run_bounded_scan")(
                             args, cwd=Path(directory), timeout=5
                         )
                 self.assertIs(popen.call_args.kwargs.get("shell"), False)

@@ -1,0 +1,48 @@
+GNOSTOA LOGOS
+
+These files are the Gnostoa project's logos. They are not licensed under the
+Apache License, which covers the project's other material as LICENSING.md, at the
+repository root, describes. All rights in them are reserved by Konstantinos
+Togias.
+
+You may use them unmodified to refer to the Gnostoa project, for example in an
+article, a list of tools, or a link to this repository. Do not modify them, combine
+them with another mark, or use them in a way that suggests endorsement or
+affiliation. This notice is not a claim that Gnostoa is a registered trademark.
+
+FILES
+
+gnostoa-logo.png
+  SHA-256 89cf604436eafc89b5f05631111ebc87990b3755da545ad62e2eeaacb3b411a8
+  The mark and the wordmark, 1254x1254 PNG.
+
+gnostoa-mark.webp
+  SHA-256 dee5e5ad3a700c066fb1de2a09a3886ee19340b8035b7c44c9b92cd50140dd3e
+  The mark alone, WebP; also the icon of the gnostoa-agent App.
+
+gnostoa-break-glass-logo.png
+  SHA-256 514a8000b1a1f7c78e7de77974660268e786506cadc548c7fe6f919a0381883a
+  The break-glass mark with the wordmark, 1254x1254 PNG.
+
+gnostoa-break-glass-mark.png
+  SHA-256 fd9ef460533a47aa6f8c3cde0351d72be045a59690ad18274c7bf04a43ceb0c9
+  The break-glass mark alone, 1254x1254 PNG; also the icon of the
+  gnostoa-break-glass App.
+
+gnostoa-logo-on-light.png
+  SHA-256 30c13beb92a413721b20044274887a03e82c416c5e7a3c5095945715206c61c5
+  The logo on a white tile, 1254x1254 PNG, for dark backgrounds.
+
+PROVENANCE
+
+The four logos the owner supplied on 2026-10-08 (#397), gnostoa-logo.png,
+gnostoa-mark.webp, gnostoa-break-glass-logo.png and gnostoa-break-glass-mark.png,
+were generated with an AI image tool under the owner's direction, then chosen and
+approved by the owner. They are kept byte for byte as supplied.
+
+gnostoa-logo-on-light.png is derived from gnostoa-logo.png: the same image,
+unchanged, on a white tile with rounded corners, for dark backgrounds. The owner
+chose it on 2026-10-08 (#399). The terms above apply to it as to the others.
+
+tests/test_brand_assets.py checks each file against the digest above. Decision 0111
+records their location, terms and provenance.

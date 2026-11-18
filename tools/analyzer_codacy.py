@@ -665,3 +665,9 @@ def read_pull_request(
             ),
             findings=[],
         )
+
+
+# The public names the analyzer-readback tests use (#389, #441's lane): each names the
+# private definition above, which stays the one implementation.
+CodacyRedirectHandler = _CodacyRedirectHandler
+validate_api_url = _validate_api_url

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tarfile
@@ -141,9 +142,9 @@ class ExperimentPackagerContractTests(unittest.TestCase):
                 link = archive.getmember("link")
                 self.assertTrue(link.issym())
                 self.assertEqual("nested/data.txt", link.linkname)
-                self.assertEqual(
-                    b"payload\n", archive.extractfile("nested/data.txt").read()
-                )
+                data = archive.extractfile("nested/data.txt")
+                assert data is not None
+                self.assertEqual(b"payload\n", data.read())
 
     def test_package_rejects_mutated_frozen_subject(self) -> None:
         self.assertTrue(HANDOFF.is_file())
@@ -272,8 +273,13 @@ class ExperimentPackagerContractTests(unittest.TestCase):
             swapped = False
 
             def swap_parent(
-                source: object, target: object, *args: object, **kwargs: object
-            ) -> object:
+                source: str | os.PathLike[str],
+                target: str | os.PathLike[str],
+                *,
+                src_dir_fd: int | None = None,
+                dst_dir_fd: int | None = None,
+                follow_symlinks: bool = True,
+            ) -> None:
                 nonlocal swapped
                 if not swapped:
                     output_parent.rename(moved_parent)
@@ -281,12 +287,18 @@ class ExperimentPackagerContractTests(unittest.TestCase):
                     (output_parent / "foreign-sentinel.txt").write_text(
                         "foreign\n", encoding="utf-8"
                     )
-                    if kwargs.get("src_dir_fd") is None:
+                    if src_dir_fd is None:
                         source_path = Path(str(source))
                         if source_path.is_absolute():
                             source_path.write_bytes(b"forged-staging-bytes\n")
                     swapped = True
-                return real_link(source, target, *args, **kwargs)
+                real_link(
+                    source,
+                    target,
+                    src_dir_fd=src_dir_fd,
+                    dst_dir_fd=dst_dir_fd,
+                    follow_symlinks=follow_symlinks,
+                )
 
             with mock.patch.object(packaging.os, "link", side_effect=swap_parent):
                 exit_code, payload = packaging.create_package(
