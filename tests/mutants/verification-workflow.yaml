@@ -1,0 +1,62 @@
+# The targeted mutants that guard Decision 0103's regression gate (#371 C1, #372).
+# Run: knowledge mutants --table tests/mutants/verification-workflow.yaml --jobs 3
+# Each must be killed; tests/test_mutant_tables.py fails when an anchor no longer applies.
+id: verification-workflow
+tests:
+- tests.test_tools
+- tests.test_security_gates
+mutants:
+- name: the gate does not assert smoke
+  path: .github/workflows/verification.yml
+  find: '          test "${SMOKE_RESULT}" = success
+
+    '
+  replace: ''
+- name: the gate does not assert the regression suite
+  path: .github/workflows/verification.yml
+  find: '          test "${REGRESSION_SUITE_RESULT}" = success
+
+    '
+  replace: ''
+- name: the gate does not wait for smoke
+  path: .github/workflows/verification.yml
+  find: 'extended, regression-suite, smoke]
+
+    '
+  replace: 'extended, regression-suite]
+
+    '
+- name: the gate does not wait for the suite
+  path: .github/workflows/verification.yml
+  find: 'extended, regression-suite, smoke]
+
+    '
+  replace: 'extended, smoke]
+
+    '
+- name: smoke waits for the gate again
+  path: .github/workflows/verification.yml
+  find: "  smoke:\n    name: smoke\n    needs: [policy]\n"
+  replace: "  smoke:\n    name: smoke\n    needs: [policy, extended]\n"
+- name: the suite waits for extended
+  path: .github/workflows/verification.yml
+  find: "  regression-suite:\n    name: regression-suite\n    needs: [policy]\n"
+  replace: "  regression-suite:\n    name: regression-suite\n    needs: [policy, extended]\n"
+- name: the suite does not wait for policy
+  path: .github/workflows/verification.yml
+  find: "  regression-suite:\n    name: regression-suite\n    needs: [policy]\n"
+  replace: "  regression-suite:\n    name: regression-suite\n    needs: []\n"
+- name: the gate is not always()
+  path: .github/workflows/verification.yml
+  find: "    needs: [policy, security-fast, fast, python-compatibility, extended-route, extended, regression-suite, smoke]\n    if: always()\n"
+  replace: '    needs: [policy, security-fast, fast, python-compatibility, extended-route, extended, regression-suite, smoke]
+
+    '
+- name: a skipped smoke passes the gate
+  path: .github/workflows/verification.yml
+  find: '          test "${SMOKE_RESULT}" = success
+
+    '
+  replace: '          test "${SMOKE_RESULT}" != failure
+
+    '
