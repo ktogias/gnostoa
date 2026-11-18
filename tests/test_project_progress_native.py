@@ -143,6 +143,147 @@ class NativeProgressTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "stored obligation has no status"):
             n.open_obligation(store, self.scope, [], None, self.now)
 
+    def test_one_malformed_wait_table_member_refuses_the_whole_table(self) -> None:
+        subject = {"pr_number": 500, "head_sha": "a" * 40}
+        dependency = {"pr_number": 600, "head_sha": "b" * 40}
+        row: n.Native = {
+            "id": "dependency-gate",
+            "kind": "UNFINISHED",
+            "source_kind": "native_outcome",
+            "subject": subject,
+            "source_sha256": "dependency-evidence",
+        }
+        claim: n.Native = {
+            "id": "dependency-gate",
+            "disposition": "WAITING",
+            "owner": "human:ktogias",
+            "reason": "Await the captured dependency check.",
+            "resume_event": "native_exact_head_review",
+            "evidence_sha256": "dependency-evidence",
+            "dependency_pr_number": 600,
+            "dependency_head_sha": "b" * 40,
+        }
+        good: n.Native = {
+            "subject": subject,
+            "dependency": dependency,
+            "evidence_sha256": "dependency-evidence",
+            "check_run_id": 123,
+        }
+
+        def bind(*waits: object) -> n.Native | None:
+            job: n.Native = {"continuation_frontier": {"dependency_waits": list(waits)}}
+            return n.gate_binding(job, row, claim)
+
+        self.assertIsNotNone(bind(good))
+        for name, damaged in (
+            ("no subject", {k: v for k, v in good.items() if k != "subject"}),
+            ("no evidence", {k: v for k, v in good.items() if k != "evidence_sha256"}),
+            ("text dependency", {**good, "dependency": "text"}),
+            ("empty digest", {**good, "evidence_sha256": ""}),
+        ):
+            with self.subTest(name=name):
+                self.assertIsNone(bind(good, damaged))
+
+    def test_one_malformed_provider_wait_or_row_refuses_the_whole_table(self) -> None:
+        subject = {"pr_number": 500, "head_sha": "a" * 40}
+        gate: n.Native = {
+            "id": "check-gate",
+            "kind": "TECHNICAL",
+            "source_kind": "canonical_criterion",
+            "subject": subject,
+            "source_sha256": "check-evidence",
+            "canonical": {"check_run_id": 456},
+        }
+        native: n.Native = {
+            "id": "native-row",
+            "kind": "UNFINISHED",
+            "source_kind": "native_outcome",
+            "subject": subject,
+            "source_key": "delivery:1",
+            "source_sha256": "native-sha",
+        }
+        wait: n.Native = {
+            "subject": subject,
+            "source_key": "delivery:1",
+            "source_sha256": "native-sha",
+            "obligation_ids": ["check-gate"],
+            "observed_check_run_id": 456,
+        }
+        claim: n.Native = {
+            "id": "native-row",
+            "disposition": "WAITING",
+            "owner": "provider:canonical-gate",
+            "reason": "Await the exact-head check update.",
+            "resume_event": "provider_source_changed",
+            "evidence_sha256": "check-evidence",
+            "check_run_id": 456,
+        }
+
+        def bind(rows: list[Any], waits: list[Any]) -> n.Native | None:
+            job: n.Native = {
+                "continuation_frontier": {"rows": rows, "provider_waits": waits}
+            }
+            return n.gate_binding(job, native, claim)
+
+        self.assertIsNotNone(bind([gate], [wait]))
+        no_id = {k: v for k, v in gate.items() if k != "id"}
+        no_subject = {k: v for k, v in gate.items() if k != "subject"}
+        no_ids = {k: v for k, v in wait.items() if k != "obligation_ids"}
+        no_run = {k: v for k, v in wait.items() if k != "observed_check_run_id"}
+        for name, rows, waits in (
+            ("row without id", [gate, no_id], [wait]),
+            ("row without subject", [gate, no_subject], [wait]),
+            ("wait without obligations", [gate], [wait, no_ids]),
+            ("wait without a check run", [gate], [wait, no_run]),
+        ):
+            with self.subTest(name=name):
+                self.assertIsNone(bind(rows, waits))
+
+    def test_non_mapping_or_non_text_native_input_is_a_typed_refusal(self) -> None:
+        frontier = self.frontier
+        for name, args in (
+            ("claim", (self.job, frontier, self.row, "text", {"assignments": []}, [])),
+            (
+                "claim none",
+                (self.job, frontier, self.row, None, {"assignments": []}, []),
+            ),
+            ("job", (["x"], frontier, self.row, self.claim, {"assignments": []}, [])),
+            ("row", (self.job, frontier, 7, self.claim, {"assignments": []}, [])),
+            ("decoded", (self.job, frontier, self.row, self.claim, None, [])),
+            ("claims", (self.job, frontier, self.row, self.claim, {}, [None])),
+            (
+                "context key",
+                (
+                    {**self.job, "authority_context": {1: {}}},
+                    frontier,
+                    self.row,
+                    self.claim,
+                    {"assignments": []},
+                    [self.claim],
+                ),
+            ),
+        ):
+            with (
+                self.subTest(name=name),
+                self.assertRaisesRegex(ValueError, "^PROJECT_PROGRESS "),
+            ):
+                n.validate_progress(*cast("Any", args))
+
+    def test_gate_resume_refuses_a_non_mapping_argument_by_name(self) -> None:
+        cases: list[tuple[Any, Any, Any]] = [
+            ("text", {}, {}),
+            ({}, None, {}),
+            ({}, {}, [1]),
+        ]
+        for gate, record, fact in cases:
+            with (
+                self.subTest(gate=gate, record=record, fact=fact),
+                self.assertRaisesRegex(
+                    ValueError, "^PROJECT_PROGRESS gate_resume needs "
+                ),
+            ):
+                n.gate_resume(gate, record, fact, self.now)
+
     def test_newer_observation_accepts_digest_reversion(self) -> None:
         store: n.Native = {}
         for generation, sequence in (("g1", 1), ("g2", 2), ("g1", 3)):

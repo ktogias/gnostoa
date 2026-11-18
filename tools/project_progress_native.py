@@ -603,6 +603,13 @@ _ERRORS = {
 }
 
 
+def _require_mappings(caller: str, **named: object) -> None:
+    """One typed refusal for a native argument that is not a mapping."""
+    for name, value in named.items():
+        if not isinstance(value, Mapping):
+            raise ValueError(f"PROJECT_PROGRESS {caller} needs {name} to be a mapping")
+
+
 def validate_progress(
     job: Native,
     frontier: Native,
@@ -611,6 +618,15 @@ def validate_progress(
     decoded: Native,
     claims: list[Native],
 ) -> None:
+    # The frontier keeps its own named refusal further down.
+    _require_mappings(
+        "validate_progress", job=job, row=row, claim=claim, decoded=decoded
+    )
+    if not isinstance(claims, list) or not all(isinstance(c, Mapping) for c in claims):
+        raise ValueError("PROJECT_PROGRESS the claims must be a list of mappings")
+    context = job.get("authority_context")
+    if isinstance(context, Mapping) and not all(isinstance(k, str) for k in context):
+        raise ValueError("PROJECT_PROGRESS the authority context keys must be text")
     try:
         if claim.get("disposition") in ("ASSIGNED", "QUIESCENT") and not any(
             item == row for item in _frontier_rows(frontier)
@@ -680,16 +696,58 @@ def _mapping(value: object) -> Native:
     return cast("Native", value) if isinstance(value, Mapping) else {}
 
 
+def _text_value(value: object) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
+def _int_value(value: object) -> bool:
+    return type(value) is int
+
+
+# The one shape table for the held frontier entries: each field a member must carry
+# and the test its value passes. A member that fails any of them damages its table.
+_HELD_MEMBER_SHAPES: dict[str, dict[str, Callable[[object], bool]]] = {
+    "dependency_waits": {
+        "subject": lambda v: isinstance(v, Mapping),
+        "dependency": lambda v: isinstance(v, Mapping),
+        "evidence_sha256": _text_value,
+    },
+    "provider_waits": {
+        "subject": lambda v: isinstance(v, Mapping),
+        "source_key": _text_value,
+        "source_sha256": _text_value,
+        "obligation_ids": lambda v: isinstance(v, list),
+        "observed_check_run_id": _int_value,
+    },
+    "rows": {
+        "id": _text_value,
+        "subject": lambda v: isinstance(v, Mapping),
+    },
+}
+
+
+def _held_member(key: str, item: object) -> bool:
+    """A held entry that is a mapping carrying every field its table requires."""
+    if not isinstance(item, Mapping):
+        return False
+    shapes = _HELD_MEMBER_SHAPES.get(key, {})
+    if not all(test(item.get(field)) for field, test in shapes.items()):
+        return False
+    canonical = item.get("canonical")
+    return canonical is None or isinstance(canonical, Mapping)
+
+
 def _held_gate_sources(job: Native, key: str) -> list[Native] | None:
     """The job's held frontier entries under one key, or None for a damaged table.
 
     An absent table holds nothing. A table that is not a list, or that holds any
-    non-mapping entry, is damaged authority: it never filters down to an owner.
+    malformed or field-missing entry, is damaged authority: the whole table
+    refuses, so one valid member next to a malformed one never binds an owner.
     """
     items = _mapping(job.get("continuation_frontier")).get(key)
     if items is None:
         return []
-    if not isinstance(items, list) or not all(isinstance(i, Mapping) for i in items):
+    if not isinstance(items, list) or not all(_held_member(key, i) for i in items):
         return None
     return cast("list[Native]", items)
 
@@ -919,6 +977,7 @@ def gate_resume(
     existing observer. Exact subject, time, sequence and consumed-material checks
     are the neutral owner's common resume decision.
     """
+    _require_mappings("gate_resume", gate=gate, record=record, fact=fact)
     resume = _mapping(gate.get("resume_subject"))
     observed = record.get("observed_at")
     payload = record.get("payload")
