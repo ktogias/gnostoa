@@ -234,7 +234,7 @@ Two things survive the correction, and neither is the queue:
 1. **Arrival is consistent with accelerating** — 0.83 → 1.81 findings/h across the
    halves (n = 54), so the cumulative curve is consistent with convex. The evidence is
    a two-half rate comparison, not a curvature test, and the raw series is not in this
-   file. Departures kept pace over the window, which is a measurement and not a
+   file. Departures trailed arrivals slightly (rho = 1.15), which is a measurement and not a
    verdict on stability; if the convexity holds, no reliability-growth model can
    estimate what remains.
 2. **Remediation is 10.9× denser in findings than the implementation it repairs** —
@@ -277,7 +277,7 @@ estimate; component measurements may be reported, labelled as measurements.
 - The worked case is a single candidate. The instrument set is *not* validated
   until it reproduces #319 from raw data and correctly declines to label #312
   and #314 — both of which converged — as divergent.
-- A sustained, accelerating arrival of findings over eleven heads is evidence, not proof, of an
+- A sustained arrival of findings, consistent with accelerating, over eleven heads is evidence, not proof, of an
   unbounded finding supply. Measure 8 on a frozen head is the experiment that
   would distinguish the two, and it has not been run.
 - Substantive DRE required reading the code to decide whether each finding was in
