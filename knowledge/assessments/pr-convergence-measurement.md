@@ -125,8 +125,10 @@ The operational form for our purpose is the utilisation ratio:
 
 > **ρ = λ / μ**, where λ is finding arrival rate and μ is finding closure rate.
 
-Any queue with ρ > 1 grows without bound. This is a definition, not a heuristic,
-and it is the closest thing to a single-number convergence test.
+Any queue whose sustained ρ exceeds 1 grows without bound. This is a definition
+for long-run rates, not a heuristic; a ρ computed over a finite window is a
+measurement with sampling noise, not yet a sustained rate. It is the closest
+thing to a single-number convergence test.
 
 ### 2. Defect density — relative churn, not absolute
 
@@ -195,13 +197,20 @@ The two bases disagree on the verdict:
 
 On the tracker basis the candidate looks unstable. On the substantive basis the figures
 are far smaller: ρ is slightly above 1 (1.15 overall, 1.33 trailing), WIP stayed at 5–7
-and the **median fix latency was 23 minutes** (p90 83 min). Because arrivals are convex
-(below), the instrument would give **no convergence verdict** for this case and would
+and the **median fix latency was 23 minutes** (p90 83 min). Because arrivals are
+consistent with convex (below), the instrument would give **no convergence verdict**
+for this case and would
 name convexity, so these figures are measurements, not a verdict.
 
 The trailing ρ of 1.33 is **not reconciled** with the flat WIP of 5–7: the source
 comment reports ρ for the trailing 6 h and 12 h windows but not the arrival and
 departure counts in them, so they are not restated here.
+
+ρ above 1 and flat WIP are not contradictory here. ρ is a ratio of counts over a
+window, whereas WIP is the standing backlog. Four of the 7 live items were
+documentation items still open at measurement, and the window rests on few
+findings, so it cannot separate ρ = 1.33 from sustained growth. This is a further
+reason the instrument gives no verdict.
 
 Two departure proxies are used and must not be conflated. For the 18 threads closed on
 the tracker basis, departure is the last-comment time, because GitHub exposes no
@@ -222,14 +231,16 @@ all of them.
 
 Two things survive the correction, and neither is the queue:
 
-1. **Arrival is genuinely accelerating** — 0.83 → 1.81 findings/h across the halves,
-   so the cumulative curve is convex. Departures kept pace over the window, which is a
-   measurement and not a verdict on stability; it does mean no reliability-growth model
-   can estimate what remains.
+1. **Arrival is consistent with accelerating** — 0.83 → 1.81 findings/h across the
+   halves (n = 54), so the cumulative curve is consistent with convex. The evidence is
+   a two-half rate comparison, not a curvature test, and the raw series is not in this
+   file. Departures kept pace over the window, which is a measurement and not a
+   verdict on stability; if the convexity holds, no reliability-growth model can
+   estimate what remains.
 2. **Remediation is 10.9× denser in findings than the implementation it repairs** —
    17.5/KLOC across 23 remediation commits against 1.6/KLOC for the original
-   implementation. This is the arrival driver, and it is why the curve is convex
-   rather than saturating.
+   implementation. A working hypothesis, without a control, is that remediation is
+   the arrival driver and the reason the curve is convex rather than saturating.
 
 ## Proposed instrument set
 
@@ -253,13 +264,16 @@ frozen head decays to zero across successive passes.
 
 **Proposed refusal rule.** When arrivals are convex or the subject is still
 growing, the instrument reports *no verdict possible* and names the violated
-precondition. It does not emit a number.
+precondition. It does not emit a convergence verdict or a remaining-defect
+estimate; component measurements may be reported, labelled as measurements.
 
 ## Known limits of this research
 
-- Departure timestamps are a **proxy**. GitHub exposes no `resolvedAt` on a
-  review thread; the last comment time is used. Measure 5 is therefore the
-  weakest of the eight and should carry its uncertainty forward.
+- Departure timestamps on the tracker basis are a **proxy**. GitHub exposes no
+  `resolvedAt` on a review thread, so the last comment time is used. Measures 1
+  and 2 inherit this uncertainty whenever they are computed on tracker
+  departures. Measure 5 uses counts, not timestamps, and its weakness is
+  detector authorship (see below).
 - The worked case is a single candidate. The instrument set is *not* validated
   until it reproduces #319 from raw data and correctly declines to label #312
   and #314 — both of which converged — as divergent.
