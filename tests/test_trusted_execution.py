@@ -163,6 +163,27 @@ class TrustedDirectoryTests(unittest.TestCase):
                     self.assertIsNone(trusted_execution.trusted_directory(found))
 
 
+class EmbeddedNulTests(unittest.TestCase):
+    """An untrusted path is None, as the functions say, and a NUL byte names none:
+    `os.lstat` raises `ValueError` for it, not the `OSError` the walk answers."""
+
+    def test_a_path_with_a_nul_is_untrusted_not_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            found = f"{scratch}/a\x00b"
+            for function in (
+                trusted_execution.trusted_path,
+                trusted_execution.trusted_directory,
+            ):
+                with self.subTest(function=function.__name__):
+                    self.assertIsNone(function(found))
+
+    def test_an_executable_whose_path_has_a_nul_is_untrusted(self) -> None:
+        with mock.patch.object(
+            trusted_execution.shutil, "which", return_value="/usr/bin/g\x00it"
+        ):
+            self.assertIsNone(trusted_execution.trusted_executable("git"))
+
+
 class TrustedPathTests(unittest.TestCase):
     """A path is walked one component at a time, judging every link before following
     it (Codex, CodeAnt and gitar on #364)."""
@@ -411,8 +432,8 @@ class GitEnvironmentTests(unittest.TestCase):
         }
         self.assertEqual("never", pairs["protocol.allow"])
         self.assertEqual("always", pairs["protocol.https.allow"])
-        self.assertNotIn(
-            "protocol.allow", self._pairs(trusted_execution.git_environment())
+        self.assertEqual(
+            "never", self._pairs(trusted_execution.git_environment())["protocol.allow"]
         )
 
     @staticmethod
@@ -1272,6 +1293,40 @@ class TransportTests(unittest.TestCase):
                 cwd=destination,
                 environment=trusted_execution.git_environment(transports=("file",)),
             )
+
+    def test_no_transport_argument_refuses_every_transport(self) -> None:
+        """Naming no transports named none, not the caller's: a default call went
+        through a `file://` fetch the repository itself allowed (fail closed)."""
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            source, destination = base / "source", base / "destination"
+            for repository in (source, destination):
+                repository.mkdir()
+                _git(repository, "init", "--quiet")
+            (source / "a").write_text("a\n", encoding="utf-8")
+            _git(source, "add", "a")
+            _git(
+                source,
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@e",
+                "commit",
+                "-qm",
+                "a",
+            )
+            _git(destination, "config", "protocol.file.allow", "always")
+            with self.assertRaises(trusted_execution.GitFailure):
+                trusted_execution.run_git(
+                    ["fetch", "--quiet", f"file://{source}", "HEAD"],
+                    cwd=destination,
+                    environment=trusted_execution.git_environment(),
+                )
+
+    def test_a_callers_allowed_protocols_are_not_inherited(self) -> None:
+        with mock.patch.dict(os.environ, {"GIT_ALLOW_PROTOCOL": "file:https"}):
+            environment = trusted_execution.git_environment()
+        self.assertEqual("", environment.get("GIT_ALLOW_PROTOCOL"))
 
 
 class BrokenRepositoryTests(unittest.TestCase):

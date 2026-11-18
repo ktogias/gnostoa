@@ -130,7 +130,7 @@ def trusted_path(found: str) -> str | None:
         return None
     try:
         return _walk(found)
-    except OSError:
+    except (OSError, ValueError):
         return None
 
 
@@ -142,7 +142,7 @@ def trusted_directory(found: str) -> str | None:
         return None
     try:
         return _walk(found, directory=True)
-    except OSError:
+    except (OSError, ValueError):
         return None
 
 
@@ -250,7 +250,7 @@ def git_executable() -> str:
 
 def git_environment(
     *,
-    transports: Sequence[str] | None = None,
+    transports: Sequence[str] = (),
     git_dir: str | os.PathLike[str] | None = None,
     work_tree: str | os.PathLike[str] | None = None,
     index_file: str | os.PathLike[str] | None = None,
@@ -269,7 +269,7 @@ def git_environment(
     - hooks and file-system monitors are off by command-scope configuration, which
       outranks the repository's own.
 
-    ``transports`` refuses every transport but those named. The routing arguments are
+    ``transports`` refuses every transport but those named; none named, none allowed. The routing arguments are
     the only repository selectors added.
     """
     environment = {
@@ -286,15 +286,13 @@ def git_environment(
         "GIT_NO_LAZY_FETCH": "1",
     }
     configuration = list(_PINNED_CONFIGURATION)
-    if transports is not None:
-        configuration.append(("protocol.allow", "never"))
-        configuration.extend(
-            (f"protocol.{name}.allow", "always") for name in transports
-        )
-        # `protocol.allow` is only a default: a repository's own
-        # `protocol.<name>.allow` re-allowed a refused transport (Codex on #369).
-        # `GIT_ALLOW_PROTOCOL` outranks every configuration.
-        environment["GIT_ALLOW_PROTOCOL"] = ":".join(transports)
+    configuration.append(("protocol.allow", "never"))
+    configuration.extend((f"protocol.{name}.allow", "always") for name in transports)
+    # `protocol.allow` is only a default: a repository's own
+    # `protocol.<name>.allow` re-allowed a refused transport (Codex on #369).
+    # `GIT_ALLOW_PROTOCOL` outranks every configuration, and is always set: a call
+    # that names no transport allows none, and the caller's own list is not inherited.
+    environment["GIT_ALLOW_PROTOCOL"] = ":".join(transports)
     environment["GIT_CONFIG_COUNT"] = str(len(configuration))
     for index, (key, value) in enumerate(configuration):
         environment[f"GIT_CONFIG_KEY_{index}"] = key
