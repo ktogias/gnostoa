@@ -129,38 +129,87 @@ class ProgressOwnerTests(unittest.TestCase):
         now = 1_800_000_000.0
         past = (p.RequestStamp("a", now - 1), p.RequestStamp("b", now - 2))
         future = p.RequestStamp("c", now + 60)
-        self.assertIsNone(p.request_budget((*past, future), (*past, future), now))
+        self.assertEqual(
+            p.request_budget((*past, future), (*past, future), now),
+            "TIME_MONOTONICITY_HOLD",
+        )
         third = p.RequestStamp("d", now - 3)
         self.assertEqual(
             p.request_budget((*past, third, future), (*past, third, future), now),
-            "IDENTITY_CAP",
+            "TIME_MONOTONICITY_HOLD",
         )
 
     def test_future_stamp_same_utc_day_does_not_count_toward_daily_cap(
         self,
     ) -> None:
-        # Same rule as the rolling window: a stamp later than now is not used yet.
         now = 1_800_000_000.0
         future = (p.RequestStamp("a", now + 60),)
-        self.assertIsNone(p.request_budget((), future, now, daily_cap=1))
+        self.assertEqual(
+            p.request_budget((), future, now, daily_cap=1),
+            "TIME_MONOTONICITY_HOLD",
+        )
         past = (p.RequestStamp("b", now - 60),)
         self.assertEqual(p.request_budget((), past, now, daily_cap=1), "DAILY_CAP")
 
     def test_characterization_future_stamp_later_utc_day_not_in_daily_cap(
         self,
     ) -> None:
-        # Characterizes current behavior, not a settled design choice.
         now = 1_800_000_000.0
         future = (p.RequestStamp("a", now + 86400),)
-        self.assertIsNone(p.request_budget((), future, now, daily_cap=1))
+        self.assertEqual(
+            p.request_budget((), future, now, daily_cap=1),
+            "TIME_MONOTONICITY_HOLD",
+        )
 
     def test_characterization_future_stamps_never_count_toward_identity_cap(
         self,
     ) -> None:
-        # Characterizes current behavior, not a settled design choice.
         now = 1_800_000_000.0
-        future = tuple(p.RequestStamp(str(n), now + n) for n in (1, 2, 3))
-        self.assertIsNone(p.request_budget(future, future, now, daily_cap=100))
+        # Stamps within jitter (<=5s) are clamped to now for evaluation and count toward identity cap
+        jitter = tuple(p.RequestStamp(str(n), now + 1.0) for n in (1, 2, 3))
+        self.assertEqual(p.request_budget(jitter, jitter, now, daily_cap=100), "IDENTITY_CAP")
+        # Stamps beyond jitter trigger TIME_MONOTONICITY_HOLD
+        future = tuple(p.RequestStamp(str(n), now + 10.0 + n) for n in (1, 2, 3))
+        self.assertEqual(
+            p.request_budget(future, future, now, daily_cap=100),
+            "TIME_MONOTONICITY_HOLD",
+        )
+
+    def test_future_stamps_absorb_jitter_and_fail_closed_on_large_skew(
+        self,
+    ) -> None:
+        now = 1_800_000_000.0
+        # Absorbs jitter <= 5.0s: evaluate virtually within window
+        jitter = tuple(p.RequestStamp(str(n), now + 3.0) for n in (1, 2, 3))
+        self.assertEqual(p.request_budget(jitter, jitter, now), "IDENTITY_CAP")
+
+        # Gross forward skew > 5.0s: fail closed with explicit monotonic hold
+        skew = tuple(p.RequestStamp(str(n), now + 60.0) for n in (1, 2, 3))
+        self.assertEqual(p.request_budget(skew, skew, now), "TIME_MONOTONICITY_HOLD")
+
+    def test_future_stamps_exact_threshold_and_utc_midnight(self) -> None:
+        # UTC midnight test: 2027-01-15 00:00:00 UTC = 1_800_000_000
+        now = 1_800_000_000.0
+        # Exact threshold test: 5.0s jitter absorbed, 5.001s skew holds
+        exact_border = (p.RequestStamp("1", now + 5.0),)
+        self.assertIsNone(p.request_budget(exact_border, exact_border, now))
+
+        over_border = (p.RequestStamp("1", now + 5.001),)
+        self.assertEqual(
+            p.request_budget(over_border, over_border, now),
+            "TIME_MONOTONICITY_HOLD",
+        )
+
+        # Carried stamps excluded from daily cap even if jittered
+        carried_jitter = (p.RequestStamp("1", now + 2.0, carried=True),)
+        self.assertIsNone(p.request_budget((), carried_jitter, now, daily_cap=1))
+
+        # Non-carried jittered stamp within same UTC day counts towards daily cap
+        non_carried = (p.RequestStamp("1", now + 2.0, carried=False),)
+        self.assertEqual(
+            p.request_budget((), non_carried, now, daily_cap=1),
+            "DAILY_CAP",
+        )
 
     def test_characterization_unordered_first_scope_source_requests_refresh(
         self,

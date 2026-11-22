@@ -146,14 +146,23 @@ def request_budget(
     per_identity: int = 3,
     window_seconds: float = 86400,
     daily_cap: int = 12,
+    max_jitter_seconds: float = 5.0,
 ) -> str | None:
-    if sum(0 <= now - r.at < window_seconds for r in identity) >= per_identity:
+    # Check for gross clock rollback / forward skew beyond jitter threshold
+    for r in (*identity, *all_requests):
+        if r.at - now > max_jitter_seconds:
+            return "TIME_MONOTONICITY_HOLD"
+
+    def virtual_age(at: float) -> float:
+        # Bounded virtual evaluation: absorb jitter <= max_jitter_seconds
+        return 0.0 if at > now else now - at
+
+    if sum(virtual_age(r.at) < window_seconds for r in identity) >= per_identity:
         return "IDENTITY_CAP"
     day = datetime.fromtimestamp(now, UTC).date()
     used = sum(
         not r.carried
-        and r.at <= now
-        and datetime.fromtimestamp(r.at, UTC).date() == day
+        and datetime.fromtimestamp(min(r.at, now), UTC).date() == day
         for r in all_requests
     )
     return "DAILY_CAP" if used >= daily_cap else None
