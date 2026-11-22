@@ -167,7 +167,9 @@ class ProgressOwnerTests(unittest.TestCase):
         now = 1_800_000_000.0
         # Stamps within jitter (<=5s) are clamped to now for evaluation and count toward identity cap
         jitter = tuple(p.RequestStamp(str(n), now + 1.0) for n in (1, 2, 3))
-        self.assertEqual(p.request_budget(jitter, jitter, now, daily_cap=100), "IDENTITY_CAP")
+        self.assertEqual(
+            p.request_budget(jitter, jitter, now, daily_cap=100), "IDENTITY_CAP"
+        )
         # Stamps beyond jitter trigger TIME_MONOTONICITY_HOLD
         future = tuple(p.RequestStamp(str(n), now + 10.0 + n) for n in (1, 2, 3))
         self.assertEqual(

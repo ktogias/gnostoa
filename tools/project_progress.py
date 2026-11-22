@@ -161,8 +161,7 @@ def request_budget(
         return "IDENTITY_CAP"
     day = datetime.fromtimestamp(now, UTC).date()
     used = sum(
-        not r.carried
-        and datetime.fromtimestamp(min(r.at, now), UTC).date() == day
+        not r.carried and datetime.fromtimestamp(min(r.at, now), UTC).date() == day
         for r in all_requests
     )
     return "DAILY_CAP" if used >= daily_cap else None
