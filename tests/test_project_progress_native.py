@@ -526,6 +526,32 @@ class NativeProgressTests(unittest.TestCase):
         self.assertEqual([r["state"] for r in migrated["requests"]], ["INTENT", "SENT"])
         self.assertEqual(migrated["requests"][0]["carried_from"], old["id"])
 
+    def test_migration_refuses_invalid_unbound_without_mutating_store_or_records(self) -> None:
+        store: n.Native = {}
+        # Unbound missing status
+        invalid_unbound: n.Native = {
+            "id": "unbound-1",
+            "sources": [],
+            "requests": [],
+        }
+        with self.assertRaises(ValueError):
+            n.migrate(store, invalid_unbound, self.scope, self.now + 1)
+        self.assertEqual(store, {})
+        self.assertNotIn("status", invalid_unbound)
+
+        # Unbound with invalid request record failing during carry_requests
+        store = {}
+        invalid_req_unbound: n.Native = {
+            "id": "unbound-2",
+            "status": "OPEN",
+            "sources": [],
+            "requests": [{"key": "bad-req"}],  # Missing 'at' timestamp
+        }
+        with self.assertRaises(ValueError):
+            n.migrate(store, invalid_req_unbound, self.scope, self.now + 1)
+        self.assertEqual(store, {})
+        self.assertEqual(invalid_req_unbound["status"], "OPEN")
+
     def test_source_invalidation_survives_stored_restart_even_when_not_newly_touched(
         self,
     ) -> None:

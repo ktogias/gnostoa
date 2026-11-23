@@ -275,13 +275,22 @@ def _carry_requests(bound: Native, unbound: Native) -> None:
 
 
 def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> Native:
+    if not isinstance(unbound.get("status"), str):
+        raise ValueError("PROJECT_PROGRESS unbound obligation has no status")
+    if not isinstance(unbound.get("id"), str) or not unbound["id"]:
+        raise ValueError("PROJECT_PROGRESS unbound obligation has no id")
+    if not isinstance(unbound.get("sources"), list):
+        raise ValueError("PROJECT_PROGRESS unbound obligation sources must be a list")
     oid = scope_identity(scope)
     # Validate every carried and bound request before the first mutation.
     _history(unbound)
-    if obligations.get(oid):
-        _history(obligations[oid])
-    bound = obligations.get(oid) or new_obligation(oid, scope, now)
-    obligations[oid] = bound
+    existing_bound = obligations.get(oid)
+    if existing_bound:
+        if not isinstance(existing_bound.get("status"), str):
+            raise ValueError("PROJECT_PROGRESS stored obligation has no status")
+        _history(existing_bound)
+
+    bound = copy.deepcopy(existing_bound) if existing_bound else new_obligation(oid, scope, now)
     binding = {
         "kind": "scope_binding",
         "key": "binding-resolved:" + unbound["id"],
@@ -289,11 +298,11 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
         "scope_ref": scope.get("ref"),
     }
     carried_before = unbound["id"] in bound.get("migrated_from", [])
-    if carried_before and binding in bound["sources"]:
+    if carried_before and binding in bound.get("sources", []):
         # The bound record survived a crash before the old tombstone. Its input
         # and complete request history are already durable; finish only the tombstone.
         unbound.update(status="MIGRATED", superseded_by=oid, migrated_at=_iso(now))
-        return bound
+        return existing_bound if existing_bound is not None else bound
     added, _ = merge_sources(bound, unbound["sources"])
     created, rearmed = p.opening(str(bound["status"]), added)
     if created:
@@ -308,6 +317,7 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
         reopen(bound, now, "NEW_SOURCE")
     else:
         bound["rearmed_at"] = _iso(now)
+    obligations[oid] = bound
     unbound.update(status="MIGRATED", superseded_by=oid, migrated_at=_iso(now))
     return bound
 
