@@ -259,8 +259,8 @@ Computable from the GitHub API with no new runtime dependency.
 
 **Proposed stopping rule** (illustrative: parameters are unset, it is advisory and not a
 threshold). A candidate is converged when ρ < 1 is sustained,
-cumulative arrivals are concave, tracked DRE ≈ substantive DRE, and yield on a
-frozen head decays to zero across successive passes.
+cumulative arrivals are concave, tracked DRE ≈ substantive DRE, substantive DRE satisfies an explicitly declared minimum threshold, and yield on a
+frozen head decays to zero across successive passes. Agreement between tracked DRE and substantive DRE at low values alone cannot justify convergence, because an equally low pair (e.g. 50%) leaves a large proportion of known defects unaddressed even when tracked and substantive rates match.
 
 **Proposed refusal rule.** When arrivals are convex or the subject is still
 growing, the instrument reports *no verdict possible* and names the violated
