@@ -102,9 +102,9 @@ def merge_sources(
             )
             if update is False:
                 result = _advance(source, result)
+                continue
             if update is None:
                 refresh = True
-            if not update:
                 continue
             result = [s for s in result if s.category != source.category]
         if _duplicate(source, result):
