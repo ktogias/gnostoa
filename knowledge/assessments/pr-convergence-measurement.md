@@ -167,7 +167,7 @@ This yields the most important negative result in this research: *there are
 states in which "how many findings remain" is not estimable*, and an honest
 instrument must say so rather than fit a curve anyway.
 
-### 5. Review size, as a sanity bound
+## Review size, as a sanity bound
 
 The Cisco/SmartBear study (2,500 reviews, 3.2M LOC) found detection effectiveness
 falling off above **200–400 LOC per review** and above ~500 LOC/hour. This is not
