@@ -254,7 +254,7 @@ Computable from the GitHub API with no new runtime dependency.
 | 4 | Curvature of cumulative arrivals | SRGM precondition | concave |
 | 5 | **Tracked DRE − substantive DRE** — the primary measure | DRE, paired | ≈ 0 |
 | 6 | Remediation : implementation density ratio | relative churn | → 1 |
-| 7 | Review size per pass | review-size study | 200–400 LOC |
+| 7 | Review size per pass | review-size study | ≤ 200–400 LOC (upper validity bound, not a target interval) |
 | 8 | Yield decay across passes on a **frozen** head | SRGM, properly conditioned | → 0 |
 
 **Proposed stopping rule** (illustrative: parameters are unset, it is advisory and not a
