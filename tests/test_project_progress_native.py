@@ -1427,6 +1427,34 @@ class NativeProgressTests(unittest.TestCase):
         stamp = n.request_stamp({"key": "a", "at": "2026-11-17T00:00:00Z"})
         self.assertEqual(stamp.key, "a")
 
+    def test_request_budget_includes_current_obligation_in_daily_cap_when_ad_hoc(
+        self,
+    ) -> None:
+        store: n.Native = {}
+        now = self.now + 10
+        at = datetime.fromtimestamp(now, UTC).isoformat()
+        obligation = n.new_obligation("ad-hoc", self.scope, now)
+        obligation["requests"] = [{"key": "req-1", "at": at}]
+
+        # When obligation is passed ad-hoc (not stored in store), its request must count towards daily_cap
+        self.assertEqual(
+            n.request_budget(store, obligation, now, daily_cap=1),
+            "DAILY_CAP",
+        )
+        self.assertIsNone(
+            n.request_budget(store, obligation, now, daily_cap=2),
+        )
+
+        # When obligation is also in store, it must not be double counted
+        store["ad-hoc"] = obligation
+        self.assertEqual(
+            n.request_budget(store, obligation, now, daily_cap=1),
+            "DAILY_CAP",
+        )
+        self.assertIsNone(
+            n.request_budget(store, obligation, now, daily_cap=2),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
