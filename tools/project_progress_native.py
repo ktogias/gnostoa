@@ -169,7 +169,11 @@ def open_obligation(
         successor = (
             obligations.get(str(successor_id)) if successor_id is not None else None
         )
-        if successor is None or successor.get("status") == "MIGRATED":
+        if successor is None:
+            return obligation, False, "SOURCE_PENDING/REFRESH"
+        if not isinstance(successor.get("status"), str) or not successor["status"]:
+            raise ValueError("PROJECT_PROGRESS a stored obligation has no status")
+        if successor.get("status") == "MIGRATED":
             return obligation, False, "SOURCE_PENDING/REFRESH"
         return _absorb(successor, str(successor["status"]), sources, now, chains)
     return _absorb(obligation, previous, sources, now, chains)
@@ -285,12 +289,19 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
     # Validate every carried and bound request before the first mutation.
     _history(unbound)
     existing_bound = obligations.get(oid)
-    if existing_bound:
-        if not isinstance(existing_bound.get("status"), str):
+    if existing_bound is not None:
+        if (
+            not isinstance(existing_bound.get("status"), str)
+            or not existing_bound["status"]
+        ):
             raise ValueError("PROJECT_PROGRESS stored obligation has no status")
         _history(existing_bound)
 
-    bound = copy.deepcopy(existing_bound) if existing_bound else new_obligation(oid, scope, now)
+    bound = (
+        copy.deepcopy(existing_bound)
+        if existing_bound is not None
+        else new_obligation(oid, scope, now)
+    )
     binding = {
         "kind": "scope_binding",
         "key": "binding-resolved:" + unbound["id"],

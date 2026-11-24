@@ -143,6 +143,69 @@ class NativeProgressTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "stored obligation has no status"):
             n.open_obligation(store, self.scope, [], None, self.now)
 
+        # a) A stored MIGRATED record pointing to an existing successor with missing or non-text status raising ValueError without mutating records
+        for bad_status in (None, 7, ""):
+            succ_id = "succ-1"
+            migrated_record = {
+                "id": oid,
+                "status": "MIGRATED",
+                "superseded_by": succ_id,
+                "sources": [],
+                "requests": [],
+            }
+            succ_record = (
+                {"id": succ_id, "sources": [], "requests": []}
+                if bad_status is None
+                else {
+                    "id": succ_id,
+                    "status": bad_status,
+                    "sources": [],
+                    "requests": [],
+                }
+            )
+            store_case = {
+                oid: copy.deepcopy(migrated_record),
+                succ_id: copy.deepcopy(succ_record),
+            }
+            before_store = copy.deepcopy(store_case)
+            with self.assertRaisesRegex(ValueError, "stored obligation has no status"):
+                n.open_obligation(store_case, self.scope, [], None, self.now)
+            self.assertEqual(store_case, before_store)
+
+        # b) An OPEN record migration against an existing empty destination dict raising ValueError and leaving both records unchanged
+        dest_scope = {"kind": "work_item", "ref": "issue:999"}
+        dest_oid = n.scope_identity(dest_scope)
+        unbound_open = {
+            "id": "unbound-1",
+            "status": "OPEN",
+            "sources": [],
+            "requests": [],
+        }
+        store_collision: n.Native = {dest_oid: {}}
+        before_unbound = copy.deepcopy(unbound_open)
+        before_store_collision = copy.deepcopy(store_collision)
+        with self.assertRaisesRegex(ValueError, "stored obligation has no status"):
+            n.migrate(store_collision, unbound_open, dest_scope, self.now)
+        self.assertEqual(unbound_open, before_unbound)
+        self.assertEqual(store_collision, before_store_collision)
+
+        # c) Retention of pending outcome when successor is genuinely absent
+        store_absent = {
+            oid: {
+                "id": oid,
+                "status": "MIGRATED",
+                "superseded_by": "missing-succ",
+                "sources": [],
+                "requests": [],
+            }
+        }
+        res_ob, res_flag, res_status = n.open_obligation(
+            store_absent, self.scope, [], None, self.now
+        )
+        self.assertEqual(res_status, "SOURCE_PENDING/REFRESH")
+        self.assertFalse(res_flag)
+        self.assertEqual(res_ob["id"], oid)
+
     def test_one_malformed_wait_table_member_refuses_the_whole_table(self) -> None:
         subject = {"pr_number": 500, "head_sha": "a" * 40}
         dependency = {"pr_number": 600, "head_sha": "b" * 40}
@@ -526,7 +589,9 @@ class NativeProgressTests(unittest.TestCase):
         self.assertEqual([r["state"] for r in migrated["requests"]], ["INTENT", "SENT"])
         self.assertEqual(migrated["requests"][0]["carried_from"], old["id"])
 
-    def test_migration_refuses_invalid_unbound_without_mutating_store_or_records(self) -> None:
+    def test_migration_refuses_invalid_unbound_without_mutating_store_or_records(
+        self,
+    ) -> None:
         store: n.Native = {}
         # Unbound missing status
         invalid_unbound: n.Native = {
@@ -1493,8 +1558,12 @@ class NativeProgressTests(unittest.TestCase):
         supplied_obl = n.new_obligation("obl-1", self.scope, now)
         supplied_obl["requests"] = [copy.deepcopy(req_a), copy.deepcopy(req_b)]
 
-        peer_obl = n.new_obligation("obl-peer", {"kind": "work_item", "ref": "issue:1"}, now)
-        peer_obl["requests"] = [{"key": "peer-req", "at": at_a, "carried_from": "old-peer"}]
+        peer_obl = n.new_obligation(
+            "obl-peer", {"kind": "work_item", "ref": "issue:1"}, now
+        )
+        peer_obl["requests"] = [
+            {"key": "peer-req", "at": at_a, "carried_from": "old-peer"}
+        ]
 
         store: n.Native = {"obl-1": stored_obl, "obl-peer": peer_obl}
         # Daily cap 2 holds (req-a + req-b = 2 non-carried requests today, peer is carried so excluded)
@@ -1530,13 +1599,16 @@ class NativeProgressTests(unittest.TestCase):
         obligation = n.new_obligation("obl-1", self.scope, now)
         obligation["requests"] = [{"key": "req-1", "at": at}]
 
-        malformed_peer = n.new_obligation("obl-bad", {"kind": "work_item", "ref": "issue:2"}, now)
+        malformed_peer = n.new_obligation(
+            "obl-bad", {"kind": "work_item", "ref": "issue:2"}, now
+        )
         malformed_peer["requests"] = [{"key": "bad-req", "at": "not-a-valid-time"}]
 
         store: n.Native = {"obl-1": obligation, "obl-bad": malformed_peer}
-        with self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS a request record needs its key"):
+        with self.assertRaisesRegex(
+            ValueError, "PROJECT_PROGRESS a request record needs its key"
+        ):
             n.request_budget(store, obligation, now)
-
 
 
 if __name__ == "__main__":
