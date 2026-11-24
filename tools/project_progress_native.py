@@ -959,14 +959,17 @@ def _resume_selector(
     return None
 
 
-def _resume_gate(gate: Native, mode: str) -> p.ResumeGate:
-    resume = gate["resume_subject"]
+def _resume_gate(gate: Native, mode: str) -> p.ResumeGate | None:
+    resume = _mapping(gate.get("resume_subject"))
+    at = gate.get("at")
+    if type(at) not in (int, float) or not provider.valid_subject(resume):
+        return None
     baseline = _mapping(gate.get("canonical")).get("check_run_id")
     return p.ResumeGate(
         provider.subject_ref(resume),
         str(resume["head_sha"]),
         mode,
-        float(gate["at"]),
+        float(at),
         baseline if type(baseline) is int else 0,
     )
 
@@ -1019,5 +1022,8 @@ def gate_resume(
         mode,
         advances,
     )
-    resumes = p.gate_resume(_resume_gate(gate, mode), normalized_fact, now, tuple(seen))
+    normalized_gate = _resume_gate(gate, mode)
+    if normalized_gate is None:
+        return None
+    resumes = p.gate_resume(normalized_gate, normalized_fact, now, tuple(seen))
     return reason if resumes else None

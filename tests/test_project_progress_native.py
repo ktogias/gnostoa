@@ -635,6 +635,7 @@ class NativeProgressTests(unittest.TestCase):
                 missing_gate_time, record, fact, self.now + 2, owner_review=True
             )
         )
+        self.assertIsNone(n._resume_gate(missing_gate_time, "owner"))
         for invalid_at in (None, "not-a-timestamp", True):
             invalid_gate_time = copy.deepcopy(gate)
             invalid_gate_time["at"] = invalid_at
@@ -648,6 +649,7 @@ class NativeProgressTests(unittest.TestCase):
                         owner_review=True,
                     )
                 )
+                self.assertIsNone(n._resume_gate(invalid_gate_time, "owner"))
         for mismatch in ("number", "head"):
             wrong_record = copy.deepcopy(record)
             wrong_fact = copy.deepcopy(fact)
