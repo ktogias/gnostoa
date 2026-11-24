@@ -1455,6 +1455,89 @@ class NativeProgressTests(unittest.TestCase):
             n.request_budget(store, obligation, now, daily_cap=2),
         )
 
+    def test_request_budget_rehydrated_same_id_round_trip_deduplication(
+        self,
+    ) -> None:
+        # 1. A same-ID JSON round trip of one retained request today yields no hold when daily cap is 2 and per-identity cap is 3. With an empty store and daily cap 1 the same single request holds.
+        now = self.now + 10
+        at = datetime.fromtimestamp(now, UTC).isoformat()
+        obligation = n.new_obligation("obl-1", self.scope, now)
+        obligation["requests"] = [{"key": "req-1", "at": at}]
+
+        # Rehydrated copy of obligation in store (different dict object, same id and requests)
+        store: n.Native = {"obl-1": json.loads(json.dumps(obligation))}
+        # Daily cap 2, per-identity cap 3 -> no hold (not double counted as 2 requests)
+        self.assertIsNone(
+            n.request_budget(store, obligation, now, daily_cap=2, per_identity=3)
+        )
+        # With empty store and daily cap 1, the single request holds
+        self.assertEqual(
+            n.request_budget({}, obligation, now, daily_cap=1),
+            "DAILY_CAP",
+        )
+
+    def test_request_budget_same_id_stored_and_supplied_history_merge(
+        self,
+    ) -> None:
+        # 2. If a same-ID stored row retains request A and the separately supplied row contains A and a newer request B, both are counted once and daily cap 2 holds. Apply the same exact-once aggregate when the store has the newer history instead. Preserve other obligations, carried-stamp exclusion and existing timestamp and identity limits.
+        now = self.now + 10
+        at_a = datetime.fromtimestamp(now - 100, UTC).isoformat()
+        at_b = datetime.fromtimestamp(now, UTC).isoformat()
+
+        req_a = {"key": "req-a", "at": at_a}
+        req_b = {"key": "req-b", "at": at_b}
+
+        # Case 2a: Store has A, supplied has A and B
+        stored_obl = n.new_obligation("obl-1", self.scope, now - 100)
+        stored_obl["requests"] = [copy.deepcopy(req_a)]
+        supplied_obl = n.new_obligation("obl-1", self.scope, now)
+        supplied_obl["requests"] = [copy.deepcopy(req_a), copy.deepcopy(req_b)]
+
+        peer_obl = n.new_obligation("obl-peer", {"kind": "work_item", "ref": "issue:1"}, now)
+        peer_obl["requests"] = [{"key": "peer-req", "at": at_a, "carried_from": "old-peer"}]
+
+        store: n.Native = {"obl-1": stored_obl, "obl-peer": peer_obl}
+        # Daily cap 2 holds (req-a + req-b = 2 non-carried requests today, peer is carried so excluded)
+        self.assertEqual(
+            n.request_budget(store, supplied_obl, now, daily_cap=2),
+            "DAILY_CAP",
+        )
+        self.assertIsNone(
+            n.request_budget(store, supplied_obl, now, daily_cap=3),
+        )
+
+        # Case 2b: Store has newer history (A and B), supplied has A
+        stored_obl_newer = n.new_obligation("obl-1", self.scope, now)
+        stored_obl_newer["requests"] = [copy.deepcopy(req_a), copy.deepcopy(req_b)]
+        supplied_obl_older = n.new_obligation("obl-1", self.scope, now - 100)
+        supplied_obl_older["requests"] = [copy.deepcopy(req_a)]
+
+        store_newer: n.Native = {"obl-1": stored_obl_newer, "obl-peer": peer_obl}
+        self.assertEqual(
+            n.request_budget(store_newer, supplied_obl_older, now, daily_cap=2),
+            "DAILY_CAP",
+        )
+        self.assertIsNone(
+            n.request_budget(store_newer, supplied_obl_older, now, daily_cap=3),
+        )
+
+    def test_request_budget_malformed_unrelated_stored_row_yields_project_progress_value_error(
+        self,
+    ) -> None:
+        # 3. A malformed unrelated stored row still yields the existing named PROJECT_PROGRESS ValueError from history validation.
+        now = self.now + 10
+        at = datetime.fromtimestamp(now, UTC).isoformat()
+        obligation = n.new_obligation("obl-1", self.scope, now)
+        obligation["requests"] = [{"key": "req-1", "at": at}]
+
+        malformed_peer = n.new_obligation("obl-bad", {"kind": "work_item", "ref": "issue:2"}, now)
+        malformed_peer["requests"] = [{"key": "bad-req", "at": "not-a-valid-time"}]
+
+        store: n.Native = {"obl-1": obligation, "obl-bad": malformed_peer}
+        with self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS a request record needs its key"):
+            n.request_budget(store, obligation, now)
+
+
 
 if __name__ == "__main__":
     unittest.main()

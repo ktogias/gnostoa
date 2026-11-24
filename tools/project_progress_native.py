@@ -340,12 +340,12 @@ def request_budget(
     daily_cap: int = 12,
 ) -> str | None:
     identity = _history(obligation)
-    all_obligations = (
-        obligations.values()
-        if any(o is obligation for o in obligations.values())
-        else (*obligations.values(), obligation)
-    )
-    everyone = tuple(s for o in all_obligations for s in _history(o))
+    stored_histories = [_history(o) for o in obligations.values()]
+    all_stamps = dict.fromkeys(identity)
+    for hist in stored_histories:
+        for s in hist:
+            all_stamps.setdefault(s, None)
+    everyone = tuple(all_stamps.keys())
     return p.request_budget(
         identity,
         everyone,
