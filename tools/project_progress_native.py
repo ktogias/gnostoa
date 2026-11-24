@@ -369,6 +369,22 @@ def request_budget(
     )
 
 
+def _unsettled_intent(requests: list[Any]) -> bool:
+    settled: set[str] = set()
+    for r in reversed(requests):
+        if not isinstance(r, Mapping):
+            continue
+        key = r.get("key")
+        state = r.get("state")
+        if not isinstance(key, str) or not key:
+            continue
+        if state == "SENT":
+            settled.add(key)
+        elif state == "INTENT" and key not in settled:
+            return True
+    return False
+
+
 def controller_decision(
     obligation: Native,
     *,
@@ -386,12 +402,11 @@ def controller_decision(
 ) -> tuple[str, str]:
     raw = obligation.get("requests")
     requests = raw if isinstance(raw, list) else []
-    last = requests[-1] if requests else None
     decision = p.decide_transition(
         p.Transition(
             open=obligation["status"] == "OPEN",
             has_request=bool(requests),
-            intent=isinstance(last, Mapping) and last.get("state") == "INTENT",
+            intent=_unsettled_intent(requests),
             changed=touched or (bool(requests) and current_input != last_input),
             fate=fate or "HOLD",
             reason=reason,

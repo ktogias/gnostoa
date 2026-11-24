@@ -623,6 +623,30 @@ class NativeProgressTests(unittest.TestCase):
         self.assertEqual(store, {})
         self.assertEqual(invalid_req_unbound["status"], "OPEN")
 
+    def test_controller_decision_recognizes_unsettled_earlier_intent_across_distinct_keys(
+        self,
+    ) -> None:
+        obligation = n.new_obligation("opaque-id", self.scope, self.now)
+        at1 = datetime.fromtimestamp(self.now, UTC).isoformat()
+        at2 = datetime.fromtimestamp(self.now + 1, UTC).isoformat()
+        obligation["requests"] = [
+            {"key": "older-intent-key", "state": "INTENT", "at": at1},
+            {"key": "newer-sent-key", "state": "SENT", "at": at2},
+        ]
+        action, _ = n.controller_decision(
+            obligation,
+            fate="RETRY",
+            reason="SENT",
+            touched=False,
+            linked_open=False,
+            source_router_open=False,
+            now=self.now + 2,
+            obligations={"opaque-id": obligation},
+            current_input="input-1",
+            last_input="input-1",
+        )
+        self.assertEqual(action, "REEMIT")
+
     def test_source_invalidation_survives_stored_restart_even_when_not_newly_touched(
         self,
     ) -> None:
