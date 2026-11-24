@@ -650,6 +650,27 @@ class SourceChangeResumeTests(unittest.TestCase):
         # refuses lower sequence
         self.assertIsNone(self.resume(455, payload=valid_payload))
 
+    def test_github_check_completion_is_the_provider_time_for_the_captured_run(
+        self,
+    ) -> None:
+        item = {
+            "head_sha": HEAD,
+            "status": "completed",
+            "completed_at": _iso(NOW + 0.5),
+        }
+        self.assertEqual(
+            self.resume(456, payload={"item": item}), "MERGE_ADMISSION_CHANGE"
+        )
+
+        for completion in (None, "invalid", _iso(NOW), _iso(NOW + 1.5)):
+            with self.subTest(completion=completion):
+                invalid = {
+                    **item,
+                    "completed_at": completion,
+                    "updated_at": _iso(NOW + 0.5),
+                }
+                self.assertIsNone(self.resume(456, payload={"item": invalid}))
+
     def test_only_a_changed_verdict_on_the_exact_head_resumes(self) -> None:
         fact: n.Native = {"head": HEAD, "provider_id": 457}
         self.assertIsNone(n.gate_resume(self.gate, self.record, fact, NOW + 2))
@@ -660,6 +681,56 @@ class SourceChangeResumeTests(unittest.TestCase):
         self.assertIsNone(
             n.gate_resume(unsupported, self.record, fact, NOW + 2, changed=True)
         )
+
+    def test_same_check_on_three_prs_only_resumes_the_matching_pr(self) -> None:
+        item = {"head_sha": HEAD, "completed_at": _iso(NOW + 0.5)}
+        fact = {"head": HEAD, "provider_id": 456}
+        numbers = (18, 46, 97)
+        for number in numbers:
+            gate = {
+                **self.gate,
+                "resume_subject": {"pr_number": number, "head_sha": HEAD},
+            }
+            for observed_pr in numbers:
+                with self.subTest(number=number, observed_pr=observed_pr):
+                    record = {
+                        **self.record,
+                        "number": observed_pr,
+                        "payload": {"item": item},
+                    }
+                    result = n.gate_resume(gate, record, fact, NOW + 2, changed=True)
+                    expected = "MERGE_ADMISSION_CHANGE" if observed_pr == number else None
+                    self.assertEqual(result, expected)
+
+    def test_shared_policy_accepts_scoped_facts_from_different_adapters(self) -> None:
+        github_pr = github.subject_ref({"pr_number": 18})
+        other_change = Ref("change_request", "alternate:team/project:18")
+        github_time = github.resume_event_time(
+            "check_verdict", {"completed_at": _iso(NOW + 0.5)}
+        )
+        other_payload = {"finished_millis": int((NOW + 0.5) * 1000)}
+        inputs = (
+            (github_pr, github_time),
+            (other_change, other_payload["finished_millis"] / 1000),
+        )
+        for subject, _ in inputs:
+            gate = core.ResumeGate(subject, HEAD, "source", NOW, 456)
+            for observed_subject, event_time in inputs:
+                with self.subTest(subject=subject, observed_subject=observed_subject):
+                    fact = core.ResumeFact(
+                        observed_subject,
+                        HEAD,
+                        "verdict",
+                        NOW + 1,
+                        event_time,
+                        456,
+                        "source",
+                        True,
+                    )
+                    self.assertEqual(
+                        core.gate_resume(gate, fact, NOW + 2),
+                        observed_subject == subject,
+                    )
 
 
 class TransitionTableTests(unittest.TestCase):

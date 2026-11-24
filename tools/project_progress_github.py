@@ -11,6 +11,7 @@ import json
 import math
 import re
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 from tools.agent_review_model import Ref
@@ -60,6 +61,24 @@ def read_ref(pointer: str, held: Mapping[str, Any]) -> Ref | None:
 
 def observation(value: Any) -> Observation:
     return value if type(value) in (str, int, float) else None
+
+
+def resume_event_time(kind: object, item: Mapping[str, Any]) -> float | None:
+    """Project the GitHub event time for the shared resume policy."""
+    if kind == "review":
+        value = item.get("submitted_at")
+    elif kind == "check_verdict":
+        # Retain compatibility with archived facts that lack a completion field.
+        value = item.get("completed_at", item.get("updated_at"))
+    else:
+        value = item.get("updated_at")
+    if not isinstance(value, str):
+        return None
+    try:
+        instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return instant.timestamp() if instant.tzinfo is not None else None
+    except (ValueError, OverflowError, OSError):
+        return None
 
 
 def read_source(pointer: str, held: Mapping[str, Any]) -> Read:

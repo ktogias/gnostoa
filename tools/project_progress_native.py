@@ -34,13 +34,6 @@ def _iso(now: float) -> str:
     return datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _ts(value: Any) -> float:
-    at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    if at.tzinfo is None:
-        raise ValueError("a provider time must carry its timezone")
-    return at.timestamp()
-
-
 def scope_identity(scope: Mapping[str, Any], origin: str | None = None) -> str:
     return p.scope_identity(
         Ref(str(scope.get("kind")), str(scope.get("ref") or "")), origin
@@ -956,17 +949,6 @@ def gate_binding(job: Native, row: Native, claim: Native) -> Native | None:
     }
 
 
-def _provider_at(item: Native, review: bool) -> float | None:
-    """A review counts from its submission; a later edit never moves that time."""
-    field = "submitted_at" if review else "updated_at"
-    if field not in item:
-        return None
-    try:
-        return _ts(item[field])
-    except (ValueError, TypeError, OverflowError):
-        return None
-
-
 def _resume_selector(
     gate: Native, record: Native, item: Native, *, changed: bool, owner_review: bool
 ) -> tuple[str, str, bool] | None:
@@ -1050,7 +1032,7 @@ def gate_resume(
         _text(fact.get("head")),
         _text(record.get("material_id")),
         float(cast(float, observed)),
-        _provider_at(item, record.get("kind") == "review"),
+        provider.resume_event_time(record.get("kind"), item),
         sequence if type(sequence) is int else 0,
         mode,
         advances,
