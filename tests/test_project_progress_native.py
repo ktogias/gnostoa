@@ -137,11 +137,17 @@ class NativeProgressTests(unittest.TestCase):
         self.assertEqual(obligation["sources"][0]["generation"], "g1")
 
     def test_stored_obligation_without_a_text_status_is_refused(self) -> None:
-        store: n.Native = {}
         oid = n.scope_identity(self.scope, None)
-        store[oid] = {"id": oid, "status": 7, "sources": [], "requests": []}
-        with self.assertRaisesRegex(ValueError, "stored obligation has no status"):
-            n.open_obligation(store, self.scope, [], None, self.now)
+        for bad_primary_status in (None, 7, ""):
+            store: n.Native = {}
+            if bad_primary_status is None:
+                store[oid] = {"id": oid, "sources": [], "requests": []}
+            else:
+                store[oid] = {"id": oid, "status": bad_primary_status, "sources": [], "requests": []}
+            before_store = copy.deepcopy(store)
+            with self.assertRaisesRegex(ValueError, "stored obligation has no status"):
+                n.open_obligation(store, self.scope, [], None, self.now)
+            self.assertEqual(store, before_store)
 
         # a) A stored MIGRATED record pointing to an existing successor with missing or non-text status raising ValueError without mutating records
         for bad_status in (None, 7, ""):

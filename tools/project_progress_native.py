@@ -159,7 +159,9 @@ def open_obligation(
 ) -> tuple[Native, bool, str | None]:
     oid = scope_identity(scope, origin)
     obligation = obligations.get(oid)
-    if obligation is not None and not isinstance(obligation.get("status"), str):
+    if obligation is not None and (
+        not isinstance(obligation.get("status"), str) or not obligation["status"]
+    ):
         raise ValueError("PROJECT_PROGRESS a stored obligation has no status")
     previous = str(obligation["status"]) if obligation is not None else None
     if obligation is None:
