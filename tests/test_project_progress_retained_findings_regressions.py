@@ -594,9 +594,61 @@ class SourceChangeResumeTests(unittest.TestCase):
         self.assertEqual(self.resume(457), "MERGE_ADMISSION_CHANGE")
 
     def test_the_captured_or_an_earlier_check_run_never_resumes(self) -> None:
-        for provider_id in (456, 455, None, "457", True):
+        for provider_id in (455, None, "457", True):
             with self.subTest(provider_id=provider_id):
                 self.assertIsNone(self.resume(provider_id))
+
+    def test_captured_check_run_resumes_only_with_changed_verdict_and_provider_at_after_gate(
+        self,
+    ) -> None:
+        valid_payload = {"item": {"head_sha": HEAD, "updated_at": _iso(NOW + 0.5)}}
+        self.assertEqual(
+            self.resume(456, payload=valid_payload),
+            "MERGE_ADMISSION_CHANGE",
+        )
+        # refuses same-run replay (material in seen)
+        fact: n.Native = {"head": HEAD, "provider_id": 456}
+        record = {**self.record, "payload": valid_payload}
+        self.assertIsNone(
+            n.gate_resume(
+                self.gate,
+                record,
+                fact,
+                NOW + 2,
+                changed=True,
+                seen=("one-verdict",),
+            )
+        )
+        # refuses unchanged verdict (changed=False / not advances)
+        self.assertIsNone(
+            n.gate_resume(self.gate, record, fact, NOW + 2, changed=False)
+        )
+        # refuses missing provider_at
+        self.assertIsNone(
+            self.resume(456, payload={"item": {"head_sha": HEAD}})
+        )
+        # refuses provider_at <= gate.at
+        self.assertIsNone(
+            self.resume(
+                456,
+                payload={"item": {"head_sha": HEAD, "updated_at": _iso(NOW)}},
+            )
+        )
+        self.assertIsNone(
+            self.resume(
+                456,
+                payload={"item": {"head_sha": HEAD, "updated_at": _iso(NOW - 1)}},
+            )
+        )
+        # refuses provider_at > observed_at
+        self.assertIsNone(
+            self.resume(
+                456,
+                payload={"item": {"head_sha": HEAD, "updated_at": _iso(NOW + 1.5)}},
+            )
+        )
+        # refuses lower sequence
+        self.assertIsNone(self.resume(455, payload=valid_payload))
 
     def test_only_a_changed_verdict_on_the_exact_head_resumes(self) -> None:
         fact: n.Native = {"head": HEAD, "provider_id": 457}

@@ -464,4 +464,12 @@ def gate_resume(
         return False
     if gate.mode == "decision":
         return fact.provider_at is not None and gate.at < fact.provider_at <= now
-    return gate.mode == "source" and fact.sequence > gate.sequence
+    if gate.mode == "source":
+        if fact.sequence > gate.sequence:
+            return True
+        if fact.sequence == gate.sequence:
+            return (
+                fact.provider_at is not None
+                and gate.at < fact.provider_at <= fact.observed_at
+            )
+    return False
