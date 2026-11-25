@@ -1034,12 +1034,15 @@ def _resume_gate(gate: Native, mode: str) -> p.ResumeGate | None:
     ):
         return None
     baseline = _mapping(gate.get("canonical")).get("check_run_id")
+    if mode == "source":
+        if type(baseline) is not int or isinstance(baseline, bool) or baseline <= 0:
+            return None
     return p.ResumeGate(
         provider.subject_ref(resume),
         str(resume["head_sha"]),
         mode,
         float(at),
-        baseline if type(baseline) is int else 0,
+        baseline if type(baseline) is int and not isinstance(baseline, bool) else 0,
     )
 
 
@@ -1079,7 +1082,9 @@ def gate_resume(
         return None
     mode, reason, advances = selected
     sequence = fact.get("provider_id")
-    if mode == "source" and type(sequence) is not int:
+    if mode == "source" and (
+        type(sequence) is not int or isinstance(sequence, bool) or sequence <= 0
+    ):
         return None
     normalized_fact = p.ResumeFact(
         Ref("pr", str(record.get("number"))),

@@ -596,9 +596,23 @@ class SourceChangeResumeTests(unittest.TestCase):
         self.assertEqual(self.resume(457), "MERGE_ADMISSION_CHANGE")
 
     def test_the_captured_or_an_earlier_check_run_never_resumes(self) -> None:
-        for provider_id in (455, None, "457", True):
+        for provider_id in (455, None, "457", True, 0, -1):
             with self.subTest(provider_id=provider_id):
                 self.assertIsNone(self.resume(provider_id))
+
+    def test_source_mode_refuses_non_positive_or_missing_baseline_check_run_id(
+        self,
+    ) -> None:
+        fact: n.Native = {"head": HEAD, "provider_id": 457}
+        for baseline in (None, 0, -1, "456", True, False, 1.5):
+            with self.subTest(baseline=baseline):
+                gate = {
+                    **self.gate,
+                    "canonical": {} if baseline is None else {"check_run_id": baseline},
+                }
+                self.assertIsNone(
+                    n.gate_resume(gate, self.record, fact, NOW + 2, changed=True)
+                )
 
     def test_captured_check_run_resumes_only_with_changed_verdict_and_provider_at_after_gate(
         self,
