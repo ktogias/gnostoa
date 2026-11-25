@@ -622,7 +622,7 @@ def _result(claim: Native, row: Native) -> p.Result:
     progress_wait = identity_valid and _progress_wait(claim, row)
     shapes = {
         "ASSIGNED": identity_valid and _assigned_shape(claim, evidence_valid),
-        "WAITING": _waiting_shape(claim, progress_wait),
+        "WAITING": identity_valid and _waiting_shape(claim, progress_wait),
         "REFRESH": identity_valid and _refresh_shape(claim),
         "QUIESCENT": identity_valid and _quiescent_shape(claim, evidence_valid),
     }

@@ -911,8 +911,16 @@ class NativeProgressTests(unittest.TestCase):
                     **extra_job,
                 }
                 frontier = {"coverage": "COMPLETE", "rows": [row, gate_row]}
+                progress_claim = {
+                    "id": row["id"],
+                    "disposition": "WAITING",
+                    "owner": claim["owner"],
+                    "reason": claim["reason"],
+                    "resume_event": "gate:" + gate_row["id"],
+                }
+                claims = [progress_claim, claim]
                 n.validate_progress(
-                    job, frontier, row, claim, {"assignments": []}, [claim]
+                    job, frontier, row, progress_claim, {"assignments": []}, claims
                 )
                 binding = n.gate_binding(job, gate_row, claim)
                 self.assertIsNotNone(binding)
@@ -944,9 +952,9 @@ class NativeProgressTests(unittest.TestCase):
                             job,
                             frontier,
                             row,
-                            invalid,
+                            progress_claim,
                             {"assignments": []},
-                            [invalid],
+                            [progress_claim, invalid],
                         )
 
     def test_a_malformed_gate_source_never_binds_and_is_a_named_refusal(self) -> None:
@@ -1370,6 +1378,7 @@ class NativeProgressTests(unittest.TestCase):
 
         invalid_cases = (
             ({**progress_claim, "id": "wrong-progress"}, claims, frontier),
+            (gate_claim, claims, frontier),
             ({**progress_claim, "resume_event": "gate:missing"}, claims, frontier),
             (progress_claim, claims, {"coverage": "COMPLETE", "rows": [self.row]}),
             (
