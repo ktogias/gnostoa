@@ -835,6 +835,7 @@ def _owner_review_gate(
         row.get("kind") == "HUMAN_MERGE"
         and row.get("source_kind") == "canonical_criterion"
         and canonical.get("criterion") == "M16"
+        and bool(row.get("source_sha256"))
         and claim.get("evidence_sha256") == row.get("source_sha256")
     ):
         return at, canonical

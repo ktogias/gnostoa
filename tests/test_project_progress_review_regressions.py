@@ -617,6 +617,60 @@ class OwnerAuthorityGateBindingTests(unittest.TestCase):
                 owner_authority="human:different-owner",
             )
 
+    def test_validate_progress_m16_gate_requires_nonempty_captured_digest(
+        self,
+    ) -> None:
+        """PRRT_kwDOToCF3c679brO: M16 gate requires nonempty captured digest matching linked claim."""
+        subject = {"pr_number": 500, "head_sha": "a" * 40}
+        scope = {"kind": "work_item", "ref": "issue:499"}
+        row = n.progress_row(scope, [])
+        gate_row_missing_digest = {
+            "id": "human-gate",
+            "kind": "HUMAN_MERGE",
+            "source_kind": "canonical_criterion",
+            "subject": subject,
+            "canonical": {"criterion": "M16"},
+        }
+        claim_missing_digest = {
+            "id": "human-gate",
+            "disposition": "WAITING",
+            "owner": "human:configured-owner",
+            "reason": "Await the exact-head review.",
+            "resume_event": "native_exact_head_review",
+        }
+        progress_claim = {
+            "id": row["id"],
+            "disposition": "WAITING",
+            "owner": "human:configured-owner",
+            "reason": "Await review.",
+            "resume_event": "gate:human-gate",
+        }
+        job = {
+            "authority_context": {"_coverage": {"coverage": "COMPLETE"}},
+            "continuation_contract": {"frontier_sha256": "lineage"},
+        }
+        frontier = {"coverage": "COMPLETE", "rows": [row, gate_row_missing_digest]}
+
+        # When both source_sha256 and evidence_sha256 are missing/None, gate must not bind and progress validation fails
+        self.assertIsNone(
+            n.gate_binding(
+                job,
+                gate_row_missing_digest,
+                claim_missing_digest,
+                owner_authority="human:configured-owner",
+            )
+        )
+        with self.assertRaises(ValueError):
+            n.validate_progress(
+                job,
+                frontier,
+                row,
+                progress_claim,
+                {"assignments": []},
+                [progress_claim, claim_missing_digest],
+                owner_authority="human:configured-owner",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
