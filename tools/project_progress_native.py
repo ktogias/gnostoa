@@ -22,6 +22,20 @@ from tools.agent_review_model import Ref
 Native = dict[str, Any]
 
 
+class PendingRefreshResult(dict[str, Any]):
+    """A mapping-compatible obligation result exposing a pending refresh requirement."""
+
+    refresh: str = "SOURCE_PENDING/REFRESH"
+
+    def __init__(
+        self,
+        mapping: Mapping[str, Any] | Iterable[tuple[str, Any]],
+        refresh: str = "SOURCE_PENDING/REFRESH",
+    ) -> None:
+        super().__init__(mapping)
+        self.refresh = refresh
+
+
 def _digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
@@ -295,7 +309,7 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
         _history(existing_bound)
 
     bound = (
-        copy.deepcopy(existing_bound)
+        copy.deepcopy(dict(existing_bound))
         if existing_bound is not None
         else new_obligation(oid, scope, now)
     )
@@ -311,7 +325,14 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
         # and complete request history are already durable; finish only the tombstone.
         unbound.update(status="MIGRATED", superseded_by=oid, migrated_at=_iso(now))
         return existing_bound if existing_bound is not None else bound
-    added, _ = merge_sources(bound, unbound["sources"])
+    added, refresh = merge_sources(bound, unbound["sources"])
+    if refresh:
+        result = PendingRefreshResult(
+            existing_bound if existing_bound is not None else bound,
+            refresh="SOURCE_PENDING/REFRESH",
+        )
+        obligations[oid] = result
+        return result
     created, rearmed = p.opening(str(bound["status"]), added)
     if created:
         bound["status"] = "OPEN"

@@ -181,6 +181,35 @@ class MigrationRearmTests(unittest.TestCase):
         self.assertEqual(refresh, "SOURCE_PENDING/REFRESH")
         self.assertNotIn("OPEN", [value["status"] for value in self.store.values()])
 
+    def test_migrate_incomparable_scope_observations_preserves_refresh_requirement(
+        self,
+    ) -> None:
+        """PRRT_kwDOToCF3c67yHvn: Incomparable epochs require refresh and must not drop requirement or tombstone."""
+        held = {
+            "kind": "scope",
+            "generation": "g1",
+            "observed": {"epoch": "reader-a", "seq": 1},
+        }
+        incoming = {
+            "kind": "scope",
+            "generation": "g2",
+            "observed": {"epoch": "reader-b", "seq": 1},
+        }
+        store: n.Native = {}
+        dest_scope = {"kind": "work_item", "ref": "issue:500"}
+        _dest_ob, _, _ = n.open_obligation(store, dest_scope, [held], None, self.now)
+        unbound_scope = {"kind": "work_item", "ref": None}
+        unbound_ob, _, _ = n.open_obligation(
+            store, unbound_scope, [incoming], "unresolved-step", self.now
+        )
+        bound = n.migrate(store, unbound_ob, dest_scope, self.now + 1)
+        # On the admitted buggy revision:
+        # unbound_ob is prematurely marked MIGRATED and no refresh requirement is preserved.
+        # The expected behavior for the repair is that refresh requirement is preserved and
+        # unbound_ob is not marked MIGRATED (or a typed pending refresh result is exposed).
+        self.assertNotEqual(unbound_ob["status"], "MIGRATED")
+        self.assertEqual(getattr(bound, "refresh", None), "SOURCE_PENDING/REFRESH")
+
     def test_carried_intent_reemits_same_key_then_holds_without_new_request(
         self,
     ) -> None:
