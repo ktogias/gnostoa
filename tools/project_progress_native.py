@@ -594,7 +594,8 @@ def _evaluation(
             isinstance(held, dict)
             for source, held in context.items()
             if not source.startswith("_")
-        ),
+        )
+        and all(read.current and read.complete for read in reads),
         gates,
         p.Citation(
             "frontier:" + row["id"],

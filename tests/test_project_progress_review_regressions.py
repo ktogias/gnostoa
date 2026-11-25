@@ -747,6 +747,59 @@ class OwnerAuthorityGateBindingTests(unittest.TestCase):
         )
         self.assertEqual((settled_action, settled_reason), ("DISCHARGE", "QUIESCENT"))
 
+    def test_prrt_kwdotocf3c68ezgl_malformed_read_does_not_validate_quiescent(
+        self,
+    ) -> None:
+        """PRRT_kwDOToCF3c68EZgL: context completeness checks normalized coverage of reads."""
+        now = 1_800_000_000.0
+        scope_source = "https://github.com/ktogias/gnostoa/issues/496"
+        row = n.progress_row({"kind": "work_item", "ref": "issue:496"}, [])
+        claim: n.Native = {
+            "id": row["id"],
+            "disposition": "QUIESCENT",
+            "evidence": [
+                {"source": scope_source, "digest": "scope-digest", "observed_at": now}
+            ],
+        }
+        valid_scope_read: n.Native = {
+            "kind": "work_item",
+            "number": 496,
+            "body_sha256": "scope-digest",
+            "coverage": "CURRENT",
+            "body_complete": True,
+            "observed_at": now,
+        }
+        # Baseline with valid scope read alone satisfies quiescence
+        valid_context: n.Native = {
+            scope_source: valid_scope_read,
+            "_coverage": {"coverage": "COMPLETE"},
+        }
+        n.validate_progress(
+            {"authority_context": valid_context},
+            {"coverage": "COMPLETE", "rows": [row]},
+            row,
+            claim,
+            {"assignments": []},
+            [claim],
+        )
+
+        # An additional malformed mapping-shaped read (e.g. {}) is normalized as incomplete
+        # and must prevent QUIESCENT from validating
+        malformed_context: n.Native = {
+            scope_source: valid_scope_read,
+            "https://github.com/ktogias/gnostoa/pull/999": {},
+            "_coverage": {"coverage": "COMPLETE"},
+        }
+        with self.assertRaisesRegex(ValueError, "^PROJECT_PROGRESS quiescence"):
+            n.validate_progress(
+                {"authority_context": malformed_context},
+                {"coverage": "COMPLETE", "rows": [row]},
+                row,
+                claim,
+                {"assignments": []},
+                [claim],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
