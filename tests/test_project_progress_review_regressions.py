@@ -40,11 +40,7 @@ class MigrationRearmTests(unittest.TestCase):
 
     @staticmethod
     def fingerprint(obligation: n.Native) -> str:
-        return str(
-            n.progress_row(
-                obligation["scope"], obligation["sources"], obligation.get("chains")
-            )["id"]
-        )
+        return n.reconciliation_fingerprint(obligation)
 
     def decision(
         self,
@@ -670,6 +666,86 @@ class OwnerAuthorityGateBindingTests(unittest.TestCase):
                 [progress_claim, claim_missing_digest],
                 owner_authority="human:configured-owner",
             )
+
+    def test_advancing_observation_order_alone_preserves_reconciliation_fingerprint_and_discharge(
+        self,
+    ) -> None:
+        """PRRT_kwDOToCF3c68CFgz: Advancing observation sequence leaves existing discharge accounted."""
+        scope: n.Native = {"kind": "work_item", "ref": "issue:499"}
+        source_initial: n.Native = {
+            "kind": "scope",
+            "observed": {"epoch": "reader-a", "seq": 1},
+        }
+        store: n.Native = {}
+        now = 1_800_000_000.0
+        obligation, added, refresh = n.open_obligation(
+            store, scope, [source_initial], None, now
+        )
+        self.assertTrue(added)
+        self.assertIsNone(refresh)
+
+        # Record a sent request bound to the initial reconciliation fingerprint
+        initial_fingerprint = n.reconciliation_fingerprint(obligation)
+        obligation["requests"] = [
+            {
+                "key": "req-1",
+                "at": datetime.fromtimestamp(now, UTC).isoformat(),
+                "state": "SENT",
+                "input_sha256": initial_fingerprint,
+            }
+        ]
+
+        # Valid discharge accounts for the obligation
+        action, reason = n.controller_decision(
+            obligation,
+            fate="DISCHARGE",
+            reason="QUIESCENT",
+            touched=False,
+            linked_open=False,
+            source_router_open=False,
+            now=now,
+            obligations=store,
+            current_input=initial_fingerprint,
+            last_input=obligation["requests"][-1].get("input_sha256"),
+        )
+        self.assertEqual((action, reason), ("DISCHARGE", "QUIESCENT"))
+
+        # Advance ONLY the observation sequence (same-generation replay, no new evidence)
+        source_advanced: n.Native = {
+            "kind": "scope",
+            "observed": {"epoch": "reader-a", "seq": 2},
+        }
+        added_adv, refresh_adv = n.merge_sources(obligation, [source_advanced])
+        self.assertFalse(added_adv)
+        self.assertFalse(refresh_adv)
+        self.assertEqual(
+            obligation["sources"][0]["observed"], {"epoch": "reader-a", "seq": 2}
+        )
+
+        # Progress row preserves raw observations, changing its ID
+        old_row = n.progress_row(scope, [source_initial])
+        row_advanced = n.progress_row(scope, obligation["sources"])
+        self.assertNotEqual(old_row["id"], row_advanced["id"])
+        self.assertNotEqual(old_row["source_sha256"], row_advanced["source_sha256"])
+
+        # But the reconciliation input fingerprint excludes observation order and remains unchanged
+        reconciled_fingerprint = n.reconciliation_fingerprint(obligation)
+        self.assertEqual(reconciled_fingerprint, initial_fingerprint)
+
+        # controller_decision still accounts for the obligation with DISCHARGE rather than spurious REQUEST
+        settled_action, settled_reason = n.controller_decision(
+            obligation,
+            fate="DISCHARGE",
+            reason="QUIESCENT",
+            touched=False,
+            linked_open=False,
+            source_router_open=False,
+            now=now + 1,
+            obligations=store,
+            current_input=reconciled_fingerprint,
+            last_input=obligation["requests"][-1].get("input_sha256"),
+        )
+        self.assertEqual((settled_action, settled_reason), ("DISCHARGE", "QUIESCENT"))
 
 
 if __name__ == "__main__":

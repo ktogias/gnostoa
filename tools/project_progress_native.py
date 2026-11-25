@@ -80,6 +80,60 @@ def progress_row(
     return row
 
 
+def reconciliation_fingerprint(
+    scope_or_obligation: Native,
+    sources: Iterable[Native] | None = None,
+    chains: Native | None = None,
+    *,
+    origin: str | None = None,
+) -> str:
+    """A reconciliation input fingerprint excluding observation-order metadata."""
+    if (
+        sources is None
+        and "scope" in scope_or_obligation
+        and "sources" in scope_or_obligation
+    ):
+        obligation = scope_or_obligation
+        scope = cast("Native", obligation["scope"])
+        source_iter: Iterable[Native] = cast("Iterable[Native]", obligation["sources"])
+        if chains is None:
+            chains = obligation.get("chains")
+        if origin is None:
+            origin = obligation.get("origin")
+    else:
+        scope = scope_or_obligation
+        source_iter = sources if sources is not None else ()
+
+    values = [
+        {key: item for key, item in v.items() if key != "observed"}
+        if isinstance(v, Mapping)
+        else v
+        for v in source_iter
+    ]
+    scope_dict = (
+        {key: item for key, item in scope.items() if key != "observed"}
+        if isinstance(scope, Mapping)
+        else {}
+    )
+    identity: Native = {"kind": scope_dict.get("kind"), "ref": scope_dict.get("ref")}
+    if not scope_dict.get("ref") and origin is not None:
+        identity["origin"] = origin
+    row: Native = {
+        "kind": "PROJECT_PROGRESS",
+        "source_kind": "controller_progress",
+        "scope": copy.deepcopy(scope_dict),
+        "sources": copy.deepcopy(values),
+        "source_key": "progress:" + _digest(identity),
+        "source_sha256": _digest(values),
+    }
+    if chains:
+        row["chains"] = copy.deepcopy(chains)
+    return _digest(row)
+
+
+progress_fingerprint = reconciliation_fingerprint
+
+
 def _source(value: Native) -> p.Source:
     key = value.get("delivery_key") or value.get("key")
     # A present null generation is an absent one, never the text "None".
