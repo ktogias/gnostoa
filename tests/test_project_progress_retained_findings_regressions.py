@@ -166,7 +166,7 @@ class ReviewSubmissionTimeTests(unittest.TestCase):
             "resume_event": "native_exact_head_review",
             "evidence_sha256": "captured",
         }
-        binding = n.gate_binding({}, row, claim)
+        binding = n.gate_binding({}, row, claim, owner_authority="human:ktogias")
         assert binding is not None
         self.gate: n.Native = {**binding, "at": NOW}
         self.fact: n.Native = {"head": HEAD, "provider_id": 90}
@@ -541,7 +541,9 @@ class ProviderNumberTests(unittest.TestCase):
                 "subject": {"pr_number": number, "head_sha": HEAD},
             }
             with self.subTest(number=number):
-                binding = n.gate_binding({}, row, claim)
+                binding = n.gate_binding(
+                    {}, row, claim, owner_authority="human:ktogias"
+                )
                 self.assertEqual(binding is not None, bound)
 
 
@@ -1127,6 +1129,7 @@ def _resume_gate() -> n.Native:
             "resume_event": "native_exact_head_review",
             "evidence_sha256": "captured",
         },
+        owner_authority="human:ktogias",
     )
     assert binding is not None
     return {**binding, "at": NOW}
@@ -1262,7 +1265,10 @@ class OwnerReviewShapeBoundaryTests(unittest.TestCase):
         def review(waits: list[Any]) -> n.Native | None:
             frontier = {"dependency_waits": waits}
             return n.gate_binding(
-                {"continuation_frontier": frontier}, gate_row, review_claim
+                {"continuation_frontier": frontier},
+                gate_row,
+                review_claim,
+                owner_authority="human:ktogias",
             )
 
         def native_bind(waits: list[Any], rows: list[Any]) -> n.Native | None:
@@ -1280,6 +1286,7 @@ class OwnerReviewShapeBoundaryTests(unittest.TestCase):
                 {"continuation_frontier": {"dependency_waits": [borrowed]}},
                 gate_row,
                 borrowing,
+                owner_authority="human:ktogias",
             )
         )
         self.assertIsNotNone(native_bind([provider_wait], [gate_row]))

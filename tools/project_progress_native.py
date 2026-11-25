@@ -663,6 +663,8 @@ def validate_progress(
     claim: Native,
     decoded: Native,
     claims: list[Native],
+    *,
+    owner_authority: str | None = None,
 ) -> None:
     # The frontier keeps its own named refusal further down.
     _require_mappings(
@@ -703,7 +705,13 @@ def validate_progress(
             if (
                 len(binding_rows) != 1
                 or len(binding_claims) != 1
-                or gate_binding(job, binding_rows[0], binding_claims[0]) is None
+                or gate_binding(
+                    job,
+                    binding_rows[0],
+                    binding_claims[0],
+                    owner_authority=owner_authority,
+                )
+                is None
             ):
                 raise ValueError("PROJECT_PROGRESS " + _ERRORS["waiting"])
     except p.ProgressError as error:
@@ -922,7 +930,13 @@ def _native_wait_owns(
     return len(waits) == 1
 
 
-def gate_binding(job: Native, row: Native, claim: Native) -> Native | None:
+def gate_binding(
+    job: Native,
+    row: Native,
+    claim: Native,
+    *,
+    owner_authority: str | None = None,
+) -> Native | None:
     """Translate only a supported, already-validated native gate; never approve it."""
     at = _mapping(row.get("subject"))
     if (
@@ -933,7 +947,11 @@ def gate_binding(job: Native, row: Native, claim: Native) -> Native | None:
         return None
     selector, owner = claim.get("resume_event"), claim.get("owner")
     resolved: tuple[Native, Native] | None
-    if selector == "native_exact_head_review" and owner == "human:ktogias":
+    if (
+        selector == "native_exact_head_review"
+        and owner_authority is not None
+        and owner == owner_authority
+    ):
         resolved = _owner_review_gate(job, row, claim, at)
     elif selector == "provider_source_changed" and owner == "provider:canonical-gate":
         resolved = _provider_gate(job, row, claim, at)

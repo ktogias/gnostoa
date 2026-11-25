@@ -503,5 +503,91 @@ class MalformedPeerObligationIsolationTests(unittest.TestCase):
             )
 
 
+class OwnerAuthorityGateBindingTests(unittest.TestCase):
+    """PRRT_kwDOToCF3c64wmlz / S572: owner authority is supplied by trusted caller, not hardcoded."""
+
+    def test_gate_binding_and_validate_progress_accept_and_enforce_owner_authority(
+        self,
+    ) -> None:
+        subject = {"pr_number": 500, "head_sha": "a" * 40}
+        scope = {"kind": "work_item", "ref": "issue:499"}
+        row = n.progress_row(scope, [])
+        gate_row = {
+            "id": "human-gate",
+            "kind": "HUMAN_MERGE",
+            "source_kind": "canonical_criterion",
+            "subject": subject,
+            "source_sha256": "human-evidence",
+            "canonical": {"criterion": "M16"},
+        }
+        claim_configured = {
+            "id": "human-gate",
+            "disposition": "WAITING",
+            "owner": "human:configured-owner",
+            "reason": "Await the exact-head review.",
+            "resume_event": "native_exact_head_review",
+            "evidence_sha256": "human-evidence",
+        }
+        progress_claim = {
+            "id": row["id"],
+            "disposition": "WAITING",
+            "owner": "human:configured-owner",
+            "reason": "Await review.",
+            "resume_event": "gate:human-gate",
+        }
+        job = {
+            "authority_context": {"_coverage": {"coverage": "COMPLETE"}},
+            "continuation_contract": {"frontier_sha256": "lineage"},
+        }
+        frontier = {"coverage": "COMPLETE", "rows": [row, gate_row]}
+
+        # With matching configured owner_authority, gate binds and progress validates
+        binding = n.gate_binding(
+            job, gate_row, claim_configured, owner_authority="human:configured-owner"
+        )
+        self.assertIsNotNone(binding)
+        assert binding is not None
+        self.assertEqual(binding["owner"], "human:configured-owner")
+
+        n.validate_progress(
+            job,
+            frontier,
+            row,
+            progress_claim,
+            {"assignments": []},
+            [progress_claim, claim_configured],
+            owner_authority="human:configured-owner",
+        )
+
+        # Missing authority or absent keyword fails closed
+        self.assertIsNone(n.gate_binding(job, gate_row, claim_configured))
+        with self.assertRaises(ValueError):
+            n.validate_progress(
+                job,
+                frontier,
+                row,
+                progress_claim,
+                {"assignments": []},
+                [progress_claim, claim_configured],
+            )
+
+        # Mismatched authority fails closed
+        self.assertIsNone(
+            n.gate_binding(
+                job, gate_row, claim_configured, owner_authority="human:different-owner"
+            )
+        )
+        with self.assertRaises(ValueError):
+            n.validate_progress(
+                job,
+                frontier,
+                row,
+                progress_claim,
+                {"assignments": []},
+                [progress_claim, claim_configured],
+                owner_authority="human:different-owner",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

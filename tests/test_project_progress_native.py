@@ -283,7 +283,7 @@ class NativeProgressTests(unittest.TestCase):
 
         def bind(*waits: object) -> n.Native | None:
             job: n.Native = {"continuation_frontier": {"dependency_waits": list(waits)}}
-            return n.gate_binding(job, row, claim)
+            return n.gate_binding(job, row, claim, owner_authority="human:ktogias")
 
         self.assertIsNotNone(bind(good))
         for name, damaged in (
@@ -732,7 +732,7 @@ class NativeProgressTests(unittest.TestCase):
             "resume_event": "native_exact_head_review",
             "evidence_sha256": "captured",
         }
-        gate = n.gate_binding({}, row, claim)
+        gate = n.gate_binding({}, row, claim, owner_authority="human:ktogias")
         self.assertIsNotNone(gate)
         assert gate is not None
         gate["at"] = self.now
@@ -920,9 +920,17 @@ class NativeProgressTests(unittest.TestCase):
                 }
                 claims = [progress_claim, claim]
                 n.validate_progress(
-                    job, frontier, row, progress_claim, {"assignments": []}, claims
+                    job,
+                    frontier,
+                    row,
+                    progress_claim,
+                    {"assignments": []},
+                    claims,
+                    owner_authority="human:ktogias",
                 )
-                binding = n.gate_binding(job, gate_row, claim)
+                binding = n.gate_binding(
+                    job, gate_row, claim, owner_authority="human:ktogias"
+                )
                 self.assertIsNotNone(binding)
                 assert binding is not None
                 self.assertEqual(binding["row"], gate_row["id"])
@@ -1014,10 +1022,20 @@ class NativeProgressTests(unittest.TestCase):
                 }
                 frontier: n.Native = {"coverage": "COMPLETE", "rows": [row, gate_row]}
                 with self.subTest(selector=claim["resume_event"], held=held):
-                    self.assertIsNone(n.gate_binding(job, gate_row, claim))
+                    self.assertIsNone(
+                        n.gate_binding(
+                            job, gate_row, claim, owner_authority="human:ktogias"
+                        )
+                    )
                     with self.assertRaisesRegex(ValueError, refusal):
                         n.validate_progress(
-                            job, frontier, row, claim, {"assignments": []}, [claim]
+                            job,
+                            frontier,
+                            row,
+                            claim,
+                            {"assignments": []},
+                            [claim],
+                            owner_authority="human:ktogias",
                         )
             for bad_row in gate_rows:
                 job = {
@@ -1027,10 +1045,20 @@ class NativeProgressTests(unittest.TestCase):
                 }
                 frontier = {"coverage": "COMPLETE", "rows": [row, bad_row]}
                 with self.subTest(selector=claim["resume_event"], row=bad_row):
-                    self.assertIsNone(n.gate_binding(job, bad_row, claim))
+                    self.assertIsNone(
+                        n.gate_binding(
+                            job, bad_row, claim, owner_authority="human:ktogias"
+                        )
+                    )
                     with self.assertRaisesRegex(ValueError, refusal):
                         n.validate_progress(
-                            job, frontier, row, claim, {"assignments": []}, [claim]
+                            job,
+                            frontier,
+                            row,
+                            claim,
+                            {"assignments": []},
+                            [claim],
+                            owner_authority="human:ktogias",
                         )
 
     def test_a_check_run_wait_binds_only_its_own_validated_canonical_row(self) -> None:
@@ -1346,9 +1374,17 @@ class NativeProgressTests(unittest.TestCase):
         claims = [progress_claim, gate_claim]
 
         n.validate_progress(
-            self.job, frontier, self.row, progress_claim, {"assignments": []}, claims
+            self.job,
+            frontier,
+            self.row,
+            progress_claim,
+            {"assignments": []},
+            claims,
+            owner_authority="human:ktogias",
         )
-        binding = n.gate_binding(self.job, gate_row, gate_claim)
+        binding = n.gate_binding(
+            self.job, gate_row, gate_claim, owner_authority="human:ktogias"
+        )
         self.assertIsNotNone(binding)
         assert binding is not None
         self.assertEqual(binding["row"], "gate-G")
