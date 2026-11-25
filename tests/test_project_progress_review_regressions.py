@@ -800,6 +800,120 @@ class OwnerAuthorityGateBindingTests(unittest.TestCase):
                 [claim],
             )
 
+    def test_held_frontier_member_deep_validation_fails_closed(self) -> None:
+        """PRRT_kwDOToCF3c68G5zK: invalid nested subjects, run IDs, or obligation IDs refuse whole table."""
+        subject = {"pr_number": 500, "head_sha": "a" * 40}
+        dependency = {"pr_number": 600, "head_sha": "b" * 40}
+        gate: n.Native = {
+            "id": "gate",
+            "kind": "TECHNICAL",
+            "source_kind": "canonical_criterion",
+            "subject": subject,
+            "source_sha256": "check-sha",
+            "canonical": {"check_run_id": 456},
+        }
+        native: n.Native = {
+            "id": "native-row",
+            "kind": "UNFINISHED",
+            "source_kind": "native_outcome",
+            "subject": subject,
+            "source_key": "delivery:1",
+            "source_sha256": "native-sha",
+        }
+        valid_dep_wait: n.Native = {
+            "subject": subject,
+            "dependency": dependency,
+            "evidence_sha256": "dep-sha",
+            "check_run_id": 123,
+        }
+        valid_prov_wait: n.Native = {
+            "subject": subject,
+            "source_key": "delivery:1",
+            "source_sha256": "native-sha",
+            "obligation_ids": ["gate"],
+            "observed_check_run_id": 456,
+        }
+        prov_claim: n.Native = {
+            "id": "native-row",
+            "disposition": "WAITING",
+            "owner": "provider:canonical-gate",
+            "reason": "Wait",
+            "resume_event": "provider_source_changed",
+            "evidence_sha256": "check-sha",
+            "check_run_id": 456,
+        }
+        dep_gate: n.Native = {
+            "id": "gate",
+            "kind": "TECHNICAL",
+            "subject": subject,
+            "source_sha256": "dep-sha",
+        }
+        dep_claim: n.Native = {
+            "id": "gate",
+            "disposition": "WAITING",
+            "owner": "human:ktogias",
+            "reason": "Wait",
+            "resume_event": "native_exact_head_review",
+            "evidence_sha256": "dep-sha",
+            "dependency_pr_number": 600,
+            "dependency_head_sha": "b" * 40,
+        }
+
+        # Valid baseline succeeds
+        job_prov: n.Native = {
+            "continuation_frontier": {
+                "rows": [gate],
+                "provider_waits": [valid_prov_wait],
+            }
+        }
+        self.assertIsNotNone(n.gate_binding(job_prov, native, prov_claim))
+
+        job_dep: n.Native = {
+            "continuation_frontier": {"dependency_waits": [valid_dep_wait]}
+        }
+        self.assertIsNotNone(
+            n.gate_binding(
+                job_dep, dep_gate, dep_claim, owner_authority="human:ktogias"
+            )
+        )
+
+        # Malformed sibling in provider_waits refuses whole table
+        for bad_wait in (
+            {**valid_prov_wait, "subject": {}},
+            {**valid_prov_wait, "subject": {"pr_number": -1, "head_sha": "a" * 40}},
+            {**valid_prov_wait, "observed_check_run_id": 0},
+            {**valid_prov_wait, "observed_check_run_id": -10},
+            {**valid_prov_wait, "obligation_ids": []},
+            {**valid_prov_wait, "obligation_ids": ["gate", ""]},
+            {**valid_prov_wait, "obligation_ids": [123]},
+        ):
+            damaged_job: n.Native = {
+                "continuation_frontier": {
+                    "rows": [gate],
+                    "provider_waits": [valid_prov_wait, bad_wait],
+                }
+            }
+            with self.subTest(bad_prov_wait=bad_wait):
+                self.assertIsNone(n.gate_binding(damaged_job, native, prov_claim))
+
+        # Malformed sibling in dependency_waits refuses whole table
+        for bad_wait in (
+            {**valid_dep_wait, "subject": {}},
+            {**valid_dep_wait, "dependency": {}},
+            {**valid_dep_wait, "dependency": {"pr_number": 0, "head_sha": "b" * 40}},
+        ):
+            damaged_job = {
+                "continuation_frontier": {
+                    "dependency_waits": [valid_dep_wait, bad_wait]
+                }
+            }
+            with self.subTest(bad_dep_wait=bad_wait):
+                self.assertIsNone(
+                    n.gate_binding(
+                        damaged_job, gate, dep_claim, owner_authority="human:ktogias"
+                    )
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

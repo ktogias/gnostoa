@@ -834,24 +834,36 @@ def _int_value(value: object) -> bool:
     return type(value) is int
 
 
+def _valid_subject_value(value: object) -> bool:
+    return isinstance(value, Mapping) and provider.valid_subject(value)
+
+
+def _valid_obligation_ids_value(value: object) -> bool:
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(_text_value(item) for item in value)
+    )
+
+
 # The one shape table for the held frontier entries: each field a member must carry
 # and the test its value passes. A member that fails any of them damages its table.
 _HELD_MEMBER_SHAPES: dict[str, dict[str, Callable[[object], bool]]] = {
     "dependency_waits": {
-        "subject": lambda v: isinstance(v, Mapping),
-        "dependency": lambda v: isinstance(v, Mapping),
+        "subject": _valid_subject_value,
+        "dependency": _valid_subject_value,
         "evidence_sha256": _text_value,
     },
     "provider_waits": {
-        "subject": lambda v: isinstance(v, Mapping),
+        "subject": _valid_subject_value,
         "source_key": _text_value,
         "source_sha256": _text_value,
-        "obligation_ids": lambda v: isinstance(v, list),
-        "observed_check_run_id": _int_value,
+        "obligation_ids": _valid_obligation_ids_value,
+        "observed_check_run_id": _positive_int,
     },
     "rows": {
         "id": _text_value,
-        "subject": lambda v: isinstance(v, Mapping),
+        "subject": _valid_subject_value,
     },
 }
 

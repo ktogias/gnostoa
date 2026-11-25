@@ -288,6 +288,16 @@ class NativeProgressTests(unittest.TestCase):
         self.assertIsNotNone(bind(good))
         for name, damaged in (
             ("no subject", {k: v for k, v in good.items() if k != "subject"}),
+            ("empty subject mapping", {**good, "subject": {}}),
+            (
+                "invalid subject mapping",
+                {**good, "subject": {"pr_number": -1, "head_sha": "a" * 40}},
+            ),
+            ("empty dependency mapping", {**good, "dependency": {}}),
+            (
+                "invalid dependency mapping",
+                {**good, "dependency": {"pr_number": 0, "head_sha": "b" * 40}},
+            ),
             ("no evidence", {k: v for k, v in good.items() if k != "evidence_sha256"}),
             ("text dependency", {**good, "dependency": "text"}),
             ("empty digest", {**good, "evidence_sha256": ""}),
@@ -339,13 +349,37 @@ class NativeProgressTests(unittest.TestCase):
         self.assertIsNotNone(bind([gate], [wait]))
         no_id = {k: v for k, v in gate.items() if k != "id"}
         no_subject = {k: v for k, v in gate.items() if k != "subject"}
+        empty_row_subject = {**gate, "subject": {}}
+        invalid_row_subject = {
+            **gate,
+            "subject": {"pr_number": -5, "head_sha": "a" * 40},
+        }
         no_ids = {k: v for k, v in wait.items() if k != "obligation_ids"}
+        empty_ids = {**wait, "obligation_ids": []}
+        invalid_ids = {**wait, "obligation_ids": ["valid", ""]}
+        non_text_ids = {**wait, "obligation_ids": ["valid", 123]}
         no_run = {k: v for k, v in wait.items() if k != "observed_check_run_id"}
+        zero_run = {**wait, "observed_check_run_id": 0}
+        negative_run = {**wait, "observed_check_run_id": -456}
+        empty_wait_subject = {**wait, "subject": {}}
+        invalid_wait_subject = {
+            **wait,
+            "subject": {"pr_number": 0, "head_sha": "a" * 40},
+        }
         for name, rows, waits in (
             ("row without id", [gate, no_id], [wait]),
             ("row without subject", [gate, no_subject], [wait]),
+            ("row with empty subject", [gate, empty_row_subject], [wait]),
+            ("row with invalid subject", [gate, invalid_row_subject], [wait]),
             ("wait without obligations", [gate], [wait, no_ids]),
+            ("wait with empty obligations", [gate], [wait, empty_ids]),
+            ("wait with invalid obligation item", [gate], [wait, invalid_ids]),
+            ("wait with non-text obligation item", [gate], [wait, non_text_ids]),
             ("wait without a check run", [gate], [wait, no_run]),
+            ("wait with zero check run", [gate], [wait, zero_run]),
+            ("wait with negative check run", [gate], [wait, negative_run]),
+            ("wait with empty subject", [gate], [wait, empty_wait_subject]),
+            ("wait with invalid subject", [gate], [wait, invalid_wait_subject]),
         ):
             with self.subTest(name=name):
                 self.assertIsNone(bind(rows, waits))
