@@ -381,12 +381,10 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
         return existing_bound if existing_bound is not None else bound
     added, refresh = merge_sources(bound, unbound["sources"])
     if refresh:
-        result = PendingRefreshResult(
+        return PendingRefreshResult(
             existing_bound if existing_bound is not None else bound,
             refresh="SOURCE_PENDING/REFRESH",
         )
-        obligations[oid] = result
-        return result
     created, rearmed = p.opening(str(bound["status"]), added)
     if created:
         bound["status"] = "OPEN"

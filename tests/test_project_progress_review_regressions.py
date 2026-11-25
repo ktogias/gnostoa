@@ -206,6 +206,44 @@ class MigrationRearmTests(unittest.TestCase):
         self.assertNotEqual(unbound_ob["status"], "MIGRATED")
         self.assertEqual(getattr(bound, "refresh", None), "SOURCE_PENDING/REFRESH")
 
+    def test_migrate_incomparable_scope_without_destination_leaves_store_unchanged_across_json_roundtrip(
+        self,
+    ) -> None:
+        """PRRT_kwDOToCF3c68I4_f: migration needing source refresh leaves store unchanged without inserting OPEN destination."""
+        incoming = {
+            "kind": "scope",
+            "generation": "g2",
+        }
+        store: n.Native = {}
+        unbound_scope = {"kind": "work_item", "ref": None}
+        unbound_ob = {
+            "id": "unbound-1",
+            "status": "OPEN",
+            "scope": unbound_scope,
+            "sources": [incoming],
+            "requests": [],
+            "created_at": "2026-11-25T00:00:00Z",
+        }
+        store["unbound-1"] = unbound_ob
+        dest_scope = {"kind": "work_item", "ref": "issue:500"}
+        dest_oid = n.scope_identity(dest_scope)
+        store_before = copy.deepcopy(store)
+        unbound_before = copy.deepcopy(unbound_ob)
+
+        result = n.migrate(store, unbound_ob, dest_scope, self.now + 1)
+
+        self.assertEqual(getattr(result, "refresh", None), "SOURCE_PENDING/REFRESH")
+        self.assertNotIn(dest_oid, store)
+        self.assertEqual(store, store_before)
+        self.assertEqual(unbound_ob, unbound_before)
+
+        # JSON round trip preserves store without inserting OPEN destination
+        reloaded_store = json.loads(json.dumps(store))
+        self.assertNotIn(dest_oid, reloaded_store)
+        self.assertEqual(len(reloaded_store), 1)
+        self.assertIn(unbound_ob["id"], reloaded_store)
+        self.assertEqual(reloaded_store[unbound_ob["id"]]["status"], "OPEN")
+
     def test_carried_intent_reemits_same_key_then_holds_without_new_request(
         self,
     ) -> None:
