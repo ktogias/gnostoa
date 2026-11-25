@@ -1019,9 +1019,11 @@ class FailClosedHistoryMatrixTests(unittest.TestCase):
         peer["requests"] = [{"key": "p", "at": "2027-01-15"}]
         store: n.Native = {"g": good, "p": peer}
         held = copy.deepcopy(store)
-        for _ in range(2):  # a restart replays the same refusal
-            with self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS"):
-                _retry_decision(good, store)
+        for _ in range(2):  # a restart replays the same held outcome
+            self.assertEqual(
+                _retry_decision(good, store),
+                ("HELD", "UNVERIFIABLE_BUDGET"),
+            )
             self.assertEqual(store, held)
         peer["requests"][0]["at"] = _iso(NOW - 5)
         self.assertEqual(_retry_decision(good, store)[0], "REQUEST")

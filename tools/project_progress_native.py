@@ -409,7 +409,10 @@ def controller_decision(
         )
     )
     if decision.action == "REQUEST":
-        hold = request_budget(obligations, obligation, now, **limits)
+        try:
+            hold = request_budget(obligations, obligation, now, **limits)
+        except ValueError:
+            return "HELD", "UNVERIFIABLE_BUDGET"
         if hold:
             return "HELD", hold
     reason_map = {
@@ -980,7 +983,11 @@ def _resume_selector(
 def _resume_gate(gate: Native, mode: str) -> p.ResumeGate | None:
     resume = _mapping(gate.get("resume_subject"))
     at = gate.get("at")
-    if type(at) not in (int, float) or not provider.valid_subject(resume):
+    if (
+        not isinstance(at, (int, float))
+        or isinstance(at, bool)
+        or not provider.valid_subject(resume)
+    ):
         return None
     baseline = _mapping(gate.get("canonical")).get("check_run_id")
     return p.ResumeGate(

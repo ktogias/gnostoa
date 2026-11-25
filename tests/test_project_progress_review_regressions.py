@@ -472,10 +472,25 @@ class MalformedPeerObligationIsolationTests(unittest.TestCase):
         )
         self.assertEqual((settled_action, settled_reason), ("DISCHARGE", "ASSIGNED"))
 
-        # A new request with unverifiable budget must stay held
+        # A new request with unverifiable budget must stay held with a stable diagnostic
+        retry_action, retry_reason = n.controller_decision(
+            record,
+            fate="RETRY",
+            reason="LOST",
+            touched=False,
+            linked_open=False,
+            source_router_open=False,
+            now=at + 1,
+            obligations=store,
+            current_input="same",
+            last_input="same",
+        )
+        self.assertEqual((retry_action, retry_reason), ("HELD", "UNVERIFIABLE_BUDGET"))
+
+        # But a malformed subject obligation itself still raises a named refusal
         with self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS a request"):
             n.controller_decision(
-                record,
+                store["another-scope"],
                 fate="RETRY",
                 reason="LOST",
                 touched=False,
