@@ -217,6 +217,43 @@ class NativeProgressTests(unittest.TestCase):
         self.assertFalse(res_flag)
         self.assertEqual(res_ob["id"], oid)
 
+    def test_missing_status_fail_closed_at_reopen_and_controller_decision(self) -> None:
+        oid = n.scope_identity(self.scope)
+        for bad_status in (None, 123, ""):
+            ob_missing = {
+                "id": oid,
+                "scope": self.scope,
+                "sources": [],
+                "requests": [],
+            }
+            if bad_status is not None:
+                ob_missing["status"] = bad_status
+            before_ob = copy.deepcopy(ob_missing)
+
+            # reopen must fail-closed before any mutation (no rearmed_at written)
+            with self.assertRaisesRegex(ValueError, "obligation has no status"):
+                n.reopen(ob_missing, self.now, "NEW_SOURCE")
+            self.assertEqual(ob_missing, before_ob)
+
+            # controller_decision must fail-closed before any mutation or transition
+            store = {oid: ob_missing}
+            before_store = copy.deepcopy(store)
+            with self.assertRaisesRegex(ValueError, "obligation has no status"):
+                n.controller_decision(
+                    ob_missing,
+                    fate="HOLD",
+                    reason="OWNER_WAIT",
+                    touched=False,
+                    linked_open=False,
+                    source_router_open=False,
+                    now=self.now,
+                    obligations=store,
+                    current_input="same",
+                    last_input="same",
+                )
+            self.assertEqual(ob_missing, before_ob)
+            self.assertEqual(store, before_store)
+
     def test_one_malformed_wait_table_member_refuses_the_whole_table(self) -> None:
         subject = {"pr_number": 500, "head_sha": "a" * 40}
         dependency = {"pr_number": 600, "head_sha": "b" * 40}

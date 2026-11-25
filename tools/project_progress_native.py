@@ -128,6 +128,8 @@ def new_obligation(oid: str, scope: Native, now: float) -> Native:
 
 
 def reopen(obligation: Native, now: float, why: str) -> None:
+    if not isinstance(obligation.get("status"), str) or not obligation["status"]:
+        raise ValueError("PROJECT_PROGRESS obligation has no status")
     obligation["rearmed_at"] = _iso(now)
     status = p.rearm_status(str(obligation["status"]))
     if status != obligation["status"]:
@@ -393,6 +395,8 @@ def controller_decision(
     pending_refreshed: bool | None = None,
     **limits: Unpack[BudgetLimits],
 ) -> tuple[str, str]:
+    if not isinstance(obligation.get("status"), str) or not obligation["status"]:
+        raise ValueError("PROJECT_PROGRESS obligation has no status")
     _history(obligation)
     requests = obligation["requests"]
     decision = p.decide_transition(
