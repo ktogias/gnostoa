@@ -441,5 +441,52 @@ class SourceEvidenceBoundsTests(unittest.TestCase):
         self.assertNotIn("observed_at", captured)
 
 
+class MalformedPeerObligationIsolationTests(unittest.TestCase):
+    def test_malformed_peer_does_not_crash_settled_or_retry_decisions(self) -> None:
+        scope = {"kind": "work_item", "ref": "issue:77"}
+        at = 1_000.0
+        record = n.new_obligation("example", scope, at)
+        record["requests"] = [
+            {"key": "delivered", "at": "1970-01-01T00:16:40Z", "state": "SENT"}
+        ]
+        store = {
+            "example": record,
+            "another-scope": {
+                "status": "OPEN",
+                "requests": [{"key": "missing-time"}],
+            },
+        }
+
+        # Settled branch must discharge even with the invalid peer
+        settled_action, settled_reason = n.controller_decision(
+            record,
+            fate="DISCHARGE",
+            reason="ASSIGNED",
+            touched=False,
+            linked_open=False,
+            source_router_open=False,
+            now=at + 1,
+            obligations=store,
+            current_input="same",
+            last_input="same",
+        )
+        self.assertEqual((settled_action, settled_reason), ("DISCHARGE", "ASSIGNED"))
+
+        # A new request with unverifiable budget must stay held
+        with self.assertRaisesRegex(ValueError, "PROJECT_PROGRESS a request"):
+            n.controller_decision(
+                record,
+                fate="RETRY",
+                reason="LOST",
+                touched=False,
+                linked_open=False,
+                source_router_open=False,
+                now=at + 1,
+                obligations=store,
+                current_input="same",
+                last_input="same",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -624,9 +624,7 @@ class SourceChangeResumeTests(unittest.TestCase):
             n.gate_resume(self.gate, record, fact, NOW + 2, changed=False)
         )
         # refuses missing provider_at
-        self.assertIsNone(
-            self.resume(456, payload={"item": {"head_sha": HEAD}})
-        )
+        self.assertIsNone(self.resume(456, payload={"item": {"head_sha": HEAD}}))
         # refuses provider_at <= gate.at
         self.assertIsNone(
             self.resume(
@@ -699,7 +697,9 @@ class SourceChangeResumeTests(unittest.TestCase):
                         "payload": {"item": item},
                     }
                     result = n.gate_resume(gate, record, fact, NOW + 2, changed=True)
-                    expected = "MERGE_ADMISSION_CHANGE" if observed_pr == number else None
+                    expected = (
+                        "MERGE_ADMISSION_CHANGE" if observed_pr == number else None
+                    )
                     self.assertEqual(result, expected)
 
     def test_shared_policy_accepts_scoped_facts_from_different_adapters(self) -> None:

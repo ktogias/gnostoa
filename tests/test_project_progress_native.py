@@ -143,7 +143,12 @@ class NativeProgressTests(unittest.TestCase):
             if bad_primary_status is None:
                 store[oid] = {"id": oid, "sources": [], "requests": []}
             else:
-                store[oid] = {"id": oid, "status": bad_primary_status, "sources": [], "requests": []}
+                store[oid] = {
+                    "id": oid,
+                    "status": bad_primary_status,
+                    "sources": [],
+                    "requests": [],
+                }
             before_store = copy.deepcopy(store)
             with self.assertRaisesRegex(ValueError, "stored obligation has no status"):
                 n.open_obligation(store, self.scope, [], None, self.now)

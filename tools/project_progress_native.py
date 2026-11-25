@@ -393,8 +393,8 @@ def controller_decision(
     pending_refreshed: bool | None = None,
     **limits: Unpack[BudgetLimits],
 ) -> tuple[str, str]:
-    raw = obligation.get("requests")
-    requests = raw if isinstance(raw, list) else []
+    _history(obligation)
+    requests = obligation["requests"]
     decision = p.decide_transition(
         p.Transition(
             open=obligation["status"] == "OPEN",
@@ -406,9 +406,12 @@ def controller_decision(
             pending_refreshed=pending_refreshed,
             source_open=source_router_open,
             return_open=linked_open,
-            hold=request_budget(obligations, obligation, now, **limits),
         )
     )
+    if decision.action == "REQUEST":
+        hold = request_budget(obligations, obligation, now, **limits)
+        if hold:
+            return "HELD", hold
     reason_map = {
         "SOURCE_OWNER_OPEN": "SOURCE_ROUTER_OPEN",
         "SOURCE_RETURN_OPEN": "NATIVE_RETURN_OPEN",
