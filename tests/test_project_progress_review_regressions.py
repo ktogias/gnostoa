@@ -6,6 +6,7 @@ import copy
 import json
 import unittest
 from datetime import UTC, datetime
+from typing import Any
 
 from tools import project_progress_native as n
 
@@ -260,7 +261,7 @@ class MigrationRearmTests(unittest.TestCase):
         store["unbound-42"] = unbound_record
 
         # 1. Unresolved destination (ref is None / empty)
-        unresolved_destinations = [
+        unresolved_destinations: list[dict[str, Any]] = [
             {"kind": "work_item", "ref": None},
             {"kind": "work_item"},
             {"kind": "work_item", "ref": ""},

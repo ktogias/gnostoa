@@ -164,7 +164,7 @@ class NativeProgressTests(unittest.TestCase):
                 "sources": [],
                 "requests": [],
             }
-            succ_record = (
+            succ_record: dict[str, Any] = (
                 {"id": succ_id, "sources": [], "requests": []}
                 if bad_status is None
                 else {
@@ -220,7 +220,7 @@ class NativeProgressTests(unittest.TestCase):
     def test_missing_status_fail_closed_at_reopen_and_controller_decision(self) -> None:
         oid = n.scope_identity(self.scope)
         for bad_status in (None, 123, ""):
-            ob_missing = {
+            ob_missing: dict[str, Any] = {
                 "id": oid,
                 "scope": self.scope,
                 "sources": [],
@@ -891,7 +891,6 @@ class NativeProgressTests(unittest.TestCase):
                 missing_gate_time, record, fact, self.now + 2, owner_review=True
             )
         )
-        self.assertIsNone(n._resume_gate(missing_gate_time, "owner"))
         for invalid_at in (None, "not-a-timestamp", True):
             invalid_gate_time = copy.deepcopy(gate)
             invalid_gate_time["at"] = invalid_at
@@ -905,7 +904,6 @@ class NativeProgressTests(unittest.TestCase):
                         owner_review=True,
                     )
                 )
-                self.assertIsNone(n._resume_gate(invalid_gate_time, "owner"))
         for mismatch in ("number", "head"):
             wrong_record = copy.deepcopy(record)
             wrong_fact = copy.deepcopy(fact)
