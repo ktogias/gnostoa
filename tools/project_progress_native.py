@@ -80,6 +80,33 @@ def progress_row(
     return row
 
 
+def _resolve_reconciliation_inputs(
+    scope_or_obligation: Native,
+    sources: Iterable[Native] | None,
+    chains: Native | None,
+    origin: str | None,
+) -> tuple[Native, Iterable[Native], Native | None, str | None]:
+    if (
+        sources is None
+        and "scope" in scope_or_obligation
+        and "sources" in scope_or_obligation
+    ):
+        obligation = scope_or_obligation
+        return (
+            cast("Native", obligation["scope"]),
+            cast("Iterable[Native]", obligation["sources"]),
+            obligation.get("chains") if chains is None else chains,
+            obligation.get("origin") if origin is None else origin,
+        )
+    return scope_or_obligation, sources if sources is not None else (), chains, origin
+
+
+def _strip_observed(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: item for key, item in value.items() if key != "observed"}
+    return value
+
+
 def reconciliation_fingerprint(
     scope_or_obligation: Native,
     sources: Iterable[Native] | None = None,
@@ -88,33 +115,11 @@ def reconciliation_fingerprint(
     origin: str | None = None,
 ) -> str:
     """A reconciliation input fingerprint excluding observation-order metadata."""
-    if (
-        sources is None
-        and "scope" in scope_or_obligation
-        and "sources" in scope_or_obligation
-    ):
-        obligation = scope_or_obligation
-        scope = cast("Native", obligation["scope"])
-        source_iter: Iterable[Native] = cast("Iterable[Native]", obligation["sources"])
-        if chains is None:
-            chains = obligation.get("chains")
-        if origin is None:
-            origin = obligation.get("origin")
-    else:
-        scope = scope_or_obligation
-        source_iter = sources if sources is not None else ()
-
-    values = [
-        {key: item for key, item in v.items() if key != "observed"}
-        if isinstance(v, Mapping)
-        else v
-        for v in source_iter
-    ]
-    scope_dict = (
-        {key: item for key, item in scope.items() if key != "observed"}
-        if isinstance(scope, Mapping)
-        else {}
+    scope, source_iter, chains, origin = _resolve_reconciliation_inputs(
+        scope_or_obligation, sources, chains, origin
     )
+    values = [_strip_observed(v) for v in source_iter]
+    scope_dict = _strip_observed(scope) if isinstance(scope, Mapping) else {}
     identity: Native = {"kind": scope_dict.get("kind"), "ref": scope_dict.get("ref")}
     if not scope_dict.get("ref") and origin is not None:
         identity["origin"] = origin
@@ -343,7 +348,7 @@ def _carry_requests(bound: Native, unbound: Native) -> None:
     bound.setdefault("migrated_from", []).append(unbound["id"])
 
 
-def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> Native:
+def _validate_migrate_inputs(unbound: Native, scope: Native) -> str:
     if not isinstance(unbound.get("status"), str):
         raise ValueError("PROJECT_PROGRESS unbound obligation has no status")
     if not isinstance(unbound.get("id"), str) or not unbound["id"]:
@@ -358,37 +363,75 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
         raise ValueError(
             "PROJECT_PROGRESS cannot migrate obligation onto itself (self-migration)"
         )
+    return oid
+
+
+def _migrate_already_migrated(obligations: Native, unbound: Native, oid: str) -> Native:
+    if unbound.get("superseded_by") != oid:
+        raise ValueError(
+            "PROJECT_PROGRESS cannot migrate already-MIGRATED origin to conflicting destination"
+        )
+    existing = obligations.get(oid)
+    if existing is None:
+        return PendingRefreshResult(
+            dict(unbound),
+            refresh="SOURCE_PENDING/REFRESH",
+        )
+    if (
+        not isinstance(existing, dict)
+        or not isinstance(existing.get("status"), str)
+        or not existing["status"]
+    ):
+        raise ValueError("PROJECT_PROGRESS stored obligation has no status")
+    _history(existing)
+    return existing
+
+
+def _validate_existing_bound(obligations: Native, oid: str) -> Native | None:
+    existing_bound = obligations.get(oid)
+    if existing_bound is None:
+        return None
+    if (
+        not isinstance(existing_bound, dict)
+        or not isinstance(existing_bound.get("status"), str)
+        or not existing_bound["status"]
+    ):
+        raise ValueError("PROJECT_PROGRESS stored obligation has no status")
+    _history(existing_bound)
+    return existing_bound
+
+
+def _finalize_migration(
+    bound: Native,
+    unbound: Native,
+    binding: Native,
+    now: float,
+    carried_before: bool,
+    added: bool,
+    rearmed: bool,
+) -> None:
+    created, is_rearmed = p.opening(str(bound["status"]), added)
+    if created:
+        bound["status"] = "OPEN"
+    _merge_chains(bound, unbound.get("chains") or {})
+    if not carried_before:
+        _carry_requests(bound, unbound)
+    if unbound["status"] == "OPEN":
+        merge_sources(bound, [binding])
+        reopen(bound, now, "BINDING_RESOLVED")
+    elif is_rearmed or rearmed:
+        reopen(bound, now, "NEW_SOURCE")
+    else:
+        bound["rearmed_at"] = _iso(now)
+
+
+def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> Native:
+    oid = _validate_migrate_inputs(unbound, scope)
     if unbound.get("status") == "MIGRATED":
-        successor_id = unbound.get("superseded_by")
-        if successor_id != oid:
-            raise ValueError(
-                "PROJECT_PROGRESS cannot migrate already-MIGRATED origin to conflicting destination"
-            )
-        existing = obligations.get(oid)
-        if existing is None:
-            return PendingRefreshResult(
-                dict(unbound),
-                refresh="SOURCE_PENDING/REFRESH",
-            )
-        if (
-            not isinstance(existing, dict)
-            or not isinstance(existing.get("status"), str)
-            or not existing["status"]
-        ):
-            raise ValueError("PROJECT_PROGRESS stored obligation has no status")
-        _history(existing)
-        return existing
+        return _migrate_already_migrated(obligations, unbound, oid)
     # Validate every carried and bound request before the first mutation.
     _history(unbound)
-    existing_bound = obligations.get(oid)
-    if existing_bound is not None:
-        if (
-            not isinstance(existing_bound.get("status"), str)
-            or not existing_bound["status"]
-        ):
-            raise ValueError("PROJECT_PROGRESS stored obligation has no status")
-        _history(existing_bound)
-
+    existing_bound = _validate_existing_bound(obligations, oid)
     bound = (
         copy.deepcopy(dict(existing_bound))
         if existing_bound is not None
@@ -412,19 +455,7 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
             existing_bound if existing_bound is not None else bound,
             refresh="SOURCE_PENDING/REFRESH",
         )
-    created, rearmed = p.opening(str(bound["status"]), added)
-    if created:
-        bound["status"] = "OPEN"
-    _merge_chains(bound, unbound.get("chains") or {})
-    if not carried_before:
-        _carry_requests(bound, unbound)
-    if unbound["status"] == "OPEN":
-        merge_sources(bound, [binding])
-        reopen(bound, now, "BINDING_RESOLVED")
-    elif rearmed:
-        reopen(bound, now, "NEW_SOURCE")
-    else:
-        bound["rearmed_at"] = _iso(now)
+    _finalize_migration(bound, unbound, binding, now, carried_before, added, False)
     obligations[oid] = bound
     unbound.update(status="MIGRATED", superseded_by=oid, migrated_at=_iso(now))
     return bound
@@ -757,6 +788,49 @@ def _require_mappings(caller: str, **named: object) -> None:
             raise ValueError(f"PROJECT_PROGRESS {caller} needs {name} to be a mapping")
 
 
+def _row_requires_frontier_check(claim: Native, row: Native) -> bool:
+    disposition = claim.get("disposition")
+    return disposition in ("ASSIGNED", "QUIESCENT") or (
+        disposition == "WAITING" and row.get("kind") == "PROJECT_PROGRESS"
+    )
+
+
+def _validate_waiting_binding(
+    job: Native,
+    frontier: Native,
+    row: Native,
+    claim: Native,
+    claims: list[Native],
+    *,
+    owner_authority: str | None = None,
+) -> None:
+    binding_id = (
+        _text(claim.get("resume_event"))[len(_GATE) :]
+        if _progress_pointer(claim, row)
+        else _text(claim.get("id"))
+    )
+    binding_rows = [
+        item for item in _frontier_rows(frontier) if item.get("id") == binding_id
+    ]
+    binding_claims = [
+        item
+        for item in claims
+        if isinstance(item, dict) and item.get("id") == binding_id
+    ]
+    if (
+        len(binding_rows) != 1
+        or len(binding_claims) != 1
+        or gate_binding(
+            job,
+            binding_rows[0],
+            binding_claims[0],
+            owner_authority=owner_authority,
+        )
+        is None
+    ):
+        raise ValueError("PROJECT_PROGRESS " + _ERRORS["waiting"])
+
+
 def validate_progress(
     job: Native,
     frontier: Native,
@@ -777,13 +851,9 @@ def validate_progress(
     if isinstance(context, Mapping) and not all(isinstance(k, str) for k in context):
         raise ValueError("PROJECT_PROGRESS the authority context keys must be text")
     try:
-        if (
-            claim.get("disposition") in ("ASSIGNED", "QUIESCENT")
-            or (
-                claim.get("disposition") == "WAITING"
-                and row.get("kind") == "PROJECT_PROGRESS"
-            )
-        ) and not any(item == row for item in _frontier_rows(frontier)):
+        if _row_requires_frontier_check(claim, row) and not any(
+            item == row for item in _frontier_rows(frontier)
+        ):
             raise ValueError(
                 "PROJECT_PROGRESS the captured frontier does not hold this row"
             )
@@ -792,33 +862,14 @@ def validate_progress(
             _result(claim, row),
         )
         if claim.get("disposition") == "WAITING":
-            binding_id = (
-                _text(claim.get("resume_event"))[len(_GATE) :]
-                if _progress_pointer(claim, row)
-                else _text(claim.get("id"))
+            _validate_waiting_binding(
+                job,
+                frontier,
+                row,
+                claim,
+                claims,
+                owner_authority=owner_authority,
             )
-            binding_rows = [
-                item
-                for item in _frontier_rows(frontier)
-                if item.get("id") == binding_id
-            ]
-            binding_claims = [
-                item
-                for item in claims
-                if isinstance(item, dict) and item.get("id") == binding_id
-            ]
-            if (
-                len(binding_rows) != 1
-                or len(binding_claims) != 1
-                or gate_binding(
-                    job,
-                    binding_rows[0],
-                    binding_claims[0],
-                    owner_authority=owner_authority,
-                )
-                is None
-            ):
-                raise ValueError("PROJECT_PROGRESS " + _ERRORS["waiting"])
     except p.ProgressError as error:
         # A code without a message still names itself and keeps the kind prefix.
         message = _ERRORS.get(error.code, error.code)
@@ -944,20 +995,19 @@ def _held_gate_sources(job: Native, key: str) -> list[Native] | None:
     return cast("list[Native]", items)
 
 
-def _owner_review_gate(
-    job: Native, row: Native, claim: Native, at: Native
-) -> tuple[Native, Native] | None:
-    canonical = _mapping(row.get("canonical"))
-    if (
+def _is_m16_human_merge(row: Native, claim: Native, canonical: Native) -> bool:
+    return (
         row.get("kind") == "HUMAN_MERGE"
         and row.get("source_kind") == "canonical_criterion"
         and canonical.get("criterion") == "M16"
         and bool(row.get("source_sha256"))
         and claim.get("evidence_sha256") == row.get("source_sha256")
-    ):
-        return at, canonical
-    if row.get("kind") not in ("TECHNICAL", "UNFINISHED"):
-        return None
+    )
+
+
+def _matching_dependency_wait(
+    job: Native, row: Native, claim: Native, at: Native
+) -> tuple[Native, Native] | None:
     dependency = {
         "pr_number": claim.get("dependency_pr_number"),
         "head_sha": claim.get("dependency_head_sha"),
@@ -980,6 +1030,17 @@ def _owner_review_gate(
         for key in ("check_run_id", "protected_revision")
         if key in waits[0]
     }
+
+
+def _owner_review_gate(
+    job: Native, row: Native, claim: Native, at: Native
+) -> tuple[Native, Native] | None:
+    canonical = _mapping(row.get("canonical"))
+    if _is_m16_human_merge(row, claim, canonical):
+        return at, canonical
+    if row.get("kind") not in ("TECHNICAL", "UNFINISHED"):
+        return None
+    return _matching_dependency_wait(job, row, claim, at)
 
 
 def _check_run_row(candidate: Native, claim: Native, at: Native) -> bool:
@@ -1163,6 +1224,21 @@ def _resume_gate(gate: Native, mode: str) -> p.ResumeGate | None:
     )
 
 
+def _valid_gate_resume_inputs(
+    gate: Native,
+    resume: Native,
+    observed: Any,
+    payload: Any,
+) -> bool:
+    return (
+        provider.valid_subject(resume)
+        and type(observed) in (int, float)
+        and type(gate.get("at")) in (int, float)
+        and (not payload or isinstance(payload, Mapping))
+        and (not gate.get("canonical") or isinstance(gate["canonical"], Mapping))
+    )
+
+
 def gate_resume(
     gate: Native,
     record: Native,
@@ -1183,13 +1259,7 @@ def gate_resume(
     resume = _mapping(gate.get("resume_subject"))
     observed = record.get("observed_at")
     payload = record.get("payload")
-    if (
-        not provider.valid_subject(resume)
-        or type(observed) not in (int, float)
-        or type(gate.get("at")) not in (int, float)
-        or (payload and not isinstance(payload, Mapping))
-        or (gate.get("canonical") and not isinstance(gate["canonical"], Mapping))
-    ):
+    if not _valid_gate_resume_inputs(gate, resume, observed, payload):
         return None
     item = _mapping(_mapping(payload).get("item"))
     selected = _resume_selector(
