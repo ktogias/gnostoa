@@ -750,9 +750,13 @@ def validate_progress(
     if isinstance(context, Mapping) and not all(isinstance(k, str) for k in context):
         raise ValueError("PROJECT_PROGRESS the authority context keys must be text")
     try:
-        if claim.get("disposition") in ("ASSIGNED", "QUIESCENT") and not any(
-            item == row for item in _frontier_rows(frontier)
-        ):
+        if (
+            claim.get("disposition") in ("ASSIGNED", "QUIESCENT")
+            or (
+                claim.get("disposition") == "WAITING"
+                and row.get("kind") == "PROJECT_PROGRESS"
+            )
+        ) and not any(item == row for item in _frontier_rows(frontier)):
             raise ValueError(
                 "PROJECT_PROGRESS the captured frontier does not hold this row"
             )

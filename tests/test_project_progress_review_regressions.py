@@ -952,6 +952,89 @@ class OwnerAuthorityGateBindingTests(unittest.TestCase):
                     )
                 )
 
+    def test_project_progress_waiting_claim_requires_matching_captured_frontier_row(
+        self,
+    ) -> None:
+        """PRRT_kwDOToCF3c68J0HA: require the supplied PROJECT_PROGRESS row to match a captured frontier row."""
+        scope: n.Native = {"kind": "work_item", "ref": "issue:499"}
+        progress_row = n.progress_row(scope, [])
+        head = "a" * 40
+        gate_row: n.Native = {
+            "id": "gate-G",
+            "kind": "HUMAN_MERGE",
+            "source_kind": "canonical_criterion",
+            "subject": {"pr_number": 500, "head_sha": head},
+            "source_sha256": "gate-evidence",
+            "canonical": {"criterion": "M16"},
+        }
+        progress_claim: n.Native = {
+            "id": progress_row["id"],
+            "disposition": "WAITING",
+            "owner": "human:ktogias",
+            "reason": "Await the exact-head review.",
+            "resume_event": "gate:gate-G",
+        }
+        gate_claim: n.Native = {
+            "id": "gate-G",
+            "disposition": "WAITING",
+            "owner": "human:ktogias",
+            "reason": "Await the exact-head review.",
+            "resume_event": "native_exact_head_review",
+            "evidence_sha256": "gate-evidence",
+        }
+        claims = [progress_claim, gate_claim]
+        frontier_with_both = {"coverage": "COMPLETE", "rows": [progress_row, gate_row]}
+        frontier_gate_only = {"coverage": "COMPLETE", "rows": [gate_row]}
+        altered_progress_row = {**progress_row, "kind": "TECHNICAL"}
+        frontier_with_altered = {
+            "coverage": "COMPLETE",
+            "rows": [altered_progress_row, gate_row],
+        }
+        job: n.Native = {
+            "authority_context": {"_coverage": {"coverage": "COMPLETE"}},
+            "continuation_contract": {"frontier_sha256": "lineage"},
+            "continuation_frontier": {"rows": [gate_row]},
+        }
+
+        # Baseline: with both rows present in frontier, validation passes
+        n.validate_progress(
+            job,
+            frontier_with_both,
+            progress_row,
+            progress_claim,
+            {"assignments": []},
+            claims,
+            owner_authority="human:ktogias",
+        )
+
+        # Absent progress row fails closed even though gate is present
+        with self.assertRaisesRegex(
+            ValueError, "^PROJECT_PROGRESS the captured frontier does not hold this row"
+        ):
+            n.validate_progress(
+                job,
+                frontier_gate_only,
+                progress_row,
+                progress_claim,
+                {"assignments": []},
+                claims,
+                owner_authority="human:ktogias",
+            )
+
+        # Altered progress row in frontier also fails closed
+        with self.assertRaisesRegex(
+            ValueError, "^PROJECT_PROGRESS the captured frontier does not hold this row"
+        ):
+            n.validate_progress(
+                job,
+                frontier_with_altered,
+                progress_row,
+                progress_claim,
+                {"assignments": []},
+                claims,
+                owner_authority="human:ktogias",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
