@@ -350,7 +350,14 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
         raise ValueError("PROJECT_PROGRESS unbound obligation has no id")
     if not isinstance(unbound.get("sources"), list):
         raise ValueError("PROJECT_PROGRESS unbound obligation sources must be a list")
+    dest_ref = scope.get("ref")
+    if not isinstance(dest_ref, str) or not dest_ref:
+        raise ValueError("PROJECT_PROGRESS migration destination scope is unresolved")
     oid = scope_identity(scope)
+    if oid == unbound["id"]:
+        raise ValueError(
+            "PROJECT_PROGRESS cannot migrate obligation onto itself (self-migration)"
+        )
     # Validate every carried and bound request before the first mutation.
     _history(unbound)
     existing_bound = obligations.get(oid)

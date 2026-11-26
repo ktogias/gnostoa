@@ -244,6 +244,57 @@ class MigrationRearmTests(unittest.TestCase):
         self.assertIn(unbound_ob["id"], reloaded_store)
         self.assertEqual(reloaded_store[unbound_ob["id"]]["status"], "OPEN")
 
+    def test_migrate_rejects_unresolved_destination_and_self_migration_leaving_store_and_unbound_unchanged(
+        self,
+    ) -> None:
+        """PRRT_kwDOToCF3c68Tkbe: reject unresolved destination or self-migration without store/record mutation."""
+        store: n.Native = {}
+        unbound_record: n.Native = {
+            "id": "unbound-42",
+            "status": "OPEN",
+            "scope": {"kind": "work_item", "ref": None},
+            "sources": [{"kind": "operation", "delivery_key": "step-1"}],
+            "requests": [self.request("req-1", self.now, "INTENT")],
+            "created_at": "2026-11-25T00:00:00Z",
+        }
+        store["unbound-42"] = unbound_record
+
+        # 1. Unresolved destination (ref is None / empty)
+        unresolved_destinations = [
+            {"kind": "work_item", "ref": None},
+            {"kind": "work_item"},
+            {"kind": "work_item", "ref": ""},
+        ]
+        for dest in unresolved_destinations:
+            store_before = copy.deepcopy(store)
+            unbound_before = copy.deepcopy(unbound_record)
+            with self.assertRaisesRegex(ValueError, "destination.*unresolved"):
+                n.migrate(store, unbound_record, dest, self.now + 1)
+            self.assertEqual(store, store_before)
+            self.assertEqual(unbound_record, unbound_before)
+
+        # 2. Self-migration: destination identity equals source unbound id
+        # Compute destination id for an admitted resolved scope
+        dest_scope = {"kind": "work_item", "ref": "issue:500"}
+        dest_oid = n.scope_identity(dest_scope)
+
+        self_unbound: n.Native = {
+            "id": dest_oid,
+            "status": "OPEN",
+            "scope": dest_scope,
+            "sources": [{"kind": "operation", "delivery_key": "step-self"}],
+            "requests": [self.request("req-self", self.now, "INTENT")],
+            "created_at": "2026-11-25T00:00:00Z",
+        }
+        store_self: n.Native = {dest_oid: self_unbound}
+        store_self_before = copy.deepcopy(store_self)
+        self_unbound_before = copy.deepcopy(self_unbound)
+
+        with self.assertRaisesRegex(ValueError, "self-migration"):
+            n.migrate(store_self, self_unbound, dest_scope, self.now + 1)
+        self.assertEqual(store_self, store_self_before)
+        self.assertEqual(self_unbound, self_unbound_before)
+
     def test_carried_intent_reemits_same_key_then_holds_without_new_request(
         self,
     ) -> None:
