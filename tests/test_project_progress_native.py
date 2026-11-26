@@ -408,11 +408,10 @@ class NativeProgressTests(unittest.TestCase):
                 ),
             ),
         ):
-            with (
-                self.subTest(name=name),
-                self.assertRaisesRegex(ValueError, "^PROJECT_PROGRESS "),
-            ):
-                n.validate_progress(*cast("Any", args))
+            with self.subTest(name=name):
+                typed_args = cast("Any", args)
+                with self.assertRaisesRegex(ValueError, "^PROJECT_PROGRESS "):
+                    n.validate_progress(*typed_args)
 
     def test_gate_resume_refuses_a_non_mapping_argument_by_name(self) -> None:
         cases: list[tuple[Any, Any, Any]] = [

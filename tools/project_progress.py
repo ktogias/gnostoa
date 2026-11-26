@@ -148,9 +148,14 @@ def request_budget(
     daily_cap: int = 12,
     max_jitter_seconds: float = 5.0,
 ) -> str | None:
-    # Check for gross clock rollback / forward skew beyond jitter threshold
+    # Check for non-finite timestamps or forward skew beyond jitter threshold
+    def is_finite(value: float) -> bool:
+        return abs(value) < float("inf")
+
+    if not is_finite(now):
+        return "TIME_MONOTONICITY_HOLD"
     for r in (*identity, *all_requests):
-        if not (r.at <= now + max_jitter_seconds):
+        if not is_finite(r.at) or r.at > now + max_jitter_seconds:
             return "TIME_MONOTONICITY_HOLD"
 
     def virtual_age(at: float) -> float:
