@@ -224,6 +224,12 @@ class ReviewSubmissionTimeTests(unittest.TestCase):
             with self.subTest(updated=updated):
                 self.assertEqual(self.resume(item), "OWNER_REVIEW")
 
+    def test_a_submission_between_observed_at_and_now_does_not_resume(self) -> None:
+        # observed_at is NOW + 2, now passed to resume is NOW + 3
+        # A submission at NOW + 2.5 is > observed_at but <= now.
+        item: n.Native = {"submitted_at": _iso(NOW + 2.5)}
+        self.assertIsNone(self.resume(item))
+
 
 class UnresolvedOriginIdentityTests(unittest.TestCase):
     def test_unresolved_origins_get_distinct_row_identities(self) -> None:
