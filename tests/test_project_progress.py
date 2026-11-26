@@ -161,7 +161,7 @@ class ProgressOwnerTests(unittest.TestCase):
             "TIME_MONOTONICITY_HOLD",
         )
 
-    def test_characterization_future_stamps_never_count_toward_identity_cap(
+    def test_characterization_jitter_stamps_count_toward_identity_cap_and_skew_holds(
         self,
     ) -> None:
         now = 1_800_000_000.0
@@ -189,8 +189,8 @@ class ProgressOwnerTests(unittest.TestCase):
         skew = tuple(p.RequestStamp(str(n), now + 60.0) for n in (1, 2, 3))
         self.assertEqual(p.request_budget(skew, skew, now), "TIME_MONOTONICITY_HOLD")
 
-    def test_future_stamps_exact_threshold_and_utc_midnight(self) -> None:
-        # UTC midnight test: 2027-01-15 00:00:00 UTC = 1_800_000_000
+    def test_future_stamps_exact_threshold_and_carried_exclusion(self) -> None:
+        # 2027-01-15 08:00:00 UTC = 1_800_000_000
         now = 1_800_000_000.0
         # Exact threshold test: 5.0s jitter absorbed, 5.001s skew holds
         exact_border = (p.RequestStamp("1", now + 5.0),)

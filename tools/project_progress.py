@@ -80,7 +80,7 @@ def _duplicate(source: Source, held: Sequence[Source]) -> bool:
 def _advance(source: Source, held: Sequence[Source]) -> list[Source]:
     """A repeat of a held category source moves its observation order forward."""
     return [
-        replace(s, observed=source.observed)
+        replace(s, observed=source.observed, fingerprint=source.fingerprint)
         if s.category == source.category
         and _already_held(source, [s])
         and newer(source.observed, s.observed) is True
@@ -150,7 +150,7 @@ def request_budget(
 ) -> str | None:
     # Check for gross clock rollback / forward skew beyond jitter threshold
     for r in (*identity, *all_requests):
-        if r.at - now > max_jitter_seconds:
+        if r.at != r.at or r.at - now > max_jitter_seconds:
             return "TIME_MONOTONICITY_HOLD"
 
     def virtual_age(at: float) -> float:
@@ -458,7 +458,7 @@ def gate_resume(
         or fact.subject != gate.subject
         or fact.revision != gate.revision
         or fact.mode != gate.mode
-        or not gate.at < fact.observed_at <= now
+        or not (gate.at < fact.observed_at <= now)
         or not fact.advances
     ):
         return False

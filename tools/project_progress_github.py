@@ -22,7 +22,7 @@ _TARGET = re.compile(r"(?:issue:[1-9]\d*/)?pr:([1-9]\d*)", re.ASCII)
 _ISSUE = re.compile(r"issue:([1-9]\d*)", re.ASCII)
 _URL_NUMBER = re.compile(r"/(?:issues|pull)/([1-9]\d*)(?:[#?].*)?$", re.ASCII)
 _NUMBER = re.compile(r"[1-9]\d*", re.ASCII)
-_HEAD = re.compile(r"[0-9a-f]{40}")
+_HEAD = re.compile(r"[0-9a-f]{40}", re.IGNORECASE | re.ASCII)
 _ATTRIBUTES = (
     "source_binding_sha256",
     "updated_at",
@@ -137,6 +137,8 @@ def pr_closed(value: Mapping[str, Any]) -> bool:
 
 
 def closed_targets(sources: Any) -> tuple[Ref, ...]:
+    if not isinstance(sources, (list, tuple)):
+        return ()
     return tuple(
         Ref("pr", str(s["pr_number"]))
         for s in sources
@@ -152,7 +154,8 @@ def closed_reads(context: Mapping[str, Any]) -> tuple[Ref, ...]:
 
     A read that carries no state proves nothing about the PR, so it fails closed.
     """
-    result = []
+    open_refs: set[Ref] = set()
+    closed_candidates: list[Ref] = []
     for pointer, held in context.items():
         if (
             pointer.startswith("_")
@@ -161,11 +164,15 @@ def closed_reads(context: Mapping[str, Any]) -> tuple[Ref, ...]:
         ):
             continue
         ref = read_ref(pointer, held)
+        if ref is None:
+            continue
         state = held.get("state")
         is_open = isinstance(state, str) and state.lower() == "open"
-        if ref is not None and (not is_open or pr_closed(held)):
-            result.append(ref)
-    return tuple(result)
+        if is_open and not pr_closed(held):
+            open_refs.add(ref)
+        else:
+            closed_candidates.append(ref)
+    return tuple(r for r in closed_candidates if r not in open_refs)
 
 
 def valid_subject(subject: Mapping[str, Any]) -> bool:

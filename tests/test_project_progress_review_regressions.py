@@ -1047,7 +1047,10 @@ class OwnerAuthorityGateBindingTests(unittest.TestCase):
             with self.subTest(bad_dep_wait=bad_wait):
                 self.assertIsNone(
                     n.gate_binding(
-                        damaged_job, gate, dep_claim, owner_authority="human:ktogias"
+                        damaged_job,
+                        dep_gate,
+                        dep_claim,
+                        owner_authority="human:ktogias",
                     )
                 )
 
@@ -1250,6 +1253,64 @@ class OwnerAuthorityGateBindingTests(unittest.TestCase):
                 {"assignments": []},
                 claims,
             )
+
+    def test_batch1_github_and_progress_defects_red_baseline(self) -> None:
+        from tools import project_progress as p
+        from tools import project_progress_github as g
+
+        self.assertEqual(g.closed_targets(None), ())
+        self.assertTrue(
+            g.valid_subject(
+                {
+                    "pr_number": 500,
+                    "head_sha": "E8450A45696C5EE56C73A77200BC5CD2C08906ED",
+                }
+            )
+        )
+        self.assertEqual(
+            g.closed_reads(
+                {
+                    "pr_old": {
+                        "kind": "pr",
+                        "pr_number": 500,
+                        "state": "closed",
+                    },
+                    "pr_new": {
+                        "kind": "pr",
+                        "pr_number": 500,
+                        "state": "open",
+                        "merged": False,
+                    },
+                }
+            ),
+            (),
+        )
+        self.assertEqual(
+            p.request_budget(
+                [p.RequestStamp(key="k1", at=float("nan"), carried=False)],
+                [],
+                now=1_800_000_000.0,
+            ),
+            "TIME_MONOTONICITY_HOLD",
+        )
+        held = [
+            p.Source(
+                category="scope",
+                key="k1",
+                fingerprint="fp-old",
+                observed=("e1", 1),
+                replaces_category=True,
+            )
+        ]
+        incoming = p.Source(
+            category="scope",
+            key="k1",
+            fingerprint="fp-new",
+            observed=("e1", 2),
+            replaces_category=True,
+        )
+        merged, _, _ = p.merge_sources(held, [incoming])
+        self.assertEqual(merged[0].fingerprint, "fp-new")
 
 
 if __name__ == "__main__":
