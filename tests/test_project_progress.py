@@ -139,27 +139,21 @@ class ProgressOwnerTests(unittest.TestCase):
             "TIME_MONOTONICITY_HOLD",
         )
 
-    def test_future_stamp_same_utc_day_does_not_count_toward_daily_cap(
+    def test_future_stamp_in_other_identity_does_not_hold_request_budget(
         self,
     ) -> None:
         now = 1_800_000_000.0
         future = (p.RequestStamp("a", now + 60),)
-        self.assertEqual(
-            p.request_budget((), future, now, daily_cap=1),
-            "TIME_MONOTONICITY_HOLD",
-        )
+        self.assertIsNone(p.request_budget((), future, now, daily_cap=2))
         past = (p.RequestStamp("b", now - 60),)
         self.assertEqual(p.request_budget((), past, now, daily_cap=1), "DAILY_CAP")
 
-    def test_characterization_future_stamp_later_utc_day_not_in_daily_cap(
+    def test_far_future_stamp_in_other_identity_does_not_hold_store(
         self,
     ) -> None:
         now = 1_800_000_000.0
-        future = (p.RequestStamp("a", now + 86400),)
-        self.assertEqual(
-            p.request_budget((), future, now, daily_cap=1),
-            "TIME_MONOTONICITY_HOLD",
-        )
+        future = (p.RequestStamp("a", now + 86400 * 365),)
+        self.assertIsNone(p.request_budget((), future, now, daily_cap=2))
 
     def test_characterization_jitter_stamps_count_toward_identity_cap_and_skew_holds(
         self,

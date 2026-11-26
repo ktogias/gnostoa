@@ -816,7 +816,7 @@ def _validate_waiting_binding(
     binding_claims = [
         item
         for item in claims
-        if isinstance(item, dict) and item.get("id") == binding_id
+        if isinstance(item, Mapping) and item.get("id") == binding_id
     ]
     if (
         len(binding_rows) != 1
@@ -832,6 +832,34 @@ def _validate_waiting_binding(
         raise ValueError("PROJECT_PROGRESS " + _ERRORS["waiting"])
 
 
+def _validate_progress_inputs(
+    job: Native,
+    row: Native,
+    claim: Native,
+    decoded: Native,
+    claims: list[Native],
+) -> None:
+    """Validate structural input shapes for validate_progress."""
+    _require_mappings(
+        "validate_progress", job=job, row=row, claim=claim, decoded=decoded
+    )
+    if not isinstance(claims, list) or not all(isinstance(c, Mapping) for c in claims):
+        raise ValueError("PROJECT_PROGRESS the claims must be a list of mappings")
+    context = job.get("authority_context")
+    if isinstance(context, Mapping) and not all(isinstance(k, str) for k in context):
+        raise ValueError("PROJECT_PROGRESS the authority context keys must be text")
+
+
+def _check_progress_frontier(frontier: Native, row: Native, claim: Native) -> None:
+    """Ensure rows requiring frontier presence appear in the captured frontier."""
+    if _row_requires_frontier_check(claim, row) and not any(
+        item == row for item in _frontier_rows(frontier)
+    ):
+        raise ValueError(
+            "PROJECT_PROGRESS the captured frontier does not hold this row"
+        )
+
+
 def validate_progress(
     job: Native,
     frontier: Native,
@@ -843,21 +871,9 @@ def validate_progress(
     owner_authority: str | None = None,
 ) -> None:
     # The frontier keeps its own named refusal further down.
-    _require_mappings(
-        "validate_progress", job=job, row=row, claim=claim, decoded=decoded
-    )
-    if not isinstance(claims, list) or not all(isinstance(c, Mapping) for c in claims):
-        raise ValueError("PROJECT_PROGRESS the claims must be a list of mappings")
-    context = job.get("authority_context")
-    if isinstance(context, Mapping) and not all(isinstance(k, str) for k in context):
-        raise ValueError("PROJECT_PROGRESS the authority context keys must be text")
+    _validate_progress_inputs(job, row, claim, decoded, claims)
     try:
-        if _row_requires_frontier_check(claim, row) and not any(
-            item == row for item in _frontier_rows(frontier)
-        ):
-            raise ValueError(
-                "PROJECT_PROGRESS the captured frontier does not hold this row"
-            )
+        _check_progress_frontier(frontier, row, claim)
         p.validate_result(
             _evaluation(job, frontier, row, decoded, claims),
             _result(claim, row),
