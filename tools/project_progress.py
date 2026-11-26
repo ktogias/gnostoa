@@ -150,7 +150,7 @@ def request_budget(
 ) -> str | None:
     # Check for gross clock rollback / forward skew beyond jitter threshold
     for r in (*identity, *all_requests):
-        if r.at != r.at or r.at - now > max_jitter_seconds:
+        if not (r.at <= now + max_jitter_seconds):
             return "TIME_MONOTONICITY_HOLD"
 
     def virtual_age(at: float) -> float:

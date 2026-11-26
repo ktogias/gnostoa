@@ -1263,7 +1263,7 @@ class OwnerAuthorityGateBindingTests(unittest.TestCase):
             g.valid_subject(
                 {
                     "pr_number": 500,
-                    "head_sha": "E8450A45696C5EE56C73A77200BC5CD2C08906ED",
+                    "head_sha": "A1B2C3D4" * 5,
                 }
             )
         )

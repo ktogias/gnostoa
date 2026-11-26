@@ -1641,6 +1641,7 @@ class NativeProgressTests(unittest.TestCase):
         ]
         for mode, claim in self._claims_by_mode().items():
             for frontier in frontiers:
+                typed_frontier = cast("n.Native", frontier)
                 with (
                     self.subTest(mode=mode, frontier=frontier),
                     self.assertRaisesRegex(
@@ -1649,7 +1650,7 @@ class NativeProgressTests(unittest.TestCase):
                 ):
                     n.validate_progress(
                         self.job,
-                        cast("n.Native", frontier),
+                        typed_frontier,
                         self.row,
                         claim,
                         self.decoded,
@@ -1718,11 +1719,12 @@ class NativeProgressTests(unittest.TestCase):
             {"key": "", "at": "2026-11-17T00:00:00Z"},
             None,
         ):
+            typed_record = cast("n.Native", record)
             with (
                 self.subTest(record=record),
                 self.assertRaisesRegex(ValueError, "^PROJECT_PROGRESS "),
             ):
-                n.request_stamp(cast("n.Native", record))
+                n.request_stamp(typed_record)
         stamp = n.request_stamp({"key": "a", "at": "2026-11-17T00:00:00Z"})
         self.assertEqual(stamp.key, "a")
 

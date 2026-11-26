@@ -20,17 +20,18 @@ from tools import project_progress_github as provider
 from tools.agent_review_model import Ref
 
 Native = dict[str, Any]
+SOURCE_PENDING_REFRESH = "SOURCE_PENDING/REFRESH"
 
 
 class PendingRefreshResult(dict[str, Any]):
     """A mapping-compatible obligation result exposing a pending refresh requirement."""
 
-    refresh: str = "SOURCE_PENDING/REFRESH"
+    refresh: str = SOURCE_PENDING_REFRESH
 
     def __init__(
         self,
         mapping: Mapping[str, Any] | Iterable[tuple[str, Any]],
-        refresh: str = "SOURCE_PENDING/REFRESH",
+        refresh: str = SOURCE_PENDING_REFRESH,
     ) -> None:
         super().__init__(mapping)
         self.refresh = refresh
@@ -240,11 +241,11 @@ def open_obligation(
             obligations.get(str(successor_id)) if successor_id is not None else None
         )
         if successor is None:
-            return obligation, False, "SOURCE_PENDING/REFRESH"
+            return obligation, False, SOURCE_PENDING_REFRESH
         if not isinstance(successor.get("status"), str) or not successor["status"]:
             raise ValueError("PROJECT_PROGRESS a stored obligation has no status")
         if successor.get("status") == "MIGRATED":
-            return obligation, False, "SOURCE_PENDING/REFRESH"
+            return obligation, False, SOURCE_PENDING_REFRESH
         return _absorb(successor, str(successor["status"]), sources, now, chains)
     return _absorb(obligation, previous, sources, now, chains)
 
@@ -268,7 +269,7 @@ def _absorb(
     return (
         obligation,
         created or added,
-        "SOURCE_PENDING/REFRESH" if refresh else None,
+        SOURCE_PENDING_REFRESH if refresh else None,
     )
 
 
@@ -375,7 +376,7 @@ def _migrate_already_migrated(obligations: Native, unbound: Native, oid: str) ->
     if existing is None:
         return PendingRefreshResult(
             dict(unbound),
-            refresh="SOURCE_PENDING/REFRESH",
+            refresh=SOURCE_PENDING_REFRESH,
         )
     if (
         not isinstance(existing, dict)
@@ -453,7 +454,7 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
     if refresh:
         return PendingRefreshResult(
             existing_bound if existing_bound is not None else bound,
-            refresh="SOURCE_PENDING/REFRESH",
+            refresh=SOURCE_PENDING_REFRESH,
         )
     _finalize_migration(bound, unbound, binding, now, carried_before, added, False)
     obligations[oid] = bound
@@ -1212,9 +1213,10 @@ def _resume_gate(gate: Native, mode: str) -> p.ResumeGate | None:
     ):
         return None
     baseline = _mapping(gate.get("canonical")).get("check_run_id")
-    if mode == "source":
-        if type(baseline) is not int or isinstance(baseline, bool) or baseline <= 0:
-            return None
+    if mode == "source" and (
+        type(baseline) is not int or isinstance(baseline, bool) or baseline <= 0
+    ):
+        return None
     return p.ResumeGate(
         provider.subject_ref(resume),
         str(resume["head_sha"]),
