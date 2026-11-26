@@ -83,9 +83,11 @@ wrong way at once.
 At the measured head #319 had complete green CI, an implementation measuring
 1.6 findings per KLOC, and a median finding-to-fix latency of 23 minutes — while
 the open-thread count climbed monotonically toward 36. Re-measured on fixes rather
-than resolve clicks, live defects were **3**. The tracker overstated them roughly
-twelvefold, and four successive analyses of this candidate reported the tracker's
-divergence as the work's.
+than resolve clicks, substantively live items were **7** (3 code defects and 4
+documentation items). The tracker overstated live items roughly 5.1× overall
+(36 vs. 7), or twelvefold (36 vs. 3) when compared against code defects only,
+and four successive analyses of this candidate reported the tracker's divergence
+as the work's.
 
 That error is the reason this assessment exists. The measures below are not
 difficult; choosing the wrong departure series makes all of them wrong at once.
@@ -140,32 +142,43 @@ commit* is not a valid series. *Findings per KLOC added* is.
 This also gives the measure that exposes a repair treadmill: comparing finding
 density of remediation commits against implementation commits.
 
-### 3. Defect removal efficiency
+### 3. Defect removal efficiency (and reported-finding disposition)
 
-Jones defines DRE as the share of defects removed before delivery, with
-best-in-class above 95%. Taken alone it is a lagging summary. Its value here is
-in a *pair*: DRE computed from the tracker versus DRE computed from the code.
-The gap between them measures tracker drift, which no single-number DRE exposes.
+Jones defines classical DRE as the share of all defects removed before delivery,
+with best-in-class above 95%. In this provider-observable setting, escaped or
+unreported defects are not counted and mechanism presence does not prove fix
+correctness, so the 47/54 (87%) and 18/54 (33%) ratios measure **reported-finding
+disposition** (detected-mechanism rate vs. tracker-resolution rate), not
+classical total DRE. Taken alone it is a lagging summary. Its value here is in
+a *pair*: disposition computed from the tracker versus disposition computed from
+the code. The gap between them measures tracker drift, which no single-number
+rate exposes.
 
 The PR 319 measurement promoted this from a supporting measure to **the primary
-one**. Every other measure in this set is computed from an arrival and a departure
-series; if departures are read from the tracker, every one of them is wrong by the
-size of the gap. On PR 319 that was 54 points, and it inverted the verdict. The
-paired form is therefore not an extra check — it is the precondition for trusting
-any of the rest.
+one**. Every departure-derived measure in this set (Measures 1, 2, 5, and 8) is
+computed from an arrival and a departure series; if departures are read from the
+tracker, those measures are wrong by the size of the gap. (Arrival-only and
+size measures—Measures 3, 4, 6, and 7—do not depend on a departure series.) On
+PR 319 that gap was 54 points, and it inverted the verdict. The paired form is
+therefore not an extra check — it is the precondition for trusting any
+departure-derived measure.
 
 ### 4. Reliability growth — and its precondition
 
-Goel-Okumoto and the Rayleigh family model cumulative defects as
+Goel–Okumoto models cumulative defects with an exponential mean-value form
 `m(t) = a(1 − e^{−bt})`: a **concave** curve saturating at total defect content
-`a`, from which remaining defects and time-to-target are estimated.
+`a`, from which remaining defects and time-to-target are estimated. (Other
+reliability-growth models, such as Rayleigh or S-shaped forms, allow a convex
+initial discovery phase before saturating.)
 
 The precondition matters more than the model. These models assume a **fixed
 defect population with no new code introduced during the observation window**.
-A convex cumulative arrival curve, or a growing subject, violates the assumption.
-This yields the most important negative result in this research: *there are
-states in which "how many findings remain" is not estimable*, and an honest
-instrument must say so rather than fit a curve anyway.
+A convex cumulative arrival curve violates exponential-concavity assumptions,
+and a growing subject violates the fixed-population assumption. This yields the
+most important negative result in this research: *there are states in which
+"how many findings remain" is not estimable under a given model's assumptions*,
+and an honest instrument must say so (`UNKNOWN` / no verdict) rather than fit a
+curve anyway.
 
 ## Review size, as a sanity bound
 
@@ -193,14 +206,13 @@ The two bases disagree on the verdict:
 | ρ = λ/μ overall | 3.00 | **1.15** |
 | ρ trailing 12 h | ∞ | **1.33** |
 | DRE | 33% | **87%** |
-| WIP shape | 0 → 36, monotonic | 0 for 22 h, then 5–7 held for the last 12 h of the 40 h plotted |
+| WIP shape | 0 → 36, monotonic | 0 for 22 h, rising over ~6 h, then 5–7 held for the last 12 h of the 40 h plotted (within the 41 h window) |
 
 On the tracker basis the candidate looks unstable. On the substantive basis the figures
 are far smaller: ρ is slightly above 1 (1.15 overall, 1.33 trailing), WIP stayed at 5–7
 and the **median fix latency was 23 minutes** (p90 83 min). Because arrivals are
-consistent with convex (below), the instrument would give **no convergence verdict**
-for this case and would
-name convexity, so these figures are measurements, not a verdict.
+consistent with convex (below), the instrument gives **no convergence verdict**
+for this case and names convexity, so these figures are measurements, not a verdict.
 
 The trailing ρ of 1.33 is **not reconciled** with the flat WIP of 5–7: the source
 comment reports ρ for the trailing 6 h and 12 h windows but not the arrival and
@@ -244,23 +256,31 @@ Two things survive the correction, and neither is the queue:
 
 ## Proposed instrument set
 
-Computable from the GitHub API with no new runtime dependency.
+Tracker measures are computable from the GitHub API with no new runtime
+dependency; substantive departure measurement requires per-finding code
+detectors or human/agent verification.
 
 | # | Measure | Source literature | Healthy |
 |---|---|---|---|
 | 1 | ρ = λ/μ over a trailing window, **computed on substantive departures** | flow / Little's Law | < 1 |
 | 2 | Cumulative arrival vs departure series | CFD practice | parallel |
-| 3 | Findings per KLOC added, per commit | relative churn | declining |
+| 3 | Findings per KLOC added | relative churn | declining |
 | 4 | Curvature of cumulative arrivals | SRGM precondition | concave |
-| 5 | **Tracked DRE − substantive DRE** — the primary measure | DRE, paired | ≈ 0 |
+| 5 | **Tracked − substantive disposition rate** — the primary measure | DRE, paired | ≈ 0 (context only) |
 | 6 | Remediation : implementation density ratio | relative churn | → 1 |
-| 7 | Review size per pass | review-size study | ≤ 200–400 LOC (upper validity bound, not a target interval) |
+| 7 | Review size per pass | review-size study | ≤ 400 LOC (200–400 LOC upper validity bound, not a target interval) |
 | 8 | Yield decay across passes on a **frozen** head | SRGM, properly conditioned | → 0 |
 
 **Proposed stopping rule** (illustrative: parameters are unset, it is advisory and not a
 threshold). A candidate is converged when ρ < 1 is sustained,
-cumulative arrivals are concave, tracked DRE ≈ substantive DRE, substantive DRE satisfies an explicitly declared minimum threshold, and yield on a
-frozen head decays to zero across successive passes. Agreement between tracked DRE and substantive DRE at low values alone cannot justify convergence, because an equally low pair (e.g. 50%) leaves a large proportion of known defects unaddressed even when tracked and substantive rates match.
+cumulative arrivals are concave, tracked disposition ≈ substantive disposition
+(with per-finding agreement, not merely matching aggregate counts), substantive
+disposition satisfies an explicitly declared minimum threshold with acceptable
+outstanding severe findings, and yield on a frozen head decays to zero across
+successive passes. Tracker parity is necessary evidence-quality context, never
+sufficient proof of convergence: an equally low pair (e.g. 50%) or mismatched
+per-finding closures leave known defects unaddressed even when aggregate rates
+match.
 
 **Proposed refusal rule.** When arrivals are convex or the subject is still
 growing, the instrument reports *no verdict possible* and names the violated
