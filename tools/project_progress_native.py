@@ -848,6 +848,14 @@ def _valid_obligation_ids_value(value: object) -> bool:
     )
 
 
+def _valid_scope_value(value: object) -> bool:
+    return (
+        isinstance(value, Mapping)
+        and value.get("kind") == "work_item"
+        and provider.scope_ref(value) is not None
+    )
+
+
 # The one shape table for the held frontier entries: each field a member must carry
 # and the test its value passes. A member that fails any of them damages its table.
 _HELD_MEMBER_SHAPES: dict[str, dict[str, Callable[[object], bool]]] = {
@@ -869,12 +877,24 @@ _HELD_MEMBER_SHAPES: dict[str, dict[str, Callable[[object], bool]]] = {
     },
 }
 
+_HELD_ROW_SHAPES: dict[str, dict[str, Callable[[object], bool]]] = {
+    "PROJECT_PROGRESS": {
+        "id": _text_value,
+        "scope": _valid_scope_value,
+    },
+}
+
 
 def _held_member(key: str, item: object) -> bool:
     """A held entry that is a mapping carrying every field its table requires."""
     if not isinstance(item, Mapping):
         return False
-    shapes = _HELD_MEMBER_SHAPES.get(key, {})
+    if key == "rows":
+        shapes = _HELD_ROW_SHAPES.get(
+            str(item.get("kind")), _HELD_MEMBER_SHAPES["rows"]
+        )
+    else:
+        shapes = _HELD_MEMBER_SHAPES.get(key, {})
     if not all(test(item.get(field)) for field, test in shapes.items()):
         return False
     canonical = item.get("canonical")

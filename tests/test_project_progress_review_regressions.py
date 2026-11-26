@@ -1035,6 +1035,123 @@ class OwnerAuthorityGateBindingTests(unittest.TestCase):
                 owner_authority="human:ktogias",
             )
 
+    def test_held_rows_validation_accepts_progress_row_and_technical_gate_at_intake_and_pre_egress(
+        self,
+    ) -> None:
+        """PRRT_kwDOToCF3c68Os_Q: held rows validation accepts both PROJECT_PROGRESS and technical gate."""
+        scope: n.Native = {"kind": "work_item", "ref": "issue:499"}
+        progress_row = n.progress_row(scope, [])
+        head = "a" * 40
+        gate_row: n.Native = {
+            "id": "check-gate",
+            "kind": "TECHNICAL",
+            "source_kind": "canonical_criterion",
+            "subject": {"pr_number": 500, "head_sha": head},
+            "source_sha256": "check-evidence",
+            "canonical": {"check_run_id": 456},
+        }
+        progress_claim: n.Native = {
+            "id": progress_row["id"],
+            "disposition": "WAITING",
+            "owner": "provider:canonical-gate",
+            "reason": "Await the exact-head check update.",
+            "resume_event": "gate:check-gate",
+        }
+        check_claim: n.Native = {
+            "id": "check-gate",
+            "disposition": "WAITING",
+            "owner": "provider:canonical-gate",
+            "reason": "Await the exact-head check update.",
+            "resume_event": "provider_source_changed",
+            "evidence_sha256": "check-evidence",
+            "check_run_id": 456,
+        }
+        claims = [progress_claim, check_claim]
+        frontier_with_both = {"coverage": "COMPLETE", "rows": [progress_row, gate_row]}
+        job: n.Native = {
+            "authority_context": {"_coverage": {"coverage": "COMPLETE"}},
+            "continuation_contract": {"frontier_sha256": "lineage"},
+            "continuation_frontier": {"rows": [progress_row, gate_row]},
+        }
+
+        # Intake: binding technical gate succeeds when continuation frontier holds both rows
+        binding = n.gate_binding(job, gate_row, check_claim)
+        self.assertIsNotNone(binding)
+        assert binding is not None
+        self.assertEqual(binding["pr_number"], 500)
+        self.assertEqual(binding["head_sha"], head)
+        self.assertEqual(binding["canonical"]["check_run_id"], 456)
+
+        # Pre-egress: validation succeeds when continuation frontier holds both rows
+        n.validate_progress(
+            job,
+            frontier_with_both,
+            progress_row,
+            progress_claim,
+            {"assignments": []},
+            claims,
+        )
+
+        refusal = "^PROJECT_PROGRESS wait needs a supported exact gate binding"
+
+        # Damaged authority: progress row missing scope damages table and fails closed
+        bad_progress_scope_missing = {
+            k: v for k, v in progress_row.items() if k != "scope"
+        }
+        job_scope_missing: n.Native = {
+            **job,
+            "continuation_frontier": {"rows": [bad_progress_scope_missing, gate_row]},
+        }
+        self.assertIsNone(n.gate_binding(job_scope_missing, gate_row, check_claim))
+        with self.assertRaisesRegex(ValueError, refusal):
+            n.validate_progress(
+                job_scope_missing,
+                frontier_with_both,
+                progress_row,
+                progress_claim,
+                {"assignments": []},
+                claims,
+            )
+
+        # Damaged authority: progress row with invalid scope damages table and fails closed
+        bad_progress_scope_invalid = {
+            **progress_row,
+            "scope": {"kind": "work_item", "ref": "invalid"},
+        }
+        job_scope_invalid: n.Native = {
+            **job,
+            "continuation_frontier": {"rows": [bad_progress_scope_invalid, gate_row]},
+        }
+        self.assertIsNone(n.gate_binding(job_scope_invalid, gate_row, check_claim))
+        with self.assertRaisesRegex(ValueError, refusal):
+            n.validate_progress(
+                job_scope_invalid,
+                frontier_with_both,
+                progress_row,
+                progress_claim,
+                {"assignments": []},
+                claims,
+            )
+
+        # Damaged authority: gate row missing subject damages table and fails closed
+        bad_gate_missing_subject = {k: v for k, v in gate_row.items() if k != "subject"}
+        job_gate_missing_subject: n.Native = {
+            **job,
+            "continuation_frontier": {"rows": [progress_row, bad_gate_missing_subject]},
+        }
+        self.assertIsNone(
+            n.gate_binding(job_gate_missing_subject, gate_row, check_claim)
+        )
+        with self.assertRaisesRegex(ValueError, refusal):
+            n.validate_progress(
+                job_gate_missing_subject,
+                frontier_with_both,
+                progress_row,
+                progress_claim,
+                {"assignments": []},
+                claims,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
