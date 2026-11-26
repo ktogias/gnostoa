@@ -699,6 +699,91 @@ class NativeProgressTests(unittest.TestCase):
         self.assertEqual(store, {})
         self.assertEqual(invalid_req_unbound["status"], "OPEN")
 
+    def test_migration_tombstone_replay_missing_or_malformed_successor(
+        self,
+    ) -> None:
+        """PRRT_kwDOToCF3c68X-tK: tombstone replay handles missing or malformed successor safely."""
+        dest_oid = n.scope_identity(self.scope)
+        unbound: n.Native = {
+            "id": "unbound-replay-1",
+            "status": "MIGRATED",
+            "superseded_by": dest_oid,
+            "sources": [],
+            "requests": [],
+        }
+
+        # 1. Missing successor returns pending repair outcome without mutating store
+        store_missing: n.Native = {"unbound-replay-1": copy.deepcopy(unbound)}
+        store_missing_before = copy.deepcopy(store_missing)
+        result = n.migrate(
+            store_missing, store_missing["unbound-replay-1"], self.scope, self.now + 1
+        )
+        self.assertEqual(getattr(result, "refresh", None), "SOURCE_PENDING/REFRESH")
+        self.assertNotIn(dest_oid, store_missing)
+        self.assertEqual(store_missing, store_missing_before)
+
+        # 2. Malformed successor (missing or invalid status) raises ValueError without modifying store
+        store_malformed_status: n.Native = {
+            "unbound-replay-1": copy.deepcopy(unbound),
+            dest_oid: {"id": dest_oid, "sources": []},  # missing status
+        }
+        with self.assertRaisesRegex(ValueError, "stored obligation has no status"):
+            n.migrate(
+                store_malformed_status,
+                store_malformed_status["unbound-replay-1"],
+                self.scope,
+                self.now + 1,
+            )
+
+        store_malformed_type: n.Native = {
+            "unbound-replay-1": copy.deepcopy(unbound),
+            dest_oid: "not-a-dict",  # non-dict stored entry
+        }
+        with self.assertRaisesRegex(ValueError, "stored obligation has no status"):
+            n.migrate(
+                store_malformed_type,
+                store_malformed_type["unbound-replay-1"],
+                self.scope,
+                self.now + 1,
+            )
+
+        # 3. Malformed successor with invalid history raises ValueError
+        store_malformed_history: n.Native = {
+            "unbound-replay-1": copy.deepcopy(unbound),
+            dest_oid: {
+                "id": dest_oid,
+                "status": "OPEN",
+                "sources": [],
+                "requests": [{"key": "bad-req"}],  # missing 'at'
+            },
+        }
+        with self.assertRaises(ValueError):
+            n.migrate(
+                store_malformed_history,
+                store_malformed_history["unbound-replay-1"],
+                self.scope,
+                self.now + 1,
+            )
+
+        # 4. Valid successor returns existing successor dictionary without mutation
+        store_valid: n.Native = {
+            "unbound-replay-1": copy.deepcopy(unbound),
+            dest_oid: {
+                "id": dest_oid,
+                "status": "OPEN",
+                "sources": [],
+                "requests": [
+                    {"key": "valid-req", "at": "2026-11-26T12:00:00Z", "state": "SENT"}
+                ],
+            },
+        }
+        store_valid_before = copy.deepcopy(store_valid)
+        succ = n.migrate(
+            store_valid, store_valid["unbound-replay-1"], self.scope, self.now + 1
+        )
+        self.assertEqual(succ["id"], dest_oid)
+        self.assertEqual(store_valid, store_valid_before)
+
     def test_controller_decision_recognizes_unsettled_earlier_intent_across_distinct_keys(
         self,
     ) -> None:

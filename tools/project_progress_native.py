@@ -365,8 +365,19 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
                 "PROJECT_PROGRESS cannot migrate already-MIGRATED origin to conflicting destination"
             )
         existing = obligations.get(oid)
-        if isinstance(existing, dict):
-            return existing
+        if existing is None:
+            return PendingRefreshResult(
+                dict(unbound),
+                refresh="SOURCE_PENDING/REFRESH",
+            )
+        if (
+            not isinstance(existing, dict)
+            or not isinstance(existing.get("status"), str)
+            or not existing["status"]
+        ):
+            raise ValueError("PROJECT_PROGRESS stored obligation has no status")
+        _history(existing)
+        return existing
     # Validate every carried and bound request before the first mutation.
     _history(unbound)
     existing_bound = obligations.get(oid)
