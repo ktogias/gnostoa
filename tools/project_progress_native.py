@@ -865,11 +865,12 @@ def _valid_obligation_ids_value(value: object) -> bool:
 
 
 def _valid_scope_value(value: object) -> bool:
-    return (
-        isinstance(value, Mapping)
-        and value.get("kind") == "work_item"
-        and provider.scope_ref(value) is not None
-    )
+    if not (isinstance(value, Mapping) and value.get("kind") == "work_item"):
+        return False
+    ref = value.get("ref")
+    if ref is None or ref == "":
+        return True
+    return provider.scope_ref(value) is not None
 
 
 # The one shape table for the held frontier entries: each field a member must carry

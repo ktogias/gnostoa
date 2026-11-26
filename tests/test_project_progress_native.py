@@ -1761,6 +1761,42 @@ class NativeProgressTests(unittest.TestCase):
         ):
             n.request_budget(store, obligation, now)
 
+    def test_held_rows_accepts_unresolved_progress_row_with_valid_technical_gate(
+        self,
+    ) -> None:
+        """PRRT_kwDOToCF3c68W7iK: held rows validation accepts unresolved progress row alongside valid technical gate."""
+        unresolved_scope: n.Native = {"kind": "work_item", "ref": None}
+        progress_row = n.progress_row(unresolved_scope, [], origin="origin-test")
+        head = "a" * 40
+        gate_row: n.Native = {
+            "id": "check-gate",
+            "kind": "TECHNICAL",
+            "source_kind": "canonical_criterion",
+            "subject": {"pr_number": 500, "head_sha": head},
+            "source_sha256": "check-evidence",
+            "canonical": {"check_run_id": 456},
+        }
+        check_claim: n.Native = {
+            "id": "check-gate",
+            "disposition": "WAITING",
+            "owner": "provider:canonical-gate",
+            "reason": "Await the exact-head check update.",
+            "resume_event": "provider_source_changed",
+            "evidence_sha256": "check-evidence",
+            "check_run_id": 456,
+        }
+        job: n.Native = {
+            "authority_context": {"_coverage": {"coverage": "COMPLETE"}},
+            "continuation_contract": {"frontier_sha256": "lineage"},
+            "continuation_frontier": {"rows": [progress_row, gate_row]},
+        }
+        binding = n.gate_binding(job, gate_row, check_claim)
+        self.assertIsNotNone(binding)
+        assert binding is not None
+        self.assertEqual(binding["pr_number"], 500)
+        self.assertEqual(binding["head_sha"], head)
+        self.assertEqual(binding["canonical"]["check_run_id"], 456)
+
 
 if __name__ == "__main__":
     unittest.main()
