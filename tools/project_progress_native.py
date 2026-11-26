@@ -358,6 +358,15 @@ def migrate(obligations: Native, unbound: Native, scope: Native, now: float) -> 
         raise ValueError(
             "PROJECT_PROGRESS cannot migrate obligation onto itself (self-migration)"
         )
+    if unbound.get("status") == "MIGRATED":
+        successor_id = unbound.get("superseded_by")
+        if successor_id != oid:
+            raise ValueError(
+                "PROJECT_PROGRESS cannot migrate already-MIGRATED origin to conflicting destination"
+            )
+        existing = obligations.get(oid)
+        if isinstance(existing, dict):
+            return existing
     # Validate every carried and bound request before the first mutation.
     _history(unbound)
     existing_bound = obligations.get(oid)

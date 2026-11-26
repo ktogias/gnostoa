@@ -295,6 +295,53 @@ class MigrationRearmTests(unittest.TestCase):
         self.assertEqual(store_self, store_self_before)
         self.assertEqual(self_unbound, self_unbound_before)
 
+    def test_migrate_handles_migrated_origin_replay_and_rejects_conflicting_destination(
+        self,
+    ) -> None:
+        """PRRT_kwDOToCF3c68WHER: already-MIGRATED origin is accepted only if destination matches successor."""
+        store: n.Native = {}
+        dest_scope_1 = {"kind": "work_item", "ref": "issue:500"}
+        dest_oid_1 = n.scope_identity(dest_scope_1)
+        dest_scope_2 = {"kind": "work_item", "ref": "issue:501"}
+        dest_oid_2 = n.scope_identity(dest_scope_2)
+
+        unbound: n.Native = {
+            "id": "unbound-42",
+            "status": "OPEN",
+            "scope": {"kind": "work_item", "ref": None},
+            "sources": [{"kind": "operation", "delivery_key": "step-1"}],
+            "requests": [self.request("req-1", self.now, "INTENT")],
+            "created_at": "2026-11-25T00:00:00Z",
+        }
+        store["unbound-42"] = unbound
+
+        # Migrate origin to dest_scope_1 initially
+        bound_1 = n.migrate(store, unbound, dest_scope_1, self.now + 1)
+        self.assertEqual(bound_1["id"], dest_oid_1)
+        self.assertEqual(unbound["status"], "MIGRATED")
+        self.assertEqual(unbound["superseded_by"], dest_oid_1)
+
+        # JSON round-trip
+        store_rt: n.Native = json.loads(json.dumps(store))
+        unbound_rt: n.Native = store_rt["unbound-42"]
+
+        # Case 1: Replay with matching destination returns successor idempotently without mutating store
+        store_before_replay = copy.deepcopy(store_rt)
+        unbound_before_replay = copy.deepcopy(unbound_rt)
+        replayed = n.migrate(store_rt, unbound_rt, dest_scope_1, self.now + 2)
+        self.assertEqual(replayed["id"], dest_oid_1)
+        self.assertEqual(store_rt, store_before_replay)
+        self.assertEqual(unbound_rt, unbound_before_replay)
+
+        # Case 2: Conflicting destination is rejected with ValueError, leaving store & tombstone untouched
+        store_before_conflict = copy.deepcopy(store_rt)
+        unbound_before_conflict = copy.deepcopy(unbound_rt)
+        with self.assertRaisesRegex(ValueError, "conflicting destination"):
+            n.migrate(store_rt, unbound_rt, dest_scope_2, self.now + 3)
+        self.assertEqual(store_rt, store_before_conflict)
+        self.assertEqual(unbound_rt, unbound_before_conflict)
+        self.assertNotIn(dest_oid_2, store_rt)
+
     def test_carried_intent_reemits_same_key_then_holds_without_new_request(
         self,
     ) -> None:
