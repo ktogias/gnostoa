@@ -1,0 +1,75 @@
+{
+ "collector_sha256": "ab0f9f4f5e792159d2804653dd6027e1e8d94640ae282964f5e0b273dc0eef03",
+ "collector_version": "s689-1",
+ "data_through": "2026-11-07T23:58:46.581Z",
+ "day": "2026-11-07",
+ "dropped": {},
+ "dropped_ids": {},
+ "files": {
+  "telemetry/v1/2026/11/07/decisions.jsonl": {
+   "bytes": 272838,
+   "records": 324,
+   "sha256": "44a6a7a0fdb56d6dcade4ab637629704d5f2dda4c6d13b346f0d373f8dd834e8"
+  },
+  "telemetry/v1/2026/11/07/deliveries.jsonl": {
+   "bytes": 67312,
+   "records": 73,
+   "sha256": "c9943dd5dbb8bd4e165c7cbacb66c678436ab015915b0f7ba51e0d6a16599cf0"
+  },
+  "telemetry/v1/2026/11/07/evaluations.jsonl": {
+   "bytes": 540,
+   "records": 1,
+   "sha256": "037fff3645631a5d721bd6b6c63c7d87f656b5156b6bd496399b443bddb67ea3"
+  }
+ },
+ "gate": {
+  "data_files_scanned": 109,
+  "files": 3,
+  "hits": 0,
+  "result": "PASS",
+  "scan_body_sha256": "a635c8a7d4dfe578c180e570997b15857176fa7c9caf1731741df313bc4490da",
+  "scanner_sha256": "00cdd2ed53d0465b6f607fd2736f5a7c608a470a33bedef7471816fb40271f85"
+ },
+ "records": {
+  "decisions": 324,
+  "deliveries": 73,
+  "evaluations": 1
+ },
+ "report_sha256": "7d44975da90128cfd283326a80ecc6824bf02ae4aa51a54e589a05072ae9d0d3",
+ "rollup": {
+  "kinds": {
+   "config_changes": {},
+   "decisions": {
+    "ROUTER_DISPATCH": 166,
+    "ROUTER_JOB": 158
+   },
+   "deliveries": {
+    "IMPLEMENTER_TURN": 57,
+    "PEER_RESULT": 16
+   },
+   "evaluations": {
+    "MEASURE_ROW": 1
+   },
+   "snapshots": {},
+   "tool_events": {},
+   "turns": {}
+  },
+  "roles": {
+   "implementer": {
+    "denials": 0,
+    "failed": 3,
+    "failed_tokens": 629610563,
+    "launched": 38,
+    "loop_flags": 0,
+    "stops": 0,
+    "success": 35,
+    "tokens": 9297518787,
+    "tokens_per_useful": null,
+    "turns": 38,
+    "useful": 0
+   }
+  }
+ },
+ "schema_version": 1,
+ "total_records": 398
+}

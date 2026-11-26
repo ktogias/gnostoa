@@ -1,0 +1,432 @@
+{
+ "$id": "pilot-telemetry/v1/deliveries",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "Schema v1 of the deliveries stream.",
+ "properties": {
+  "attempt_failures": {
+   "description": "failed attempts recorded",
+   "type": "integer"
+  },
+  "brake": {
+   "description": "typed brake reason",
+   "type": "string"
+  },
+  "capacity_hold": {
+   "description": "typed capacity hold reason",
+   "type": "string"
+  },
+  "consumer_status": {
+   "description": "whether the coordinator consumed the output",
+   "type": "string"
+  },
+  "context_total": {
+   "description": "context tokens of the turn as the receipt reports them (unit: tokens)",
+   "type": "integer"
+  },
+  "cost_usd": {
+   "description": "provider-reported cost (unit: USD)",
+   "type": "number"
+  },
+  "delivery_state": {
+   "description": "consumer delivery state",
+   "type": "string"
+  },
+  "derived": {
+   "description": "computed from other records; replaced on recomputation",
+   "type": "boolean"
+  },
+  "duration_s": {
+   "description": "wall-clock duration (unit: s)",
+   "type": "number"
+  },
+  "effort": {
+   "description": "reasoning effort of the lane or turn (low, medium, high)",
+   "type": "string"
+  },
+  "entity": {
+   "description": "key of a mutable entity: keep the latest version (by ts, then record_id)",
+   "type": "string"
+  },
+  "error_class": {
+   "description": "typed class of an error (code, exception name or TEXT_<digest>)",
+   "type": "string"
+  },
+  "failure_causes": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "failed attempts per cause (unit: attempts)",
+   "type": "object"
+  },
+  "family": {
+   "description": "transport family (agy, claude, codex)",
+   "type": "string"
+  },
+  "from_family": {
+   "description": "family before the switch",
+   "type": "string"
+  },
+  "gate_decision": {
+   "description": "wake-gate decision of the receipt",
+   "type": "string"
+  },
+  "head": {
+   "description": "commit sha (public)",
+   "type": "string"
+  },
+  "input_type": {
+   "description": "typed input type",
+   "type": "string"
+  },
+  "kind": {
+   "enum": [
+    "IMPLEMENTER_TURN",
+    "MAIN_HEAD",
+    "PEER_RESULT",
+    "PR_LEFT_OPEN",
+    "PR_STATE"
+   ]
+  },
+  "ladder": {
+   "description": "tiers on the ladder",
+   "type": "integer"
+  },
+  "lane": {
+   "description": "lane key model@profile",
+   "type": "string"
+  },
+  "lane_rotation": {
+   "description": "lane rotation reason of the turn",
+   "type": "string"
+  },
+  "last_failure_cause": {
+   "description": "cause of the last failed attempt",
+   "type": "string"
+  },
+  "marker": {
+   "description": "typed marker of the input",
+   "type": "string"
+  },
+  "material_progress": {
+   "description": "the turn changed the worktree or source state",
+   "type": "boolean"
+  },
+  "model": {
+   "description": "model id the turn ran on (requested model)",
+   "type": "string"
+  },
+  "model_attempts": {
+   "description": "model attempts recorded",
+   "type": "integer"
+  },
+  "num_turns": {
+   "description": "provider turns inside the call",
+   "type": "integer"
+  },
+  "outcome": {
+   "description": "typed outcome",
+   "type": "string"
+  },
+  "permission_denials": {
+   "description": "permission denials the provider reported",
+   "type": "integer"
+  },
+  "profile": {
+   "description": "CLI credential profile alias of the lane (A, A2, B, C)",
+   "type": "string"
+  },
+  "prompt_bytes": {
+   "description": "prompt size (unit: bytes)",
+   "type": "integer"
+  },
+  "proposal_refusal": {
+   "description": "a proposal was refused",
+   "type": "boolean"
+  },
+  "publication_phase": {
+   "description": "publication phase",
+   "type": "string"
+  },
+  "published": {
+   "description": "the output was published",
+   "type": "boolean"
+  },
+  "record_id": {
+   "description": "stable id: sha256 of the source pointer and the normalized content, or of an explicit identity for observations, snapshots and derived rows",
+   "pattern": "^[0-9a-f]{32}$",
+   "type": "string"
+  },
+  "refusal_class": {
+   "description": "typed refusal class",
+   "type": "string"
+  },
+  "released_brake": {
+   "description": "typed reason of a released brake",
+   "type": "string"
+  },
+  "reported_tokens": {
+   "additionalProperties": false,
+   "description": "tokens as the role receipt reports them (agy: cumulative for the conversation) (unit: tokens)",
+   "minProperties": 1,
+   "properties": {
+    "cache_read": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "cache_write": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "input": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "output": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "thinking": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "total": {
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "result_status": {
+   "description": "status the role returned",
+   "type": "string"
+  },
+  "return_status": {
+   "description": "return delivery status",
+   "type": "string"
+  },
+  "schema_version": {
+   "const": 1
+  },
+  "source": {
+   "additionalProperties": false,
+   "properties": {
+    "file": {
+     "type": "string"
+    },
+    "locator": {
+     "type": "string"
+    },
+    "root": {
+     "enum": [
+      "pilot",
+      "stages",
+      "supervisor_ledger",
+      "derived"
+     ]
+    },
+    "sha256": {
+     "pattern": "^[0-9a-f]{64}$",
+     "type": "string"
+    }
+   },
+   "required": [
+    "root",
+    "file",
+    "locator",
+    "sha256"
+   ],
+   "type": "object"
+  },
+  "source_role": {
+   "description": "role that produced the input",
+   "type": "string"
+  },
+  "stalls": {
+   "description": "stalls counted by the tier rule",
+   "type": "integer"
+  },
+  "state": {
+   "description": "pull request state",
+   "type": "string"
+  },
+  "status": {
+   "description": "status code of the source record",
+   "type": "string"
+  },
+  "stream": {
+   "const": "deliveries"
+  },
+  "subject": {
+   "additionalProperties": false,
+   "properties": {
+    "comment": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "conversation": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "input_key": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "issue": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "job": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "pr": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "receipt": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "role": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "stage": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "target": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "switch": {
+   "description": "the transport family switched for this turn",
+   "type": "boolean"
+  },
+  "switch_reason": {
+   "description": "typed reason of the transport choice",
+   "type": "string"
+  },
+  "target_issue": {
+   "description": "issue number of the publication",
+   "type": "integer"
+  },
+  "tier": {
+   "description": "adaptive effort tier chosen (0 = base)",
+   "type": "integer"
+  },
+  "tier_reason": {
+   "description": "why the tier was chosen (BASE, ESCALATE_AFTER_STALL, ...)",
+   "type": "string"
+  },
+  "tokens": {
+   "additionalProperties": false,
+   "description": "tokens of this turn (turn ledger usage delta; receipts: per-call usage) (unit: tokens)",
+   "minProperties": 1,
+   "properties": {
+    "cache_read": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "cache_write": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "input": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "output": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "thinking": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "total": {
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "tool_count": {
+   "description": "tool calls in the turn",
+   "type": "integer"
+  },
+  "tool_items": {
+   "description": "tool items the receipt counted",
+   "type": "integer"
+  },
+  "total_basis": {
+   "description": "INPUT_PLUS_OUTPUT when tokens.total was derived (no provider total)",
+   "type": "string"
+  },
+  "transport": {
+   "description": "transport of the turn (agy, claude-print, codex-exec, *-resume)",
+   "type": "string"
+  },
+  "ts": {
+   "description": "UTC time of the fact; the partition day",
+   "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+   "type": "string"
+  },
+  "ts_basis": {
+   "description": "set when ts is not the record time itself",
+   "enum": [
+    "FILE_MTIME",
+    "DATE"
+   ]
+  },
+  "turn_completed": {
+   "description": "the model turn completed",
+   "type": "boolean"
+  },
+  "turn_started": {
+   "description": "the model turn started",
+   "type": "boolean"
+  },
+  "units": {
+   "additionalProperties": {
+    "type": "string"
+   },
+   "description": "unit of every field of the record that has one",
+   "type": "object"
+  }
+ },
+ "required": [
+  "schema_version",
+  "stream",
+  "record_id",
+  "kind",
+  "ts",
+  "source"
+ ],
+ "title": "deliveries",
+ "type": "object"
+}

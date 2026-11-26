@@ -1,0 +1,246 @@
+{
+ "$id": "pilot-telemetry/v1/config_changes",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "Schema v1 of the config_changes stream.",
+ "properties": {
+  "args": {
+   "description": "typed operation arguments",
+   "type": "object"
+  },
+  "derived": {
+   "description": "computed from other records; replaced on recomputation",
+   "type": "boolean"
+  },
+  "entity": {
+   "description": "key of a mutable entity: keep the latest version (by ts, then record_id)",
+   "type": "string"
+  },
+  "file_hashes": {
+   "description": "sha256 per installed file (pilot-relative path)",
+   "type": "object"
+  },
+  "files": {
+   "description": "files installed",
+   "type": "integer"
+  },
+  "inverse_args": {
+   "description": "typed arguments of the recorded rollback",
+   "type": "object"
+  },
+  "inverse_op": {
+   "description": "operation of the recorded rollback",
+   "type": "string"
+  },
+  "kind": {
+   "enum": [
+    "INSTALL",
+    "LANECTL_OP",
+    "LEDGER_ROW"
+   ]
+  },
+  "model_calls": {
+   "description": "model calls made by the install",
+   "type": "integer"
+  },
+  "op": {
+   "description": "lanectl operation",
+   "type": "string"
+  },
+  "op_id": {
+   "description": "lanectl operation id",
+   "type": "string"
+  },
+  "operator_class": {
+   "description": "supervisor, operator, owner or other",
+   "type": "string"
+  },
+  "operator_digest": {
+   "description": "digest of the operator note",
+   "type": "string"
+  },
+  "patch_sha256": {
+   "description": "sha256 of the installed patch",
+   "type": "string"
+  },
+  "preflight": {
+   "description": "preflight result (NOT_RUN, OK, FAILED)",
+   "type": "string"
+  },
+  "record_comment": {
+   "description": "comment id of the public record",
+   "type": "integer"
+  },
+  "record_id": {
+   "description": "stable id: sha256 of the source pointer and the normalized content, or of an explicit identity for observations, snapshots and derived rows",
+   "pattern": "^[0-9a-f]{32}$",
+   "type": "string"
+  },
+  "record_issue": {
+   "description": "issue of the public record",
+   "type": "integer"
+  },
+  "reverts": {
+   "description": "operation id this operation reverts",
+   "type": "string"
+  },
+  "row": {
+   "description": "row number of the supervisor ledger",
+   "type": "integer"
+  },
+  "schema_version": {
+   "const": 1
+  },
+  "smoke": {
+   "description": "smoke result (NOT_RUN, OK, FAILED)",
+   "type": "string"
+  },
+  "source": {
+   "additionalProperties": false,
+   "properties": {
+    "file": {
+     "type": "string"
+    },
+    "locator": {
+     "type": "string"
+    },
+    "root": {
+     "enum": [
+      "pilot",
+      "stages",
+      "supervisor_ledger",
+      "derived"
+     ]
+    },
+    "sha256": {
+     "pattern": "^[0-9a-f]{64}$",
+     "type": "string"
+    }
+   },
+   "required": [
+    "root",
+    "file",
+    "locator",
+    "sha256"
+   ],
+   "type": "object"
+  },
+  "stage": {
+   "description": "supervisor stage id (S<n>)",
+   "type": "string"
+  },
+  "stages": {
+   "description": "supervisor stage ids of a ledger row",
+   "items": {
+    "type": "string"
+   },
+   "type": "array"
+  },
+  "status": {
+   "description": "status code of the source record",
+   "type": "string"
+  },
+  "stream": {
+   "const": "config_changes"
+  },
+  "subject": {
+   "additionalProperties": false,
+   "properties": {
+    "comment": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "conversation": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "input_key": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "issue": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "job": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "pr": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "receipt": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "role": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "stage": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "target": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "text_sha256": {
+   "description": "sha256 of the row text (the text itself is not copied)",
+   "type": "string"
+  },
+  "ts": {
+   "description": "UTC time of the fact; the partition day",
+   "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+   "type": "string"
+  },
+  "ts_basis": {
+   "description": "set when ts is not the record time itself",
+   "enum": [
+    "FILE_MTIME",
+    "DATE"
+   ]
+  },
+  "units": {
+   "additionalProperties": {
+    "type": "string"
+   },
+   "description": "unit of every field of the record that has one",
+   "type": "object"
+  }
+ },
+ "required": [
+  "schema_version",
+  "stream",
+  "record_id",
+  "kind",
+  "ts",
+  "source"
+ ],
+ "title": "config_changes",
+ "type": "object"
+}

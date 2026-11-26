@@ -1,0 +1,83 @@
+{
+ "collector_sha256": "ab0f9f4f5e792159d2804653dd6027e1e8d94640ae282964f5e0b273dc0eef03",
+ "collector_version": "s689-1",
+ "data_through": "2026-11-08T23:57:12.872Z",
+ "day": "2026-11-08",
+ "dropped": {},
+ "dropped_ids": {},
+ "files": {
+  "telemetry/v1/2026/11/08/decisions.jsonl": {
+   "bytes": 799859,
+   "records": 944,
+   "sha256": "146fb93f6ab40f896da9d91879df6a3e172723383cf6c8cbaeaaaa288a6f41e7"
+  },
+  "telemetry/v1/2026/11/08/deliveries.jsonl": {
+   "bytes": 224930,
+   "records": 236,
+   "sha256": "25a53993a28b082ac7ce4a4d9f5d87228e88b68bbe4692c281d2836fe96a8f93"
+  },
+  "telemetry/v1/2026/11/08/evaluations.jsonl": {
+   "bytes": 577,
+   "records": 1,
+   "sha256": "78be445d5bb33fa79cb67e856b0d6508720268846fcbce4b591099038b25cb55"
+  },
+  "telemetry/v1/2026/11/08/tool_events.jsonl": {
+   "bytes": 3556,
+   "records": 6,
+   "sha256": "c321557e71a213a274108c61c800206b5d235b833cb2dd933041a1e262b26504"
+  }
+ },
+ "gate": {
+  "data_files_scanned": 109,
+  "files": 4,
+  "hits": 0,
+  "result": "PASS",
+  "scan_body_sha256": "a635c8a7d4dfe578c180e570997b15857176fa7c9caf1731741df313bc4490da",
+  "scanner_sha256": "00cdd2ed53d0465b6f607fd2736f5a7c608a470a33bedef7471816fb40271f85"
+ },
+ "records": {
+  "decisions": 944,
+  "deliveries": 236,
+  "evaluations": 1,
+  "tool_events": 6
+ },
+ "report_sha256": "7d44975da90128cfd283326a80ecc6824bf02ae4aa51a54e589a05072ae9d0d3",
+ "rollup": {
+  "kinds": {
+   "config_changes": {},
+   "decisions": {
+    "ROUTER_DISPATCH": 473,
+    "ROUTER_JOB": 471
+   },
+   "deliveries": {
+    "IMPLEMENTER_TURN": 168,
+    "PEER_RESULT": 68
+   },
+   "evaluations": {
+    "MEASURE_ROW": 1
+   },
+   "snapshots": {},
+   "tool_events": {
+    "DENIAL": 6
+   },
+   "turns": {}
+  },
+  "roles": {
+   "implementer": {
+    "denials": 0,
+    "failed": 5,
+    "failed_tokens": 4070424159,
+    "launched": 139,
+    "loop_flags": 0,
+    "stops": 0,
+    "success": 134,
+    "tokens": 93474277666,
+    "tokens_per_useful": 6231618511,
+    "turns": 139,
+    "useful": 15
+   }
+  }
+ },
+ "schema_version": 1,
+ "total_records": 1187
+}

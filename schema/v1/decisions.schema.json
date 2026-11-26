@@ -1,0 +1,642 @@
+{
+ "$id": "pilot-telemetry/v1/decisions",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "Schema v1 of the decisions stream.",
+ "properties": {
+  "action": {
+   "description": "typed action",
+   "type": "string"
+  },
+  "age_h": {
+   "description": "age of the input (unit: h)",
+   "type": "number"
+  },
+  "aged_action": {
+   "description": "aged-pending action",
+   "type": "string"
+  },
+  "aged_rule": {
+   "description": "aged-pending rule",
+   "type": "string"
+  },
+  "attempt": {
+   "description": "attempt number",
+   "type": "integer"
+  },
+  "attempt_failures": {
+   "description": "failed attempts recorded",
+   "type": "integer"
+  },
+  "attempt_lanes": {
+   "description": "lane of each model attempt, in order",
+   "items": {
+    "type": "string"
+   },
+   "type": "array"
+  },
+  "attempts": {
+   "description": "attempts recorded",
+   "type": "integer"
+  },
+  "blocker_kind": {
+   "description": "blocker kind",
+   "type": "string"
+  },
+  "brake": {
+   "description": "typed brake reason",
+   "type": "string"
+  },
+  "capacity_hold": {
+   "description": "typed capacity hold reason",
+   "type": "string"
+  },
+  "cause_class": {
+   "description": "typed class of the source cause text",
+   "type": "string"
+  },
+  "completion": {
+   "description": "completion criteria the dispatch names",
+   "items": {
+    "type": "string"
+   },
+   "type": "array"
+  },
+  "consumer": {
+   "description": "consumer of the signal",
+   "type": "string"
+  },
+  "context_last_request": {
+   "description": "context tokens of the lane last request at the gate (unit: tokens)",
+   "type": "integer"
+  },
+  "context_median": {
+   "description": "median context tokens per call of the lane at the gate (unit: tokens)",
+   "type": "integer"
+  },
+  "costs": {
+   "description": "expected cost per tier (unit: tokens)",
+   "items": {
+    "type": "integer"
+   },
+   "type": "array"
+  },
+  "coverage": {
+   "description": "continuation frontier coverage",
+   "type": "string"
+  },
+  "criterion": {
+   "description": "merge criterion",
+   "type": "string"
+  },
+  "decision": {
+   "description": "typed decision",
+   "type": "string"
+  },
+  "derived": {
+   "description": "computed from other records; replaced on recomputation",
+   "type": "boolean"
+  },
+  "detector": {
+   "description": "detector name",
+   "type": "string"
+  },
+  "duration_s": {
+   "description": "wall-clock duration (unit: s)",
+   "type": "number"
+  },
+  "effort": {
+   "description": "reasoning effort of the lane or turn (low, medium, high)",
+   "type": "string"
+  },
+  "entity": {
+   "description": "key of a mutable entity: keep the latest version (by ts, then record_id)",
+   "type": "string"
+  },
+  "episode": {
+   "description": "digest of the episode id",
+   "type": "string"
+  },
+  "error_class": {
+   "description": "typed class of an error (code, exception name or TEXT_<digest>)",
+   "type": "string"
+  },
+  "escalation_class": {
+   "description": "typed escalation class",
+   "type": "string"
+  },
+  "escalation_denied": {
+   "description": "why an escalation was denied",
+   "type": "string"
+  },
+  "escalation_kind": {
+   "description": "escalation kind",
+   "type": "string"
+  },
+  "evidence": {
+   "description": "evidence sources the dispatch names",
+   "items": {
+    "type": "string"
+   },
+   "type": "array"
+  },
+  "explore": {
+   "description": "the routing decision explored",
+   "type": "boolean"
+  },
+  "fact_classes": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "facts per class (unit: facts)",
+   "type": "object"
+  },
+  "facts": {
+   "description": "facts the gate saw",
+   "type": "integer"
+  },
+  "failure_causes": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "failed attempts per cause (unit: attempts)",
+   "type": "object"
+  },
+  "family": {
+   "description": "transport family (agy, claude, codex)",
+   "type": "string"
+  },
+  "final_reason": {
+   "description": "typed final reason",
+   "type": "string"
+  },
+  "first_lane": {
+   "description": "lane key the routing decision chose",
+   "type": "string"
+  },
+  "from_family": {
+   "description": "family before the switch",
+   "type": "string"
+  },
+  "frontier_exhausted": {
+   "description": "the continuation frontier was exhausted",
+   "type": "boolean"
+  },
+  "group": {
+   "description": "quota group",
+   "type": "string"
+  },
+  "guess": {
+   "description": "first-guess tier",
+   "type": "integer"
+  },
+  "head": {
+   "description": "commit sha (public)",
+   "type": "string"
+  },
+  "input_type": {
+   "description": "typed input type",
+   "type": "string"
+  },
+  "items": {
+   "description": "assignment items of the job",
+   "type": "integer"
+  },
+  "kind": {
+   "enum": [
+    "BLOCKER",
+    "BREAKER",
+    "CUSTODY",
+    "DEPTH_TIER",
+    "ESCALATION",
+    "IMPLEMENTER_GATE",
+    "LANE_ROTATION",
+    "LIMIT_PROBE",
+    "MODEL_SWITCH",
+    "OWNER_ESCALATION",
+    "REFUSAL",
+    "ROUTER_DISPATCH",
+    "ROUTER_JOB",
+    "ROUTING",
+    "SAFEGUARD",
+    "SIGNAL",
+    "STALL",
+    "STALL_ALERT",
+    "SUBJECT_HOLD",
+    "WAKE_GATE"
+   ]
+  },
+  "ladder": {
+   "description": "tiers on the ladder",
+   "type": "integer"
+  },
+  "lane": {
+   "description": "lane key model@profile",
+   "type": "string"
+  },
+  "last_failure_cause": {
+   "description": "cause of the last failed attempt",
+   "type": "string"
+  },
+  "limit_kind": {
+   "description": "kind of provider limit (QUOTA, DAILY_CAP, OVERLOAD)",
+   "type": "string"
+  },
+  "marker": {
+   "description": "typed marker of the input",
+   "type": "string"
+  },
+  "measures": {
+   "additionalProperties": {
+    "type": [
+     "number",
+     "boolean",
+     "string"
+    ]
+   },
+   "description": "typed numeric or code facts of the source row",
+   "type": "object"
+  },
+  "model": {
+   "description": "model id the turn ran on (requested model)",
+   "type": "string"
+  },
+  "model_attempts": {
+   "description": "model attempts recorded",
+   "type": "integer"
+  },
+  "models": {
+   "description": "models held",
+   "type": "integer"
+  },
+  "ok": {
+   "description": "the probe succeeded",
+   "type": "boolean"
+  },
+  "omitted_facts": {
+   "description": "facts omitted",
+   "type": "integer"
+  },
+  "open_prs": {
+   "description": "open pull requests seen",
+   "type": "integer"
+  },
+  "opens": {
+   "description": "breaker opens",
+   "type": "integer"
+  },
+  "operation_action": {
+   "description": "operation action of a dispatch",
+   "type": "string"
+  },
+  "operation_attempt": {
+   "description": "operation attempt of a dispatch",
+   "type": "integer"
+  },
+  "operation_target": {
+   "description": "operation target of a dispatch",
+   "type": "string"
+  },
+  "outcome": {
+   "description": "typed outcome",
+   "type": "string"
+  },
+  "plan_family": {
+   "description": "transport family the gate planned",
+   "type": "string"
+  },
+  "plan_switch": {
+   "description": "the gate planned a family switch",
+   "type": "boolean"
+  },
+  "predicate": {
+   "description": "gate predicate",
+   "type": "string"
+  },
+  "previous": {
+   "description": "previous status",
+   "type": "string"
+  },
+  "profile": {
+   "description": "CLI credential profile alias of the lane (A, A2, B, C)",
+   "type": "string"
+  },
+  "publication_statuses": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "publications per status (unit: publications)",
+   "type": "object"
+  },
+  "publications": {
+   "description": "publications of the job",
+   "type": "integer"
+  },
+  "published": {
+   "description": "the output was published",
+   "type": "boolean"
+  },
+  "reason": {
+   "description": "typed reason (class of the source reason)",
+   "type": "string"
+  },
+  "reasons": {
+   "description": "reasons recorded",
+   "type": "integer"
+  },
+  "recipient": {
+   "description": "recipient role",
+   "type": "string"
+  },
+  "recipients": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "publications per recipient role (unit: publications)",
+   "type": "object"
+  },
+  "record_id": {
+   "description": "stable id: sha256 of the source pointer and the normalized content, or of an explicit identity for observations, snapshots and derived rows",
+   "pattern": "^[0-9a-f]{32}$",
+   "type": "string"
+  },
+  "reference_comment": {
+   "description": "comment id of the reference",
+   "type": "integer"
+  },
+  "reference_issue": {
+   "description": "issue of the reference",
+   "type": "integer"
+  },
+  "refusal_class": {
+   "description": "typed refusal class",
+   "type": "string"
+  },
+  "refusal_classes": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "refusals per class (unit: refusals)",
+   "type": "object"
+  },
+  "refusals": {
+   "description": "refusals of the job",
+   "type": "integer"
+  },
+  "released_brake": {
+   "description": "typed reason of a released brake",
+   "type": "string"
+  },
+  "reported_tokens": {
+   "additionalProperties": false,
+   "description": "tokens as the role receipt reports them (agy: cumulative for the conversation) (unit: tokens)",
+   "minProperties": 1,
+   "properties": {
+    "cache_read": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "cache_write": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "input": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "output": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "thinking": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "total": {
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "represented_reason": {
+   "description": "why a dispatch was represented",
+   "type": "string"
+  },
+  "required_approvers": {
+   "description": "required approvers",
+   "type": "integer"
+  },
+  "reset_at": {
+   "description": "earliest reset time",
+   "type": "string"
+  },
+  "retry_reason": {
+   "description": "typed retry reason of a dispatch",
+   "type": "string"
+  },
+  "rotate_before_launch": {
+   "description": "the gate rotated the conversation before launch",
+   "type": "boolean"
+  },
+  "rule": {
+   "description": "typed rule",
+   "type": "string"
+  },
+  "safeguard": {
+   "description": "safeguard name",
+   "type": "string"
+  },
+  "schema_version": {
+   "const": 1
+  },
+  "source": {
+   "additionalProperties": false,
+   "properties": {
+    "file": {
+     "type": "string"
+    },
+    "locator": {
+     "type": "string"
+    },
+    "root": {
+     "enum": [
+      "pilot",
+      "stages",
+      "supervisor_ledger",
+      "derived"
+     ]
+    },
+    "sha256": {
+     "pattern": "^[0-9a-f]{64}$",
+     "type": "string"
+    }
+   },
+   "required": [
+    "root",
+    "file",
+    "locator",
+    "sha256"
+   ],
+   "type": "object"
+  },
+  "source_role": {
+   "description": "role that produced the input",
+   "type": "string"
+  },
+  "stall_kind": {
+   "description": "stall detector kind",
+   "type": "string"
+  },
+  "stalls": {
+   "description": "stalls counted by the tier rule",
+   "type": "integer"
+  },
+  "status": {
+   "description": "status code of the source record",
+   "type": "string"
+  },
+  "streak_max": {
+   "description": "longest streak the tier rule saw",
+   "type": "integer"
+  },
+  "stream": {
+   "const": "decisions"
+  },
+  "subject": {
+   "additionalProperties": false,
+   "properties": {
+    "comment": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "conversation": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "input_key": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "issue": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "job": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "pr": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "receipt": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "role": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "stage": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "target": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "switch": {
+   "description": "the transport family switched for this turn",
+   "type": "boolean"
+  },
+  "switch_reason": {
+   "description": "typed reason of the transport choice",
+   "type": "string"
+  },
+  "target_issue": {
+   "description": "issue number of the publication",
+   "type": "integer"
+  },
+  "task_class": {
+   "description": "task class of a routing decision",
+   "type": "string"
+  },
+  "terminal_failure": {
+   "description": "the job ended as a terminal failure",
+   "type": "boolean"
+  },
+  "terminal_reason": {
+   "description": "typed terminal reason",
+   "type": "string"
+  },
+  "tier": {
+   "description": "adaptive effort tier chosen (0 = base)",
+   "type": "integer"
+  },
+  "tier_reason": {
+   "description": "why the tier was chosen (BASE, ESCALATE_AFTER_STALL, ...)",
+   "type": "string"
+  },
+  "transport": {
+   "description": "transport of the turn (agy, claude-print, codex-exec, *-resume)",
+   "type": "string"
+  },
+  "ts": {
+   "description": "UTC time of the fact; the partition day",
+   "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+   "type": "string"
+  },
+  "ts_basis": {
+   "description": "set when ts is not the record time itself",
+   "enum": [
+    "FILE_MTIME",
+    "DATE"
+   ]
+  },
+  "units": {
+   "additionalProperties": {
+    "type": "string"
+   },
+   "description": "unit of every field of the record that has one",
+   "type": "object"
+  },
+  "version": {
+   "description": "version of the deciding rule",
+   "type": "string"
+  }
+ },
+ "required": [
+  "schema_version",
+  "stream",
+  "record_id",
+  "kind",
+  "ts",
+  "source"
+ ],
+ "title": "decisions",
+ "type": "object"
+}

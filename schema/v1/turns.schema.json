@@ -1,0 +1,401 @@
+{
+ "$id": "pilot-telemetry/v1/turns",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "Schema v1 of the turns stream.",
+ "properties": {
+  "admission_reason": {
+   "description": "typed admission refusal reason",
+   "type": "string"
+  },
+  "admission_refused": {
+   "description": "the admission check refused the launch",
+   "type": "boolean"
+  },
+  "attempt": {
+   "description": "attempt number",
+   "type": "integer"
+  },
+  "cause_code": {
+   "description": "typed failure cause of a turn or attempt",
+   "type": "string"
+  },
+  "context_tokens": {
+   "additionalProperties": false,
+   "description": "tokens of the last context request (unit: tokens)",
+   "minProperties": 1,
+   "properties": {
+    "cache_read": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "cache_write": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "input": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "output": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "thinking": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "total": {
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "conversation_tokens": {
+   "additionalProperties": false,
+   "description": "cumulative tokens of the conversation after the turn (unit: tokens)",
+   "minProperties": 1,
+   "properties": {
+    "cache_read": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "cache_write": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "input": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "output": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "thinking": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "total": {
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "cost_usd": {
+   "description": "provider-reported cost (unit: USD)",
+   "type": "number"
+  },
+  "cycle_offset_s": {
+   "description": "seconds from the poll start to the turn start (unit: s)",
+   "type": "number"
+  },
+  "delta_basis": {
+   "description": "how the ledger computed the usage delta",
+   "type": "string"
+  },
+  "derived": {
+   "description": "computed from other records; replaced on recomputation",
+   "type": "boolean"
+  },
+  "duration_s": {
+   "description": "wall-clock duration (unit: s)",
+   "type": "number"
+  },
+  "effort": {
+   "description": "reasoning effort of the lane or turn (low, medium, high)",
+   "type": "string"
+  },
+  "effort_basis": {
+   "description": "MODEL_SUFFIX when effort is the depth suffix of the model id (agy role lanes pass no effort flag)",
+   "type": "string"
+  },
+  "entity": {
+   "description": "key of a mutable entity: keep the latest version (by ts, then record_id)",
+   "type": "string"
+  },
+  "extension_s": {
+   "description": "lane extension of the turn bound (unit: s)",
+   "type": "number"
+  },
+  "kind": {
+   "enum": [
+    "TURN"
+   ]
+  },
+  "lane": {
+   "description": "lane key model@profile",
+   "type": "string"
+  },
+  "launched": {
+   "description": "the provider process was launched",
+   "type": "boolean"
+  },
+  "limit_kind": {
+   "description": "kind of provider limit (QUOTA, DAILY_CAP, OVERLOAD)",
+   "type": "string"
+  },
+  "model": {
+   "description": "model id the turn ran on (requested model)",
+   "type": "string"
+  },
+  "num_turns": {
+   "description": "provider turns inside the call",
+   "type": "integer"
+  },
+  "permission_denials": {
+   "description": "permission denials the provider reported",
+   "type": "integer"
+  },
+  "prefetch_bytes": {
+   "description": "prefetch bytes shown (unit: bytes)",
+   "type": "integer"
+  },
+  "prefetch_failed": {
+   "description": "the prefetch failed",
+   "type": "boolean"
+  },
+  "prefetch_reads": {
+   "description": "prefetch reads",
+   "type": "integer"
+  },
+  "prefetch_s": {
+   "description": "prefetch duration (unit: s)",
+   "type": "number"
+  },
+  "prefetch_type": {
+   "description": "prefetch block type",
+   "type": "string"
+  },
+  "probe_refused": {
+   "description": "the quota probe refused the launch",
+   "type": "boolean"
+  },
+  "profile": {
+   "description": "CLI credential profile alias of the lane (A, A2, B, C)",
+   "type": "string"
+  },
+  "provider_k": {
+   "description": "provider slots available",
+   "type": "integer"
+  },
+  "provider_slot": {
+   "description": "provider slot index",
+   "type": "integer"
+  },
+  "provider_wait_s": {
+   "description": "seconds waited for a provider slot (unit: s)",
+   "type": "number"
+  },
+  "queue_age_s": {
+   "description": "age of the input when the turn started (unit: s)",
+   "type": "number"
+  },
+  "queue_basis": {
+   "description": "what the queue age counts from",
+   "type": "string"
+  },
+  "record_id": {
+   "description": "stable id: sha256 of the source pointer and the normalized content, or of an explicit identity for observations, snapshots and derived rows",
+   "pattern": "^[0-9a-f]{32}$",
+   "type": "string"
+  },
+  "rotated_from": {
+   "description": "digest of the previous conversation id",
+   "type": "string"
+  },
+  "rotation_reason": {
+   "description": "why the conversation was rotated before the turn",
+   "type": "string"
+  },
+  "schema_version": {
+   "const": 1
+  },
+  "source": {
+   "additionalProperties": false,
+   "properties": {
+    "file": {
+     "type": "string"
+    },
+    "locator": {
+     "type": "string"
+    },
+    "root": {
+     "enum": [
+      "pilot",
+      "stages",
+      "supervisor_ledger",
+      "derived"
+     ]
+    },
+    "sha256": {
+     "pattern": "^[0-9a-f]{64}$",
+     "type": "string"
+    }
+   },
+   "required": [
+    "root",
+    "file",
+    "locator",
+    "sha256"
+   ],
+   "type": "object"
+  },
+  "status": {
+   "description": "status code of the source record",
+   "type": "string"
+  },
+  "stream": {
+   "const": "turns"
+  },
+  "stream_receipt": {
+   "description": "id of the stream receipt (join key turns <-> tool_events)",
+   "type": "string"
+  },
+  "subject": {
+   "additionalProperties": false,
+   "properties": {
+    "comment": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "conversation": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "input_key": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "issue": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "job": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "pr": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "receipt": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "role": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "stage": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "target": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "tokens": {
+   "additionalProperties": false,
+   "description": "tokens of this turn (turn ledger usage delta; receipts: per-call usage) (unit: tokens)",
+   "minProperties": 1,
+   "properties": {
+    "cache_read": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "cache_write": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "input": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "output": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "thinking": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "total": {
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "tool_count": {
+   "description": "tool calls in the turn",
+   "type": "integer"
+  },
+  "total_basis": {
+   "description": "INPUT_PLUS_OUTPUT when tokens.total was derived (no provider total)",
+   "type": "string"
+  },
+  "transport": {
+   "description": "transport of the turn (agy, claude-print, codex-exec, *-resume)",
+   "type": "string"
+  },
+  "trigger_class": {
+   "description": "the trigger key with numbers and digests replaced by N",
+   "type": "string"
+  },
+  "ts": {
+   "description": "UTC time of the fact; the partition day",
+   "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+   "type": "string"
+  },
+  "ts_basis": {
+   "description": "set when ts is not the record time itself",
+   "enum": [
+    "FILE_MTIME",
+    "DATE"
+   ]
+  },
+  "units": {
+   "additionalProperties": {
+    "type": "string"
+   },
+   "description": "unit of every field of the record that has one",
+   "type": "object"
+  }
+ },
+ "required": [
+  "schema_version",
+  "stream",
+  "record_id",
+  "kind",
+  "ts",
+  "source"
+ ],
+ "title": "turns",
+ "type": "object"
+}

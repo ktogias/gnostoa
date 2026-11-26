@@ -1,0 +1,83 @@
+{
+ "collector_sha256": "ab0f9f4f5e792159d2804653dd6027e1e8d94640ae282964f5e0b273dc0eef03",
+ "collector_version": "s689-1",
+ "data_through": "2026-11-09T23:16:24.098Z",
+ "day": "2026-11-09",
+ "dropped": {},
+ "dropped_ids": {},
+ "files": {
+  "telemetry/v1/2026/11/09/decisions.jsonl": {
+   "bytes": 274337,
+   "records": 313,
+   "sha256": "eb8306f0f8fb49e83e6c0554935162b5c5a814b787861ee74e47e74942dfd58f"
+  },
+  "telemetry/v1/2026/11/09/deliveries.jsonl": {
+   "bytes": 109181,
+   "records": 112,
+   "sha256": "2100d3188529f6453608647384f9fbd282cf940ce7e4d69fc913e30c8f656157"
+  },
+  "telemetry/v1/2026/11/09/evaluations.jsonl": {
+   "bytes": 576,
+   "records": 1,
+   "sha256": "906526374078be901c0d9893245b8c1ac5bd4bbec2c77b17e54e4ac3cb92c473"
+  },
+  "telemetry/v1/2026/11/09/tool_events.jsonl": {
+   "bytes": 27665,
+   "records": 42,
+   "sha256": "74ff27c5709ddd812e8994b58ca8cc2efff9f7905e687ff633dda084dcba3f92"
+  }
+ },
+ "gate": {
+  "data_files_scanned": 109,
+  "files": 4,
+  "hits": 0,
+  "result": "PASS",
+  "scan_body_sha256": "a635c8a7d4dfe578c180e570997b15857176fa7c9caf1731741df313bc4490da",
+  "scanner_sha256": "00cdd2ed53d0465b6f607fd2736f5a7c608a470a33bedef7471816fb40271f85"
+ },
+ "records": {
+  "decisions": 313,
+  "deliveries": 112,
+  "evaluations": 1,
+  "tool_events": 42
+ },
+ "report_sha256": "7d44975da90128cfd283326a80ecc6824bf02ae4aa51a54e589a05072ae9d0d3",
+ "rollup": {
+  "kinds": {
+   "config_changes": {},
+   "decisions": {
+    "ROUTER_DISPATCH": 162,
+    "ROUTER_JOB": 151
+   },
+   "deliveries": {
+    "IMPLEMENTER_TURN": 106,
+    "PEER_RESULT": 6
+   },
+   "evaluations": {
+    "MEASURE_ROW": 1
+   },
+   "snapshots": {},
+   "tool_events": {
+    "DENIAL": 42
+   },
+   "turns": {}
+  },
+  "roles": {
+   "implementer": {
+    "denials": 0,
+    "failed": 43,
+    "failed_tokens": 39696221056,
+    "launched": 83,
+    "loop_flags": 0,
+    "stops": 0,
+    "success": 40,
+    "tokens": 81409029232,
+    "tokens_per_useful": 13568171539,
+    "turns": 83,
+    "useful": 6
+   }
+  }
+ },
+ "schema_version": 1,
+ "total_records": 468
+}

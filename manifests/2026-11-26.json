@@ -1,0 +1,171 @@
+{
+ "collector_sha256": "ab0f9f4f5e792159d2804653dd6027e1e8d94640ae282964f5e0b273dc0eef03",
+ "collector_version": "s689-1",
+ "data_through": "2026-11-26T20:32:42.951Z",
+ "day": "2026-11-26",
+ "dropped": {},
+ "dropped_ids": {},
+ "files": {
+  "telemetry/v1/2026/11/26/config_changes.jsonl": {
+   "bytes": 85269,
+   "records": 118,
+   "sha256": "40d9dde349de1a07e91ba832707de4cc170a3ffc8d7cfdb69ea183bb8f8e6c1d"
+  },
+  "telemetry/v1/2026/11/26/decisions.jsonl": {
+   "bytes": 592928,
+   "records": 895,
+   "sha256": "ea118e5f6ee645e84ac885af071a03224475207363e4660b87bd4e314f53d6b3"
+  },
+  "telemetry/v1/2026/11/26/deliveries.jsonl": {
+   "bytes": 98152,
+   "records": 94,
+   "sha256": "8f96b6b5ed9f525e2ffda35750a741b03d88b304139673b1c40ade4262856b16"
+  },
+  "telemetry/v1/2026/11/26/evaluations.jsonl": {
+   "bytes": 5849,
+   "records": 10,
+   "sha256": "b6d5c0725b08b32efc7f7c621af0f43d66a58d2693bdeb474583b2981b50cdfa"
+  },
+  "telemetry/v1/2026/11/26/snapshots.jsonl": {
+   "bytes": 11353,
+   "records": 9,
+   "sha256": "6dc58ada04f820fcc568e6a910f99f3368a62d357d06dae158a3eb3cd328c2a5"
+  },
+  "telemetry/v1/2026/11/26/tool_events.jsonl": {
+   "bytes": 122482,
+   "records": 106,
+   "sha256": "46e0691500f5cb5338ac21871baac7d3310bb3060571f59ce60b8c6c08dc501c"
+  },
+  "telemetry/v1/2026/11/26/turns.jsonl": {
+   "bytes": 157090,
+   "records": 123,
+   "sha256": "8b0ef98aec7f81a92938acb580254c7b1616213631eb9a6b66f0ba519d6ec594"
+  }
+ },
+ "gate": {
+  "data_files_scanned": 109,
+  "files": 7,
+  "hits": 0,
+  "result": "PASS",
+  "scan_body_sha256": "a635c8a7d4dfe578c180e570997b15857176fa7c9caf1731741df313bc4490da",
+  "scanner_sha256": "00cdd2ed53d0465b6f607fd2736f5a7c608a470a33bedef7471816fb40271f85"
+ },
+ "records": {
+  "config_changes": 118,
+  "decisions": 895,
+  "deliveries": 94,
+  "evaluations": 10,
+  "snapshots": 9,
+  "tool_events": 106,
+  "turns": 123
+ },
+ "report_sha256": "7d44975da90128cfd283326a80ecc6824bf02ae4aa51a54e589a05072ae9d0d3",
+ "rollup": {
+  "kinds": {
+   "config_changes": {
+    "INSTALL": 34,
+    "LANECTL_OP": 39,
+    "LEDGER_ROW": 45
+   },
+   "decisions": {
+    "BLOCKER": 3,
+    "CUSTODY": 231,
+    "DEPTH_TIER": 41,
+    "ESCALATION": 1,
+    "IMPLEMENTER_GATE": 72,
+    "LANE_ROTATION": 38,
+    "OWNER_ESCALATION": 5,
+    "REFUSAL": 31,
+    "ROUTER_DISPATCH": 67,
+    "ROUTER_JOB": 79,
+    "ROUTING": 3,
+    "SAFEGUARD": 17,
+    "SIGNAL": 19,
+    "STALL": 67,
+    "SUBJECT_HOLD": 3,
+    "WAKE_GATE": 218
+   },
+   "deliveries": {
+    "IMPLEMENTER_TURN": 72,
+    "MAIN_HEAD": 1,
+    "PEER_RESULT": 15,
+    "PR_STATE": 6
+   },
+   "evaluations": {
+    "MEASURE_ROW": 10
+   },
+   "snapshots": {
+    "LIMITS": 1,
+    "POLICY": 1,
+    "QUOTA": 2,
+    "ROLE_CONFIG": 4,
+    "RUNTIME": 1
+   },
+   "tool_events": {
+    "DENIAL": 8,
+    "GOVERNOR": 17,
+    "TOOL_STOP": 5,
+    "TURN_TOOLS": 76
+   },
+   "turns": {
+    "TURN": 123
+   }
+  },
+  "roles": {
+   "implementer": {
+    "denials": 8,
+    "failed": 19,
+    "failed_tokens": 3644635,
+    "launched": 37,
+    "loop_flags": 0,
+    "stops": 5,
+    "success": 18,
+    "tokens": 5068227,
+    "tokens_per_useful": 194932,
+    "turns": 37,
+    "useful": 26
+   },
+   "pao": {
+    "denials": 0,
+    "failed": 14,
+    "failed_tokens": 319891,
+    "launched": 13,
+    "loop_flags": 1,
+    "stops": 2,
+    "success": 1,
+    "tokens": 427370,
+    "tokens_per_useful": null,
+    "turns": 15,
+    "useful": 0
+   },
+   "router": {
+    "denials": 0,
+    "failed": 18,
+    "failed_tokens": 0,
+    "launched": 71,
+    "loop_flags": 0,
+    "stops": 0,
+    "success": 71,
+    "tokens": 3033617,
+    "tokens_per_useful": 72229,
+    "turns": 89,
+    "useful": 42
+   },
+   "sas": {
+    "denials": 0,
+    "failed": 17,
+    "failed_tokens": 0,
+    "launched": 17,
+    "loop_flags": 0,
+    "stops": 0,
+    "success": 2,
+    "tokens": 299166,
+    "tokens_per_useful": null,
+    "turns": 19,
+    "useful": 0
+   }
+  }
+ },
+ "schema_version": 1,
+ "total_records": 1355
+}

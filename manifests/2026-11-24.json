@@ -1,0 +1,147 @@
+{
+ "collector_sha256": "ab0f9f4f5e792159d2804653dd6027e1e8d94640ae282964f5e0b273dc0eef03",
+ "collector_version": "s689-1",
+ "data_through": "2026-11-24T23:59:23.649Z",
+ "day": "2026-11-24",
+ "dropped": {},
+ "dropped_ids": {},
+ "files": {
+  "telemetry/v1/2026/11/24/config_changes.jsonl": {
+   "bytes": 143633,
+   "records": 221,
+   "sha256": "fbba00d2626489dc45a4712eefb7e85911624b9303466efc6473b87234f5216d"
+  },
+  "telemetry/v1/2026/11/24/decisions.jsonl": {
+   "bytes": 169570,
+   "records": 207,
+   "sha256": "74c8b35069d92c0dc77a06c2a873d924f604969da50baacd1133440166c13352"
+  },
+  "telemetry/v1/2026/11/24/deliveries.jsonl": {
+   "bytes": 71049,
+   "records": 54,
+   "sha256": "deaa189efbd241c032298120d9da656dd4879c1d8205feb674cbe11933f74466"
+  },
+  "telemetry/v1/2026/11/24/evaluations.jsonl": {
+   "bytes": 2353,
+   "records": 4,
+   "sha256": "a326fb4565a16c5d30f8c493a65f97021c733cc2e7e2e4d461393a9a639d2320"
+  },
+  "telemetry/v1/2026/11/24/tool_events.jsonl": {
+   "bytes": 142039,
+   "records": 120,
+   "sha256": "35cfcdf424549d56f0ba56e54caef5fade5316aa61b7b8ec5d25114621208094"
+  },
+  "telemetry/v1/2026/11/24/turns.jsonl": {
+   "bytes": 145361,
+   "records": 110,
+   "sha256": "23cfcc208a1bb36fd3a552c734afd2c78f4da09de4cdb4f4a6a0cc9b465f890e"
+  }
+ },
+ "gate": {
+  "data_files_scanned": 109,
+  "files": 6,
+  "hits": 0,
+  "result": "PASS",
+  "scan_body_sha256": "a635c8a7d4dfe578c180e570997b15857176fa7c9caf1731741df313bc4490da",
+  "scanner_sha256": "00cdd2ed53d0465b6f607fd2736f5a7c608a470a33bedef7471816fb40271f85"
+ },
+ "records": {
+  "config_changes": 221,
+  "decisions": 207,
+  "deliveries": 54,
+  "evaluations": 4,
+  "tool_events": 120,
+  "turns": 110
+ },
+ "report_sha256": "7d44975da90128cfd283326a80ecc6824bf02ae4aa51a54e589a05072ae9d0d3",
+ "rollup": {
+  "kinds": {
+   "config_changes": {
+    "INSTALL": 74,
+    "LANECTL_OP": 99,
+    "LEDGER_ROW": 48
+   },
+   "decisions": {
+    "BLOCKER": 3,
+    "IMPLEMENTER_GATE": 46,
+    "LANE_ROTATION": 45,
+    "REFUSAL": 2,
+    "ROUTER_DISPATCH": 48,
+    "ROUTER_JOB": 50,
+    "STALL": 13
+   },
+   "deliveries": {
+    "IMPLEMENTER_TURN": 46,
+    "PEER_RESULT": 8
+   },
+   "evaluations": {
+    "MEASURE_ROW": 4
+   },
+   "snapshots": {},
+   "tool_events": {
+    "DENIAL": 3,
+    "TOOL_STOP": 20,
+    "TURN_TOOLS": 97
+   },
+   "turns": {
+    "TURN": 110
+   }
+  },
+  "roles": {
+   "implementer": {
+    "denials": 3,
+    "failed": 18,
+    "failed_tokens": 2305903,
+    "launched": 45,
+    "loop_flags": 0,
+    "stops": 13,
+    "success": 27,
+    "tokens": 3576388,
+    "tokens_per_useful": 102183,
+    "turns": 45,
+    "useful": 35
+   },
+   "pao": {
+    "denials": 0,
+    "failed": 9,
+    "failed_tokens": 197802,
+    "launched": 6,
+    "loop_flags": 0,
+    "stops": 4,
+    "success": 0,
+    "tokens": 197802,
+    "tokens_per_useful": null,
+    "turns": 9,
+    "useful": 0
+   },
+   "router": {
+    "denials": 0,
+    "failed": 3,
+    "failed_tokens": 0,
+    "launched": 87,
+    "loop_flags": 0,
+    "stops": 0,
+    "success": 87,
+    "tokens": 2556928,
+    "tokens_per_useful": 53269,
+    "turns": 90,
+    "useful": 48
+   },
+   "sas": {
+    "denials": 0,
+    "failed": 9,
+    "failed_tokens": 206474,
+    "launched": 8,
+    "loop_flags": 0,
+    "stops": 4,
+    "success": 2,
+    "tokens": 334618,
+    "tokens_per_useful": null,
+    "turns": 11,
+    "useful": 0
+   }
+  }
+ },
+ "schema_version": 1,
+ "total_records": 716
+}

@@ -1,0 +1,408 @@
+{
+ "$id": "pilot-telemetry/v1/tool_events",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "Schema v1 of the tool_events stream.",
+ "properties": {
+  "active_at_end": {
+   "description": "tool calls still ACTIVE when the turn ended (unit: calls)",
+   "type": "integer"
+  },
+  "attempt": {
+   "description": "attempt number",
+   "type": "integer"
+  },
+  "by_state": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "tool calls per final state (unit: calls)",
+   "type": "object"
+  },
+  "by_tool": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "tool calls per tool type (unit: calls)",
+   "type": "object"
+  },
+  "cause_code": {
+   "description": "typed failure cause of a turn or attempt",
+   "type": "string"
+  },
+  "context_tokens": {
+   "additionalProperties": false,
+   "description": "tokens of the last context request (unit: tokens)",
+   "minProperties": 1,
+   "properties": {
+    "cache_read": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "cache_write": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "input": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "output": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "thinking": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "total": {
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "count": {
+   "description": "number of denied actions",
+   "type": "integer"
+  },
+  "derived": {
+   "description": "computed from other records; replaced on recomputation",
+   "type": "boolean"
+  },
+  "distinct_commands": {
+   "description": "distinct command digests",
+   "type": "integer"
+  },
+  "duration_s": {
+   "description": "wall-clock duration (unit: s)",
+   "type": "number"
+  },
+  "effort": {
+   "description": "reasoning effort of the lane or turn (low, medium, high)",
+   "type": "string"
+  },
+  "entity": {
+   "description": "key of a mutable entity: keep the latest version (by ts, then record_id)",
+   "type": "string"
+  },
+  "error_class": {
+   "description": "typed class of an error (code, exception name or TEXT_<digest>)",
+   "type": "string"
+  },
+  "errors": {
+   "description": "tool calls that ended in ERROR (unit: calls)",
+   "type": "integer"
+  },
+  "exit_code": {
+   "description": "process exit code",
+   "type": "integer"
+  },
+  "family": {
+   "description": "transport family (agy, claude, codex)",
+   "type": "string"
+  },
+  "governor": {
+   "additionalProperties": {
+    "type": [
+     "number",
+     "boolean",
+     "string"
+    ]
+   },
+   "description": "S678 convergence governor trace: bounds, new answers, live polls, re-entries, extensions",
+   "type": "object"
+  },
+  "identical_repeat_runs": {
+   "description": "command runs that repeated an earlier identical command",
+   "type": "integer"
+  },
+  "kind": {
+   "enum": [
+    "CHANNEL_VIOLATION",
+    "DENIAL",
+    "GOVERNOR",
+    "TOOL_STOP",
+    "TURN_TOOLS"
+   ]
+  },
+  "lane": {
+   "description": "lane key model@profile",
+   "type": "string"
+  },
+  "loop_flags": {
+   "description": "loop rules (LOOP_RULES) the turn met",
+   "items": {
+    "type": "string"
+   },
+   "type": "array"
+  },
+  "max_consecutive_identical": {
+   "description": "longest run of consecutive identical commands",
+   "type": "integer"
+  },
+  "max_identical_repeats": {
+   "description": "runs of the most repeated identical command",
+   "type": "integer"
+  },
+  "model": {
+   "description": "model id the turn ran on (requested model)",
+   "type": "string"
+  },
+  "output_bytes": {
+   "description": "tool output bytes (unit: bytes)",
+   "type": "integer"
+  },
+  "permission_denials": {
+   "description": "permission denials the provider reported",
+   "type": "integer"
+  },
+  "profile": {
+   "description": "CLI credential profile alias of the lane (A, A2, B, C)",
+   "type": "string"
+  },
+  "program": {
+   "description": "denied program name",
+   "type": "string"
+  },
+  "programs": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "command segments per program name (first word only, never arguments) (unit: calls)",
+   "type": "object"
+  },
+  "read_range_repeats": {
+   "description": "file reads that repeated an earlier identical range",
+   "type": "integer"
+  },
+  "record_id": {
+   "description": "stable id: sha256 of the source pointer and the normalized content, or of an explicit identity for observations, snapshots and derived rows",
+   "pattern": "^[0-9a-f]{32}$",
+   "type": "string"
+  },
+  "schema_version": {
+   "const": 1
+  },
+  "scope": {
+   "description": "scope of a denial or snapshot",
+   "type": "string"
+  },
+  "shape": {
+   "description": "denied command shape or channel violation shape",
+   "type": "string"
+  },
+  "source": {
+   "additionalProperties": false,
+   "properties": {
+    "file": {
+     "type": "string"
+    },
+    "locator": {
+     "type": "string"
+    },
+    "root": {
+     "enum": [
+      "pilot",
+      "stages",
+      "supervisor_ledger",
+      "derived"
+     ]
+    },
+    "sha256": {
+     "pattern": "^[0-9a-f]{64}$",
+     "type": "string"
+    }
+   },
+   "required": [
+    "root",
+    "file",
+    "locator",
+    "sha256"
+   ],
+   "type": "object"
+  },
+  "status": {
+   "description": "status code of the source record",
+   "type": "string"
+  },
+  "status_polls": {
+   "description": "background-task status polls",
+   "type": "integer"
+  },
+  "steps": {
+   "description": "model steps of the turn",
+   "type": "integer"
+  },
+  "stop_class": {
+   "description": "TYPED_STOP (governor or ledger), BOUND (tool or time bound), LOOP",
+   "type": "string"
+  },
+  "stop_reason": {
+   "description": "typed stop (governor, ledger refusal, bound)",
+   "type": "string"
+  },
+  "stop_steps": {
+   "description": "steps the stop cites",
+   "type": "integer"
+  },
+  "stream": {
+   "const": "tool_events"
+  },
+  "stream_receipt": {
+   "description": "id of the stream receipt (join key turns <-> tool_events)",
+   "type": "string"
+  },
+  "stream_status": {
+   "description": "status the stream receipt recorded",
+   "type": "string"
+  },
+  "subject": {
+   "additionalProperties": false,
+   "properties": {
+    "comment": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "conversation": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "input_key": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "issue": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "job": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "pr": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "receipt": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "role": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "stage": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "target": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "terminal_reason": {
+   "description": "typed terminal reason",
+   "type": "string"
+  },
+  "tokens": {
+   "additionalProperties": false,
+   "description": "tokens of this turn (turn ledger usage delta; receipts: per-call usage) (unit: tokens)",
+   "minProperties": 1,
+   "properties": {
+    "cache_read": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "cache_write": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "input": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "output": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "thinking": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "total": {
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "tool_count": {
+   "description": "tool calls in the turn",
+   "type": "integer"
+  },
+  "tool_limit": {
+   "description": "tool-call bound of the turn",
+   "type": "integer"
+  },
+  "transport": {
+   "description": "transport of the turn (agy, claude-print, codex-exec, *-resume)",
+   "type": "string"
+  },
+  "truncated_outputs": {
+   "description": "tool outputs truncated (unit: calls)",
+   "type": "integer"
+  },
+  "ts": {
+   "description": "UTC time of the fact; the partition day",
+   "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+   "type": "string"
+  },
+  "ts_basis": {
+   "description": "set when ts is not the record time itself",
+   "enum": [
+    "FILE_MTIME",
+    "DATE"
+   ]
+  },
+  "units": {
+   "additionalProperties": {
+    "type": "string"
+   },
+   "description": "unit of every field of the record that has one",
+   "type": "object"
+  }
+ },
+ "required": [
+  "schema_version",
+  "stream",
+  "record_id",
+  "kind",
+  "ts",
+  "source"
+ ],
+ "title": "tool_events",
+ "type": "object"
+}
