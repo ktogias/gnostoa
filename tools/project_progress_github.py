@@ -158,13 +158,9 @@ def _observed_time(held: Mapping[str, Any]) -> float | None:
     return None
 
 
-def closed_reads(context: Mapping[str, Any]) -> tuple[Ref, ...]:
-    """A captured PR read closes its target unless it reports a state that is open.
-
-    A read that carries no state proves nothing about the PR, so it fails closed.
-    When multiple reads target the same PR and disagree, resolve by comparable
-    observed_at order; if order is missing or tied, fail closed.
-    """
+def _collect_pr_reads_by_ref(
+    context: Mapping[str, Any],
+) -> dict[Ref, list[tuple[bool, float | None]]]:
     reads_by_ref: dict[Ref, list[tuple[bool, float | None]]] = {}
     for pointer, held in context.items():
         if (
@@ -181,22 +177,31 @@ def closed_reads(context: Mapping[str, Any]) -> tuple[Ref, ...]:
             isinstance(state, str) and state.lower() == "open" and not pr_closed(held)
         )
         reads_by_ref.setdefault(ref, []).append((is_open, _observed_time(held)))
+    return reads_by_ref
 
-    closed: list[Ref] = []
-    for ref, entries in reads_by_ref.items():
-        if all(is_open for is_open, _ in entries):
-            continue
-        if all(not is_open for is_open, _ in entries):
-            closed.append(ref)
-            continue
-        if any(ts is None for _, ts in entries):
-            closed.append(ref)
-            continue
-        max_ts = max(ts for _, ts in entries if ts is not None)
-        latest_states = {is_open for is_open, ts in entries if ts == max_ts}
-        if latest_states != {True}:
-            closed.append(ref)
-    return tuple(closed)
+
+def _group_fails_closed(entries: list[tuple[bool, float | None]]) -> bool:
+    if all(is_open for is_open, _ in entries):
+        return False
+    if all(not is_open for is_open, _ in entries) or any(
+        ts is None for _, ts in entries
+    ):
+        return True
+    max_ts = max(ts for _, ts in entries if ts is not None)
+    return {is_open for is_open, ts in entries if ts == max_ts} != {True}
+
+
+def closed_reads(context: Mapping[str, Any]) -> tuple[Ref, ...]:
+    """A captured PR read closes its target unless it reports a state that is open.
+
+    A read that carries no state proves nothing about the PR, so it fails closed.
+    When multiple reads target the same PR and disagree, resolve by comparable
+    observed_at order; if order is missing or tied, fail closed.
+    """
+    reads_by_ref = _collect_pr_reads_by_ref(context)
+    return tuple(
+        ref for ref, entries in reads_by_ref.items() if _group_fails_closed(entries)
+    )
 
 
 def valid_subject(subject: Mapping[str, Any]) -> bool:
