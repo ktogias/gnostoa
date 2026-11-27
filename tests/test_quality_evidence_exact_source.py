@@ -130,7 +130,7 @@ class ExactSourceTreeTests(_DiagnosticFixture):
                         "", self._git("status", "--porcelain", "--untracked-files=no")
                     )
                     inventory = self._read(
-                        self.collect(self.root, self.output, profile=_EVERY_FAMILY)
+                        self.collect(self.root, self.output, profile=_COMPLEXITY_ONLY)
                     )
                     self.assertEqual(
                         [], self._complexity(inventory, self._extra_line())
@@ -318,7 +318,7 @@ class ExactSourceTreeTests(_DiagnosticFixture):
                 failing = self._then(owner.observed_tree, owner.ExactTreeError(code))
                 with patch.object(owner, "observed_tree", side_effect=failing):
                     inventory = self._read(
-                        self.collect(self.root, self.output, profile=_EVERY_FAMILY)
+                        self.collect(self.root, self.output, profile=_COMPLEXITY_ONLY)
                     )
                 self.assertEqual("NOT_STAGED", inventory["source"]["tree_binding"])
                 self.assertIn(
@@ -1314,7 +1314,7 @@ class SelectedSourceContractTests(_DiagnosticFixture):
 
         with patch.object(self.module, "_diagnostic_git", side_effect=moving):
             inventory = self._read(
-                self.collect(self.root, self.output, profile=_EVERY_FAMILY)
+                self.collect(self.root, self.output, profile=_COMPLEXITY_ONLY)
             )
         self.assertTrue(moved)
         self.assertEqual(first, inventory["source"]["revision"])
