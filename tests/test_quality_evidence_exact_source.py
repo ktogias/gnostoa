@@ -7,6 +7,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import errno
+import functools
 import importlib
 import math
 import os
@@ -23,6 +24,8 @@ from unittest.mock import patch
 
 from tests.exact_tree_reuse_support import _open_descriptors
 from tests.quality_evidence_fixtures import (
+    _COMPLEXITY_ONLY,
+    _EVERY_FAMILY,
     _EXTRA_COMPLEX,
     _diagnostic_line,
     _DiagnosticFixture,
@@ -91,6 +94,10 @@ class ExactSourceTreeTests(_DiagnosticFixture):
     tree, staged privately through the shared exact-tree owner, never the caller's
     checkout, its index or a later HEAD. RED first, on main d617c21e."""
 
+    def setUp(self) -> None:
+        super().setUp()
+        self.collect = functools.partial(self.collect, profile=_COMPLEXITY_ONLY)
+
     def _extra_line(self) -> int:
         return _diagnostic_line(
             self.files["tools/sample.py"] + _EXTRA_COMPLEX, "def extra"
@@ -122,7 +129,9 @@ class ExactSourceTreeTests(_DiagnosticFixture):
                     self.assertEqual(
                         "", self._git("status", "--porcelain", "--untracked-files=no")
                     )
-                    inventory = self._read(self.collect(self.root, self.output))
+                    inventory = self._read(
+                        self.collect(self.root, self.output, profile=_EVERY_FAMILY)
+                    )
                     self.assertEqual(
                         [], self._complexity(inventory, self._extra_line())
                     )
@@ -146,7 +155,9 @@ class ExactSourceTreeTests(_DiagnosticFixture):
                 (self.root / "injected.py").write_text(
                     "def f() -> int:\n    return 1\n", encoding="utf-8"
                 )
-            inventory = self._read(self.collect(self.root, self.output))
+            inventory = self._read(
+                self.collect(self.root, self.output, profile=_EVERY_FAMILY)
+            )
             # The narrower residual stays stated (Router #389 6325382720, D1).
             self.assertEqual("INCOMPLETE", inventory["coverage"]["status"])
             self.assertIn(
@@ -235,7 +246,7 @@ class ExactSourceTreeTests(_DiagnosticFixture):
         """Collect under `failing` (a patch), which must refuse; the refusal's text and
         its run directory, which holds the raw reports and no inventory."""
         with failing, self.assertRaises(self.module.QualityEvidenceError) as raised:
-            self.collect(self.root, self.output)
+            self.collect(self.root, self.output, profile=_EVERY_FAMILY)
         (run,) = self.output.glob("diagnostic-*")
         self.assertFalse((run / self.module.DIAGNOSTIC_INVENTORY).exists())
         self.assertTrue([p for p in run.iterdir() if p.name != "source"])
@@ -306,7 +317,9 @@ class ExactSourceTreeTests(_DiagnosticFixture):
             with self.subTest(code):
                 failing = self._then(owner.observed_tree, owner.ExactTreeError(code))
                 with patch.object(owner, "observed_tree", side_effect=failing):
-                    inventory = self._read(self.collect(self.root, self.output))
+                    inventory = self._read(
+                        self.collect(self.root, self.output, profile=_EVERY_FAMILY)
+                    )
                 self.assertEqual("NOT_STAGED", inventory["source"]["tree_binding"])
                 self.assertIn(
                     "the staged source could not be observed again",
@@ -461,6 +474,10 @@ class SelectedSourceContractTests(_DiagnosticFixture):
     edit and run against the prior subject d617c21e, never test-first (chronology
     record 6325643085). On main 1e4cc560 they failed first again, with production
     unchanged (#389 6328550076)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.collect = functools.partial(self.collect, profile=_COMPLEXITY_ONLY)
 
     _TREE_LIMITS = ("max_tree_files", "max_tree_bytes")
 
@@ -662,7 +679,9 @@ class SelectedSourceContractTests(_DiagnosticFixture):
         owner = importlib.import_module("tools.exact_tree")
         refusal = owner.ExactTreeError("unsupported-entry", "a probe")
         with patch.object(owner, "materialize", side_effect=refusal):
-            inventory = self._read(self.collect(self.root, self.output))
+            inventory = self._read(
+                self.collect(self.root, self.output, profile=_EVERY_FAMILY)
+            )
         self.assertEqual(self._tracked_python(), self._python(inventory))
         self.assertEqual(self._tracked_python(), self._unanalyzed(inventory))
         self.assertIn(
@@ -708,7 +727,9 @@ class SelectedSourceContractTests(_DiagnosticFixture):
                 with patch.object(
                     owner, "observed_tree", side_effect=observer(label, calls)
                 ):
-                    inventory = self._read(self.collect(self.root, self.output))
+                    inventory = self._read(
+                        self.collect(self.root, self.output, profile=_EVERY_FAMILY)
+                    )
                 self.assertEqual(count, len(calls))
                 self.assertEqual("NOT_STAGED", inventory["source"]["tree_binding"])
                 self.assertIsNone(inventory["source"]["staged_identity"])
@@ -1292,7 +1313,9 @@ class SelectedSourceContractTests(_DiagnosticFixture):
             return answer
 
         with patch.object(self.module, "_diagnostic_git", side_effect=moving):
-            inventory = self._read(self.collect(self.root, self.output))
+            inventory = self._read(
+                self.collect(self.root, self.output, profile=_EVERY_FAMILY)
+            )
         self.assertTrue(moved)
         self.assertEqual(first, inventory["source"]["revision"])
         self.assertEqual(

@@ -217,6 +217,23 @@ _EVERY_FAMILY = {
     ],
 }
 
+# Narrower profile for exact-source and contract tests that only assert on
+# complexity or exact-tree/budget/deadline behavior (#516).
+_COMPLEXITY_ONLY = {
+    "schema": "gnostoa-diagnostic-profile/v1",
+    "id": "fixture.complexity-only",
+    "scopes": {"all": {"exclude": []}},
+    "families": [
+        {
+            "id": "complexity",
+            "producer": "complexity",
+            "reported_above": 15,
+            "diff": "all",
+            "full": "all",
+        },
+    ],
+}
+
 
 class _DiagnosticFixture(unittest.TestCase):
     """A small tracked repository, and the helpers the inventory tests share."""
