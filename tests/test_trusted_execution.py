@@ -70,9 +70,8 @@ class IsolatedGitEnvTests(unittest.TestCase):
             "GIT_CONFIG_KEY_2",
             "GIT_CONFIG_VALUE_2",
         ):
-            with self.subTest(key=protected_key):
-                with self.assertRaises(ValueError):
-                    isolated_git_env(extra={protected_key: "override"})
+            with self.subTest(key=protected_key), self.assertRaises(ValueError):
+                isolated_git_env(extra={protected_key: "override"})
 
     def test_isolated_git_env_applies_extra_overrides(self) -> None:
         from tools.trusted_execution import isolated_git_env
@@ -85,11 +84,19 @@ class IsolatedGitEnvTests(unittest.TestCase):
         self.assertEqual(clean["PATH"], TRUSTED_PATH)
 
     def test_run_isolated_git_executes_git_version(self) -> None:
+        from unittest import mock
+
         from tools.trusted_execution import run_isolated_git
 
-        result = run_isolated_git(["--version"], cwd=Path.cwd())
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_git = Path(tmpdir) / "git"
+            fake_git.write_text("#!/bin/sh\necho 'fake git'\n", encoding="utf-8")
+            fake_git.chmod(0o755)
+            with mock.patch.dict(os.environ, {"PATH": tmpdir}, clear=False):
+                result = run_isolated_git(["--version"], cwd=Path.cwd())
         self.assertEqual(result.returncode, 0)
         self.assertIn("git version", result.stdout)
+        self.assertNotIn("fake git", result.stdout)
 
     def test_run_isolated_git_disables_repo_fsmonitor_helper(self) -> None:
         from tools.trusted_execution import run_isolated_git
