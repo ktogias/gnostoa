@@ -33,7 +33,8 @@ class IsolatedGitEnvTests(unittest.TestCase):
         clean = isolated_git_env(dirty_env)
 
         self.assertEqual(clean["PATH"], TRUSTED_PATH)
-        self.assertEqual(clean["HOME"], "/home/test")
+        self.assertEqual(clean["LC_ALL"], "C")
+        self.assertNotIn("HOME", clean)
         self.assertNotIn("GIT_EXEC_PATH", clean)
         self.assertNotIn("GIT_DIR", clean)
         self.assertNotIn("GIT_WORK_TREE", clean)
@@ -45,6 +46,9 @@ class IsolatedGitEnvTests(unittest.TestCase):
         self.assertEqual(clean["GIT_ATTR_NOSYSTEM"], "1")
         self.assertEqual(clean["GIT_NO_REPLACE_OBJECTS"], "1")
         self.assertEqual(clean["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(clean["GIT_OPTIONAL_LOCKS"], "0")
+        self.assertEqual(clean["GIT_ALLOW_PROTOCOL"], "")
+        self.assertEqual(clean["GIT_NO_LAZY_FETCH"], "1")
         self.assertEqual(clean["GIT_CONFIG_COUNT"], "3")
         self.assertEqual(clean["GIT_CONFIG_KEY_0"], "core.hooksPath")
         self.assertEqual(clean["GIT_CONFIG_VALUE_0"], os.devnull)
@@ -52,6 +56,23 @@ class IsolatedGitEnvTests(unittest.TestCase):
         self.assertEqual(clean["GIT_CONFIG_VALUE_1"], "false")
         self.assertEqual(clean["GIT_CONFIG_KEY_2"], "core.attributesFile")
         self.assertEqual(clean["GIT_CONFIG_VALUE_2"], os.devnull)
+
+    def test_isolated_git_env_rejects_protected_extra_overrides(self) -> None:
+        from tools.trusted_execution import isolated_git_env
+
+        for protected_key in (
+            "PATH",
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_KEY_0",
+            "GIT_CONFIG_VALUE_0",
+            "GIT_CONFIG_KEY_1",
+            "GIT_CONFIG_VALUE_1",
+            "GIT_CONFIG_KEY_2",
+            "GIT_CONFIG_VALUE_2",
+        ):
+            with self.subTest(key=protected_key):
+                with self.assertRaises(ValueError):
+                    isolated_git_env(extra={protected_key: "override"})
 
     def test_isolated_git_env_applies_extra_overrides(self) -> None:
         from tools.trusted_execution import isolated_git_env
@@ -86,6 +107,21 @@ class IsolatedGitEnvTests(unittest.TestCase):
             result = run_isolated_git(["status"], cwd=repo)
             self.assertEqual(result.returncode, 0)
             self.assertFalse(marker.exists())
+
+    def test_run_isolated_git_routes_through_bounded_process_drain(self) -> None:
+        from unittest import mock
+
+        from tools import bounded_process
+        from tools.trusted_execution import run_isolated_git
+
+        with mock.patch(
+            "tools.trusted_execution.bounded_process.drain",
+            wraps=bounded_process.drain,
+        ) as drain_spy:
+            result = run_isolated_git(["--version"], cwd=Path.cwd(), timeout=15.0)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(drain_spy.call_count, 1)
+        self.assertIn("deadline", drain_spy.call_args.kwargs)
 
 
 if __name__ == "__main__":
