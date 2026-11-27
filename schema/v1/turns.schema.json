@@ -129,6 +129,14 @@
    "description": "lane key model@profile",
    "type": "string"
   },
+  "launch_cause": {
+   "description": "typed sub-cause of a PROCESS_LAUNCH (S691 launch_guard.LAUNCH_CAUSES)",
+   "type": "string"
+  },
+  "launch_detail": {
+   "description": "closed detail of a launch failure: the engine stderr class or the errno name (never text)",
+   "type": "string"
+  },
   "launched": {
    "description": "the provider process was launched",
    "type": "boolean"
@@ -176,6 +184,14 @@
   "profile": {
    "description": "CLI credential profile alias of the lane (A, A2, B, C)",
    "type": "string"
+  },
+  "prompt_bytes": {
+   "description": "prompt size (turns: the argv word as launched, S691) (unit: bytes)",
+   "type": "integer"
+  },
+  "prompt_cut_bytes": {
+   "description": "bytes the argv-bound fit cut from the DATA lines of the prompt (S691) (unit: bytes)",
+   "type": "integer"
   },
   "provider_k": {
    "description": "provider slots available",

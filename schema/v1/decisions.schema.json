@@ -214,6 +214,7 @@
     "LIMIT_PROBE",
     "MODEL_SWITCH",
     "OWNER_ESCALATION",
+    "PROFILE_FAILOVER",
     "REFUSAL",
     "ROUTER_DISPATCH",
     "ROUTER_JOB",
@@ -236,6 +237,10 @@
   },
   "last_failure_cause": {
    "description": "cause of the last failed attempt",
+   "type": "string"
+  },
+  "launch_cause": {
+   "description": "typed sub-cause of a PROCESS_LAUNCH (S691 launch_guard.LAUNCH_CAUSES)",
    "type": "string"
   },
   "limit_kind": {
@@ -623,6 +628,10 @@
    },
    "description": "unit of every field of the record that has one",
    "type": "object"
+  },
+  "unlaunched_retries": {
+   "description": "failed turns that did no model work and spent no model attempt (S691)",
+   "type": "integer"
   },
   "version": {
    "description": "version of the deciding rule",

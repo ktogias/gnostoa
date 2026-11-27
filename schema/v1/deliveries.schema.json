@@ -104,6 +104,10 @@
    "description": "cause of the last failed attempt",
    "type": "string"
   },
+  "launch_cause": {
+   "description": "typed sub-cause of a PROCESS_LAUNCH (S691 launch_guard.LAUNCH_CAUSES)",
+   "type": "string"
+  },
   "marker": {
    "description": "typed marker of the input",
    "type": "string"
@@ -137,7 +141,7 @@
    "type": "string"
   },
   "prompt_bytes": {
-   "description": "prompt size (unit: bytes)",
+   "description": "prompt size (turns: the argv word as launched, S691) (unit: bytes)",
    "type": "integer"
   },
   "proposal_refusal": {
@@ -417,6 +421,10 @@
    },
    "description": "unit of every field of the record that has one",
    "type": "object"
+  },
+  "unlaunched_retries": {
+   "description": "failed turns that did no model work and spent no model attempt (S691)",
+   "type": "integer"
   }
  },
  "required": [

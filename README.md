@@ -54,6 +54,8 @@ Join keys: `subject.input_key` joins a role turn to its Router job, peer result 
 | effort_basis | string |  | MODEL_SUFFIX when effort is the depth suffix of the model id (agy role lanes pass no effort flag) |
 | extension_s | number | s | lane extension of the turn bound |
 | lane | string |  | lane key model@profile |
+| launch_cause | string |  | typed sub-cause of a PROCESS_LAUNCH (S691 launch_guard.LAUNCH_CAUSES) |
+| launch_detail | string |  | closed detail of a launch failure: the engine stderr class or the errno name (never text) |
 | launched | boolean |  | the provider process was launched |
 | limit_kind | string |  | kind of provider limit (QUOTA, DAILY_CAP, OVERLOAD) |
 | model | string |  | model id the turn ran on (requested model) |
@@ -66,6 +68,8 @@ Join keys: `subject.input_key` joins a role turn to its Router job, peer result 
 | prefetch_type | string |  | prefetch block type |
 | probe_refused | boolean |  | the quota probe refused the launch |
 | profile | string |  | CLI credential profile alias of the lane (A, A2, B, C) |
+| prompt_bytes | integer | bytes | prompt size (turns: the argv word as launched, S691) |
+| prompt_cut_bytes | integer | bytes | bytes the argv-bound fit cut from the DATA lines of the prompt (S691) |
 | provider_k | integer |  | provider slots available |
 | provider_slot | integer |  | provider slot index |
 | provider_wait_s | number | s | seconds waited for a provider slot |
@@ -151,6 +155,7 @@ Join keys: `subject.input_key` joins a role turn to its Router job, peer result 
 | LIMIT_PROBE | one transport limit probe |
 | MODEL_SWITCH | a transport family switch for an Implementer turn |
 | OWNER_ESCALATION | one Owner escalation ledger request (latest version) |
+| PROFILE_FAILOVER | one S690 profile failover or failback decision (primary, from and to profile, reading) |
 | REFUSAL | one refusal of a Router job (typed class) |
 | ROUTER_DISPATCH | one Router assignment to a role (operation action, target, retry reason) |
 | ROUTER_JOB | one Router job (latest version per job): status, attempts, refusals, escalation, publications |
@@ -210,6 +215,7 @@ Join keys: `subject.input_key` joins a role turn to its Router job, peer result 
 | ladder | integer |  | tiers on the ladder |
 | lane | string |  | lane key model@profile |
 | last_failure_cause | string |  | cause of the last failed attempt |
+| launch_cause | string |  | typed sub-cause of a PROCESS_LAUNCH (S691 launch_guard.LAUNCH_CAUSES) |
 | limit_kind | string |  | kind of provider limit (QUOTA, DAILY_CAP, OVERLOAD) |
 | marker | string |  | typed marker of the input |
 | measures | measures |  | typed numeric or code facts of the source row |
@@ -264,6 +270,7 @@ Join keys: `subject.input_key` joins a role turn to its Router job, peer result 
 | tier | integer |  | adaptive effort tier chosen (0 = base) |
 | tier_reason | string |  | why the tier was chosen (BASE, ESCALATE_AFTER_STALL, ...) |
 | transport | string |  | transport of the turn (agy, claude-print, codex-exec, *-resume) |
+| unlaunched_retries | integer |  | failed turns that did no model work and spent no model attempt (S691) |
 | version | string |  | version of the deciding rule |
 
 ## Stream `deliveries`
@@ -298,6 +305,7 @@ Join keys: `subject.input_key` joins a role turn to its Router job, peer result 
 | lane | string |  | lane key model@profile |
 | lane_rotation | string |  | lane rotation reason of the turn |
 | last_failure_cause | string |  | cause of the last failed attempt |
+| launch_cause | string |  | typed sub-cause of a PROCESS_LAUNCH (S691 launch_guard.LAUNCH_CAUSES) |
 | marker | string |  | typed marker of the input |
 | material_progress | boolean |  | the turn changed the worktree or source state |
 | model | string |  | model id the turn ran on (requested model) |
@@ -306,7 +314,7 @@ Join keys: `subject.input_key` joins a role turn to its Router job, peer result 
 | outcome | string |  | typed outcome |
 | permission_denials | integer |  | permission denials the provider reported |
 | profile | string |  | CLI credential profile alias of the lane (A, A2, B, C) |
-| prompt_bytes | integer | bytes | prompt size |
+| prompt_bytes | integer | bytes | prompt size (turns: the argv word as launched, S691) |
 | proposal_refusal | boolean |  | a proposal was refused |
 | publication_phase | string |  | publication phase |
 | published | boolean |  | the output was published |
@@ -331,6 +339,7 @@ Join keys: `subject.input_key` joins a role turn to its Router job, peer result 
 | transport | string |  | transport of the turn (agy, claude-print, codex-exec, *-resume) |
 | turn_completed | boolean |  | the model turn completed |
 | turn_started | boolean |  | the model turn started |
+| unlaunched_retries | integer |  | failed turns that did no model work and spent no model attempt (S691) |
 
 ## Stream `config_changes`
 
