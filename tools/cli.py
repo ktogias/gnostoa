@@ -15,6 +15,7 @@ from . import (
     check_runtime_lock,
     merge_admission,
     merge_evidence_github,
+    mutation,
     review_check,
     self_check,
     task_envelope,
@@ -73,6 +74,10 @@ COMMANDS: dict[str, tuple[str, Callable[[list[str] | None], int]]] = {
     "task-project": (
         "render a validated current task projection",
         task_envelope.project_main,
+    ),
+    "mutants": (
+        "check or run a table of targeted mutants",
+        mutation.main,
     ),
     "self-check": ("run the toolkit self-check", self_check.main),
 }
