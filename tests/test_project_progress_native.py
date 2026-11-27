@@ -164,16 +164,9 @@ class NativeProgressTests(unittest.TestCase):
                 "sources": [],
                 "requests": [],
             }
-            succ_record: dict[str, Any] = (
-                {"id": succ_id, "sources": [], "requests": []}
-                if bad_status is None
-                else {
-                    "id": succ_id,
-                    "status": bad_status,
-                    "sources": [],
-                    "requests": [],
-                }
-            )
+            succ_record: dict[str, Any] = {"id": succ_id, "sources": [], "requests": []}
+            if bad_status is not None:
+                succ_record["status"] = bad_status
             store_case = {
                 oid: copy.deepcopy(migrated_record),
                 succ_id: copy.deepcopy(succ_record),
@@ -922,6 +915,11 @@ class NativeProgressTests(unittest.TestCase):
         ).isoformat()
         self.assertIsNone(
             n.gate_resume(gate, record, fact, self.now + 2, owner_review=True)
+        )
+        overflow_gate = copy.deepcopy(gate)
+        overflow_gate["at"] = 10**400
+        self.assertIsNone(
+            n.gate_resume(overflow_gate, record, fact, self.now + 2, owner_review=True)
         )
 
     def test_waiting_claims_bind_to_supported_gate_sources(self) -> None:

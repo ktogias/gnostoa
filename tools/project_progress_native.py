@@ -1222,11 +1222,13 @@ def _resume_selector(
 def _resume_gate(gate: Native, mode: str) -> p.ResumeGate | None:
     resume = _mapping(gate.get("resume_subject"))
     at = gate.get("at")
-    if (
-        not isinstance(at, (int, float))
-        or isinstance(at, bool)
-        or not provider.valid_subject(resume)
-    ):
+    if not isinstance(at, (int, float)) or isinstance(at, bool):
+        return None
+    if not provider.valid_subject(resume):
+        return None
+    try:
+        at_float = float(at)
+    except (OverflowError, TypeError, ValueError):
         return None
     baseline = _mapping(gate.get("canonical")).get("check_run_id")
     if mode == "source" and (
@@ -1237,7 +1239,7 @@ def _resume_gate(gate: Native, mode: str) -> p.ResumeGate | None:
         provider.subject_ref(resume),
         str(resume["head_sha"]),
         mode,
-        float(at),
+        at_float,
         baseline if type(baseline) is int and not isinstance(baseline, bool) else 0,
     )
 
