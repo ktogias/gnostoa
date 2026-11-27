@@ -76,7 +76,7 @@ COMMANDS: dict[str, tuple[str, Callable[[list[str] | None], int]]] = {
         task_envelope.project_main,
     ),
     "mutants": (
-        "check or run a table of targeted mutants",
+        "check a table of targeted mutants (run is deferred)",
         mutation.main,
     ),
     "self-check": ("run the toolkit self-check", self_check.main),

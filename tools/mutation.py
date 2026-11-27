@@ -165,10 +165,10 @@ def _python_spans(text: str, find: str) -> tuple[list[tuple[int, int]], bool] | 
     def span(first: ast.AST, last: ast.AST) -> tuple[int, int]:
         # A definition starts at its first decorator, at the definition's own column.
         decorators = getattr(first, "decorator_list", None)
-        line = decorators[0].lineno if decorators else first.lineno  # type: ignore[attr-defined]
+        line = decorators[0].lineno if decorators else first.lineno  # type: ignore[attr-defined]  # ast.AST base lacks lineno
         return (
-            _offset(lines, starts, line, first.col_offset),  # type: ignore[attr-defined]
-            _offset(lines, starts, last.end_lineno, last.end_col_offset),  # type: ignore[attr-defined]
+            _offset(lines, starts, line, first.col_offset),  # type: ignore[attr-defined]  # ast.AST base lacks col_offset
+            _offset(lines, starts, last.end_lineno, last.end_col_offset),  # type: ignore[attr-defined]  # ast.AST base lacks end_lineno/end_col_offset
         )
 
     body = snippet.body
@@ -248,6 +248,9 @@ def _token_spans(text: str, find: str) -> list[tuple[int, int]]:
     return found
 
 
+_NOT_FOUND = "NOT FOUND"
+
+
 def apply(text: str, find: str, replace: str, *, python: bool) -> str:
     """Return ``text`` with the one place ``find`` names replaced by ``replace``.
 
@@ -259,7 +262,7 @@ def apply(text: str, find: str, replace: str, *, python: bool) -> str:
     else:
         spans, statements = located
     if not spans:
-        raise AnchorError("NOT FOUND", "the anchor matches nowhere")
+        raise AnchorError(_NOT_FOUND, "the anchor matches nowhere")
     if len(spans) > 1:
         raise AnchorError("AMBIGUOUS", f"the anchor matches {len(spans)} places")
     start, end = spans[0]
@@ -317,9 +320,9 @@ def _mutated(root: Path, mutant: Mutant) -> str | Outcome:
         # Tables name UTF-8 files; another encoding is reported, not raised (CodeAnt
         # on #374).
         reason = f"cannot read {mutant.path} as UTF-8: {exc.reason}"
-        return Outcome(mutant.name, "NOT FOUND", reason)
+        return Outcome(mutant.name, _NOT_FOUND, reason)
     except OSError as exc:
-        return Outcome(mutant.name, "NOT FOUND", f"cannot read {mutant.path}: {exc}")
+        return Outcome(mutant.name, _NOT_FOUND, f"cannot read {mutant.path}: {exc}")
     try:
         mutated = apply(text, mutant.find, mutant.replace, python=mutant.python)
     except AnchorError as exc:

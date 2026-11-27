@@ -7,7 +7,6 @@ broke their anchors silently. These tests define the owner that replaces them.
 from __future__ import annotations
 
 import ast
-import os
 import pathlib
 import tempfile
 import textwrap
@@ -20,27 +19,15 @@ from tools.knowledge_common import KnowledgeFormatError
 
 
 def _project(base: pathlib.Path) -> pathlib.Path:
-    """A tiny project whose test checks `double(2) == 4` and `double(3) == 6`."""
+    """A tiny project with one module for anchor and check tests."""
     root = base / "project"
     (root / "pkg").mkdir(parents=True)
     (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
     (root / "pkg" / "m.py").write_text(
-        "def double(x):\n    return x * 2\n\n\ndef wait():\n    return None\n",
+        "def double(x):\n    return x * 2\n",
         encoding="utf-8",
     )
     (root / "tests").mkdir()
-    # A regular package: an installed `tests` package would shadow a namespace one
-    # (CodeAnt on #374).
-    (root / "tests" / "__init__.py").write_text("", encoding="utf-8")
-    (root / "tests" / "test_m.py").write_text(
-        "import unittest\n\nfrom pkg import m\n\n\n"
-        "class T(unittest.TestCase):\n"
-        "    def test_double(self):\n"
-        "        self.assertEqual(4, m.double(2))\n\n"
-        "    def test_wait(self):\n"
-        "        self.assertIsNone(m.wait())\n",
-        encoding="utf-8",
-    )
     return root
 
 
@@ -52,19 +39,6 @@ def _table(
         f"id: fixture\ntests: {tests}\nmutants:\n{mutants}", encoding="utf-8"
     )
     return path
-
-
-def _alive(pid: int) -> bool:
-    """Whether ``pid`` runs: a killed child an init never reaped is a zombie."""
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    try:
-        stat = pathlib.Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
-    except OSError:
-        return True
-    return stat.rpartition(")")[2].split()[0] != "Z"
 
 
 class PythonAnchorTests(unittest.TestCase):
