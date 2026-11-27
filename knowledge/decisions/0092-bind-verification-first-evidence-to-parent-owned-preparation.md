@@ -57,7 +57,7 @@ The aggregate enforcement change is **critical**. Keeping this first record
 non-executable does not lower the eventual assurance-gate risk. Scope is private
 Gnostoa-self preparation and its independent CI consumer, not the public CLI, #308
 writer leases, reviewer qualification, secret migration or a workflow engine.
-VF0 remains the mandatory #15 child before #318 and the next critical activation.
+VF0 remains the mandatory #15 child before Issue #318 (historical post-#315 sequencing; superseded by Decision 0114 for active lane ordering).
 
 ## Decision
 
@@ -144,7 +144,7 @@ attempt identity must not be fabricated as attempt 1.
 The adapter owns authenticated transport, native APIs and pagination, source
 and protection metadata, native-event parsing, artifact retrieval and UI routes.
 GitHub Environments, required-reviewer settings, numeric IDs, workflow YAML,
-permission names and the A6 comment format stay in its specialization. Raw
+permission names and the PR #319 A6 diagnostic comment format stay in its specialization. Raw
 provider records remain retrievable evidence; normalization must not discard
 unavailable fields, ambiguous identity, provenance limitations or weaker
 protection. A caller-created observation or `trusted` flag cannot satisfy the
@@ -159,7 +159,7 @@ weaker common denominator. Report human authorship, native publisher identity
 and authority independently. An API `approved` state is not by itself evidence
 of a non-delegated human credential.
 
-The [A6 read-back](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5821298046)
+The [PR #319 A6 diagnostic read-back](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5821298046)
 observed a real request-bound native approval and successful diagnostic job.
 It does not establish full credential separation or independently revalidated
 post-approval protections. Its single-attempt pilot and no-production scope
@@ -433,4 +433,4 @@ provider administrator or container-runtime/kernel compromise is asserted.
 
 Rollback withdraws the VF0 compliance/activation claim and blocks dependent
 advancement; it cannot silently restore v1-only preparation while advertising an
-enforced verification-first gate. No #318 or Q0 activation is authorized here.
+enforced verification-first gate. No Issue #318 or [Q0](0089-establish-q0-reviewer-qualification-semantics.md) activation is authorized here.

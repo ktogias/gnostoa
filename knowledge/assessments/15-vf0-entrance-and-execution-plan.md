@@ -58,7 +58,7 @@ requiring rejection failed with `VF0_MISSING_PRE_EVIDENCE_WAS_ACCEPTED`.
 | Observation | Actual result |
 | --- | --- |
 | Desired missing-pre-evidence rejection | RED: 1 assertion failure, 0 errors, 0 skips |
-| Parent-tracked production and four authority files | Unchanged |
+| Parent-tracked production and the four authority files tracked in that `63fb3e7b` run | Unchanged |
 | Prepared delta | Only `tools/vf0_missing_evidence_probe.py` |
 | Existing style/focused/diff checks | All four returned zero |
 | Existing D0090 receipt verification | PASS |
@@ -136,7 +136,7 @@ independent proof of test semantic sufficiency.
 5. **Critical acceptance and activation:** reconcile every map row with actual
    candidate/evidence, collect task-to-code and map-reconciliation reviews, obtain
    the exact integration effect, and verify a real integrated producer/consumer
-   round trip. Only then consider VF0 closure and advancement to #318.
+   round trip. Only then consider VF0 closure and advancement to Issue #318.
 
 No independent stage may claim the overall gate is active. Artifact availability,
 test/oracle adequacy, actual admission and isolation are material proof obligations,
@@ -154,7 +154,7 @@ implementation slices (`S2a`, `S2b`, and follow-ups):
 | Bounded process pipe draining and direct-child reaping | `tools/bounded_process.py` | Pipe-drain and direct-child-reap helper (`main` `a94b8346`) | `consume` | S2b tests verify `tools/bounded_process.py` handles pipe-drain/reap without duplicating it |
 | Trusted executable lookup | `tools/trusted_path.py` | Safe executable resolution outside repo worktree (`main` `a94b8346`) | `consume` | S2b tests verify `tools/trusted_path.py` resolves host/container executables |
 | VF0 normalized relation contract | None (new VF0 contract; existing `candidate_prepare.py` only checks D0090 normalization) | None on `main` (`a94b8346`); existing `candidate_prepare.py` lacks provider-neutral evidence-relation evaluation | `new-residual` | S2a introduces `tools/vf0_contract.py` with unit tests proving relation parity and negative rejections |
-| VF0 bounded observation execution | None (new VF0 execution; `bounded_process.py` only drains/reaps direct children) | None on `main` (`a94b8346`); `bounded_process.py` does not provide OCI isolation or gitless delta verification | `new-residual` | S2b introduces `tools/vf0_execution.py` and `tests/vf0_execution_oci_smoke.py` proving OCI isolation |
+| VF0 bounded observation execution | `tools/experiment/backend.py`, `tools/experiment/execution.py`, `tools/review_current.py`, `tools/review_outer.py`, `tools/bounded_process.py` | `tools/experiment/*` execute experiment profiles; `tools/review_current.py` and `tools/review_outer.py` run protected-judge Docker/OCI containers for advisory review consumers; `tools/bounded_process.py` only drains/reaps direct children. None provides VF0's read-only gitless delta verification + `ci/verify` observation contract (`main` `a94b8346`) | `new-residual` | S2b introduces `tools/vf0_execution.py` and `tests/vf0_execution_oci_smoke.py` proving OCI isolation |
 | Pre-candidate preparation receipt gate | `tools/candidate_prepare.py` | D0090 exact-parent preparation and receipt verification (`main` `a94b8346`) | `extend` | Later slice extends D0090 preparation with VF0 evidence binding; existing D0090 tests remain green |
 
 *Note: Deferred Decision 0092 responsibilities (provider-backed artifact acquisition, independent check-only CI consumer, and authority evolution/bootstrap) are out of scope for S2a/S2b and will be disposed in their respective follow-up slices. Archival experiment and audit logs (`VF0-E2`–`VF0-E5`, `VF0-A7/A8`, `AUD14`–`AUD49`) from the superseded monolithic branch are omitted from this bounded S1 entrance plan.*
