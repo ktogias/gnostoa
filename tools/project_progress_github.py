@@ -152,7 +152,10 @@ def closed_targets(sources: Any) -> tuple[Ref, ...]:
 def _observed_time(held: Mapping[str, Any]) -> float | None:
     observed = held.get("observed_at")
     if type(observed) is int:
-        return float(observed)
+        try:
+            return float(observed)
+        except OverflowError:
+            return None
     if isinstance(observed, float) and math.isfinite(observed):
         return observed
     return None
@@ -160,8 +163,8 @@ def _observed_time(held: Mapping[str, Any]) -> float | None:
 
 def _collect_pr_reads_by_ref(
     context: Mapping[str, Any],
-) -> dict[Ref, list[tuple[bool, float | None]]]:
-    reads_by_ref: dict[Ref, list[tuple[bool, float | None]]] = {}
+) -> dict[tuple[str | None, Ref], list[tuple[bool, float | None]]]:
+    reads_by_ref: dict[tuple[str | None, Ref], list[tuple[bool, float | None]]] = {}
     for pointer, held in context.items():
         if (
             pointer.startswith("_")
@@ -172,11 +175,15 @@ def _collect_pr_reads_by_ref(
         ref = read_ref(pointer, held)
         if ref is None:
             continue
+        repo = held.get("repository")
+        repo_key = repo if isinstance(repo, str) else None
         state = held.get("state")
         is_open = (
             isinstance(state, str) and state.lower() == "open" and not pr_closed(held)
         )
-        reads_by_ref.setdefault(ref, []).append((is_open, _observed_time(held)))
+        reads_by_ref.setdefault((repo_key, ref), []).append(
+            (is_open, _observed_time(held))
+        )
     return reads_by_ref
 
 
@@ -200,7 +207,11 @@ def closed_reads(context: Mapping[str, Any]) -> tuple[Ref, ...]:
     """
     reads_by_ref = _collect_pr_reads_by_ref(context)
     return tuple(
-        ref for ref, entries in reads_by_ref.items() if _group_fails_closed(entries)
+        dict.fromkeys(
+            ref
+            for (_, ref), entries in reads_by_ref.items()
+            if _group_fails_closed(entries)
+        )
     )
 
 

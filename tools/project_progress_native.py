@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any, TypedDict, Unpack, cast
@@ -229,7 +230,9 @@ def open_obligation(
     oid = scope_identity(scope, origin)
     obligation = obligations.get(oid)
     if obligation is not None and (
-        not isinstance(obligation.get("status"), str) or not obligation["status"]
+        not isinstance(obligation, dict)
+        or not isinstance(obligation.get("status"), str)
+        or not obligation["status"]
     ):
         raise ValueError("PROJECT_PROGRESS a stored obligation has no status")
     previous = str(obligation["status"]) if obligation is not None else None
@@ -242,7 +245,11 @@ def open_obligation(
         )
         if successor is None:
             return obligation, False, SOURCE_PENDING_REFRESH
-        if not isinstance(successor.get("status"), str) or not successor["status"]:
+        if (
+            not isinstance(successor, dict)
+            or not isinstance(successor.get("status"), str)
+            or not successor["status"]
+        ):
             raise ValueError("PROJECT_PROGRESS a stored obligation has no status")
         if successor.get("status") == "MIGRATED":
             return obligation, False, SOURCE_PENDING_REFRESH
@@ -1083,7 +1090,8 @@ def _provider_gate(
     job: Native, row: Native, claim: Native, at: Native
 ) -> tuple[Native, Native] | None:
     """Bind the one held check-run row, or a native row a held provider wait owns."""
-    if type(claim.get("check_run_id")) is not int:
+    check_run_id = claim.get("check_run_id")
+    if type(check_run_id) is not int or check_run_id <= 0:
         return None
     rows = _held_gate_sources(job, "rows")
     if rows is None:
@@ -1244,6 +1252,15 @@ def _resume_gate(gate: Native, mode: str) -> p.ResumeGate | None:
     )
 
 
+def _finite_number(value: Any) -> bool:
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except OverflowError:
+        return False
+
+
 def _valid_gate_resume_inputs(
     gate: Native,
     resume: Native,
@@ -1252,8 +1269,8 @@ def _valid_gate_resume_inputs(
 ) -> bool:
     return (
         provider.valid_subject(resume)
-        and type(observed) in (int, float)
-        and type(gate.get("at")) in (int, float)
+        and _finite_number(observed)
+        and _finite_number(gate.get("at"))
         and (not payload or isinstance(payload, Mapping))
         and (not gate.get("canonical") or isinstance(gate["canonical"], Mapping))
     )

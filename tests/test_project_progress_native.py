@@ -1879,6 +1879,86 @@ class NativeProgressTests(unittest.TestCase):
         self.assertEqual(binding["head_sha"], head)
         self.assertEqual(binding["canonical"]["check_run_id"], 456)
 
+    def test_gate_resume_rejects_overflow_observed_at(self) -> None:
+        head = "a" * 40
+        gate: n.Native = {
+            "resume_subject": {"pr_number": 500, "head_sha": head},
+            "at": 10.0,
+        }
+        record: n.Native = {
+            "observed_at": 10**400,
+            "number": 500,
+            "kind": "check_run",
+            "material_id": "mat-1",
+            "payload": {"item": {}},
+        }
+        fact: n.Native = {"head": head, "provider_id": 1}
+        self.assertIsNone(n.gate_resume(gate, record, fact, 20.0))
+
+    def test_provider_gate_rejects_non_positive_check_run_id(self) -> None:
+        head = "a" * 40
+        gate_row: n.Native = {
+            "id": "check-gate",
+            "kind": "TECHNICAL",
+            "source_kind": "canonical_criterion",
+            "subject": {"pr_number": 500, "head_sha": head},
+            "source_sha256": "check-evidence",
+            "canonical": {"check_run_id": 0},
+        }
+        job: n.Native = {
+            "authority_context": {"_coverage": {"coverage": "COMPLETE"}},
+            "continuation_contract": {"frontier_sha256": "lineage"},
+            "continuation_frontier": {"rows": [gate_row]},
+        }
+        for bad_id in (0, -1):
+            claim: n.Native = {
+                "id": "check-gate",
+                "disposition": "WAITING",
+                "owner": "provider:canonical-gate",
+                "reason": "Await check update.",
+                "resume_event": "provider_source_changed",
+                "evidence_sha256": "check-evidence",
+                "check_run_id": bad_id,
+            }
+            self.assertIsNone(n.gate_binding(job, gate_row, claim))
+
+    def test_closed_reads_groups_prs_by_repository_identity(self) -> None:
+        from tools import project_progress_github as g
+
+        context = {
+            "pr_a": {
+                "kind": "pr",
+                "repository": "owner/repo-a",
+                "number": 500,
+                "state": "open",
+                "observed_at": 10,
+            },
+            "pr_b": {
+                "kind": "pr",
+                "repository": "owner/repo-b",
+                "number": 500,
+                "state": "closed",
+                "observed_at": 5,
+            },
+        }
+        closed = g.closed_reads(context)
+        self.assertEqual(len(closed), 1)
+        self.assertEqual(closed[0].kind, "pr")
+
+    def test_open_obligation_rejects_non_mapping_obligation_and_successor(self) -> None:
+        scope: n.Native = {"kind": "work_item", "ref": "issue:499"}
+        oid = n.scope_identity(scope, None)
+        with self.assertRaisesRegex(ValueError, "no status"):
+            n.open_obligation({oid: "bad"}, scope, [], None, 10.0)
+        with self.assertRaisesRegex(ValueError, "no status"):
+            n.open_obligation(
+                {oid: {"status": "MIGRATED", "superseded_by": "next"}, "next": ["bad"]},
+                scope,
+                [],
+                None,
+                10.0,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
