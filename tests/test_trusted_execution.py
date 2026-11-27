@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -15,12 +16,13 @@ class IsolatedGitEnvTests(unittest.TestCase):
     ) -> None:
         from tools.trusted_execution import isolated_git_env
 
+        tmp_root = Path(tempfile.gettempdir())
         dirty_env = {
-            "PATH": "/tmp/evil:/usr/bin",
+            "PATH": f"{tmp_root / 'evil'}:/usr/bin",
             "HOME": "/home/test",
-            "GIT_EXEC_PATH": "/tmp/evil-git-exec",
-            "GIT_DIR": "/tmp/evil-git-dir",
-            "GIT_WORK_TREE": "/tmp/evil-worktree",
+            "GIT_EXEC_PATH": str(tmp_root / "evil-git-exec"),
+            "GIT_DIR": str(tmp_root / "evil-git-dir"),
+            "GIT_WORK_TREE": str(tmp_root / "evil-worktree"),
             "GIT_CONFIG_PARAMETERS": "'core.fsmonitor=evil'",
             "GIT_CONFIG_COUNT": "1",
             "GIT_CONFIG_KEY_0": "core.sshCommand",
@@ -43,17 +45,22 @@ class IsolatedGitEnvTests(unittest.TestCase):
         self.assertEqual(clean["GIT_ATTR_NOSYSTEM"], "1")
         self.assertEqual(clean["GIT_NO_REPLACE_OBJECTS"], "1")
         self.assertEqual(clean["GIT_TERMINAL_PROMPT"], "0")
-        self.assertEqual(clean["GIT_CONFIG_COUNT"], "1")
+        self.assertEqual(clean["GIT_CONFIG_COUNT"], "3")
         self.assertEqual(clean["GIT_CONFIG_KEY_0"], "core.hooksPath")
         self.assertEqual(clean["GIT_CONFIG_VALUE_0"], os.devnull)
+        self.assertEqual(clean["GIT_CONFIG_KEY_1"], "core.fsmonitor")
+        self.assertEqual(clean["GIT_CONFIG_VALUE_1"], "false")
+        self.assertEqual(clean["GIT_CONFIG_KEY_2"], "core.attributesFile")
+        self.assertEqual(clean["GIT_CONFIG_VALUE_2"], os.devnull)
 
     def test_isolated_git_env_applies_extra_overrides(self) -> None:
         from tools.trusted_execution import isolated_git_env
 
-        clean = isolated_git_env(
-            {"PATH": "/tmp/evil"}, extra={"GIT_DIR": "/tmp/repo/.git"}
-        )
-        self.assertEqual(clean["GIT_DIR"], "/tmp/repo/.git")
+        tmp_root = Path(tempfile.gettempdir())
+        evil_path = str(tmp_root / "evil")
+        repo_git_dir = str(tmp_root / "repo" / ".git")
+        clean = isolated_git_env({"PATH": evil_path}, extra={"GIT_DIR": repo_git_dir})
+        self.assertEqual(clean["GIT_DIR"], repo_git_dir)
         self.assertEqual(clean["PATH"], TRUSTED_PATH)
 
     def test_run_isolated_git_executes_git_version(self) -> None:
@@ -62,6 +69,23 @@ class IsolatedGitEnvTests(unittest.TestCase):
         result = run_isolated_git(["--version"], cwd=Path.cwd())
         self.assertEqual(result.returncode, 0)
         self.assertIn("git version", result.stdout)
+
+    def test_run_isolated_git_disables_repo_fsmonitor_helper(self) -> None:
+        from tools.trusted_execution import run_isolated_git
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir()
+            run_isolated_git(["init"], cwd=repo)
+            marker = Path(tmpdir) / "pwned"
+            helper = Path(tmpdir) / "helper.sh"
+            helper.write_text(f"#!/bin/sh\ntouch {marker}\n", encoding="utf-8")
+            helper.chmod(0o755)
+            run_isolated_git(["config", "core.fsmonitor", str(helper)], cwd=repo)
+
+            result = run_isolated_git(["status"], cwd=repo)
+            self.assertEqual(result.returncode, 0)
+            self.assertFalse(marker.exists())
 
 
 if __name__ == "__main__":

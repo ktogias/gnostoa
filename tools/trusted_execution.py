@@ -30,9 +30,13 @@ def isolated_git_env(
     env["GIT_ATTR_NOSYSTEM"] = "1"
     env["GIT_NO_REPLACE_OBJECTS"] = "1"
     env["GIT_TERMINAL_PROMPT"] = "0"
-    env["GIT_CONFIG_COUNT"] = "1"
+    env["GIT_CONFIG_COUNT"] = "3"
     env["GIT_CONFIG_KEY_0"] = "core.hooksPath"
     env["GIT_CONFIG_VALUE_0"] = os.devnull
+    env["GIT_CONFIG_KEY_1"] = "core.fsmonitor"
+    env["GIT_CONFIG_VALUE_1"] = "false"
+    env["GIT_CONFIG_KEY_2"] = "core.attributesFile"
+    env["GIT_CONFIG_VALUE_2"] = os.devnull
     if extra:
         env.update(extra)
     return env
