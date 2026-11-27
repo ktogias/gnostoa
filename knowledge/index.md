@@ -100,7 +100,7 @@ inherited, copied or loaded by adopting projects.
 - [Establish Q0 reviewer qualification semantics and stage protected activation behind a prior-integrated runtime](decisions/0089-establish-q0-reviewer-qualification-semantics.md)
 - [Require pre-candidate preparation receipts for non-hook authoring](decisions/0090-require-pre-candidate-preparation-receipts-for-non-hook-authoring.md)
 - [Add authenticated provider-neutral analyzer readback before critical Q0 activation](decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md)
-- [Proposed verification-first preparation boundary](decisions/0092-bind-verification-first-evidence-to-parent-owned-preparation.md)
+- [Bind verification-first evidence to parent-owned preparation (proposed)](decisions/0092-bind-verification-first-evidence-to-parent-owned-preparation.md)
 - [Harden the Claude Code GitHub Actions workflows before integration](decisions/0093-harden-claude-code-github-actions-workflows.md)
 - [Bound Claude review context by selecting agent mode](decisions/0094-bound-claude-review-context.md)
 - [Refresh a vulnerable development dependency pin on protected main](decisions/0095-refresh-vulnerable-development-dependency-pins.md)

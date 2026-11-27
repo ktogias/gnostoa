@@ -35,9 +35,10 @@ x-project-knowledge:
 # VF0 entrance evidence and bounded execution plan
 
 **VF0's enforcement gate is not implemented or active.** Private relation and
-execution components exist without production invocation. This is the initial
-record for the existing
-Issue #15 child, not a new Work Item, public contract or reduced-risk replacement.
+execution components (`tools/vf0_contract.py`, `tools/vf0_execution.py`, and
+`tests/vf0_execution_oci_smoke.py`) are prospective S2a/S2b targets and do not
+yet exist on `main`. This is the initial record for the existing Issue #15 child,
+not a new Work Item, public contract or reduced-risk replacement.
 The proposed [Decision 0092](../decisions/0092-bind-verification-first-evidence-to-parent-owned-preparation.md)
 is separate from the observed experiment below.
 
@@ -73,8 +74,9 @@ it does not mean the proposed gate passed.
 ## Retention and reproduction
 
 Artifact **10814840263**, `vf0-exact-main-entrance-20260924`, from the linked run,
-expires **2026-10-01 14:48:40 UTC**. Its downloaded ZIP, canonical result and
-script identities were independently checked locally:
+expired **2026-10-01 14:48:40 UTC** and is no longer retained by the provider.
+Its downloaded ZIP, canonical result and script identities were independently
+checked locally before expiry:
 
 | Object | SHA-256 |
 | --- | --- |
@@ -146,13 +148,13 @@ Per the delivery runbook, every material VF0 responsibility is disposed against
 its existing owner on `main` (`a94b8346499691b82993eeb3fe3e8f82ace7a2bb`) before
 implementation slices (`S2a`, `S2b`, and follow-ups):
 
-| Responsibility | Existing owner on `main` | Disposition | Target slice / notes |
-| --- | --- | --- | --- |
-| Exact tree materialization and snapshotting | `tools/exact_tree.py` | `consume` | `S2a` / `S2b` consume `tools/exact_tree.py` rather than re-implementing tree capture |
-| Bounded process draining and reaping | `tools/bounded_process.py` | `consume` | `S2b` consumes `tools/bounded_process.py` for bounded subprocess execution |
-| Trusted executable lookup | `tools/trusted_path.py` | `consume` | `S2b` consumes `tools/trusted_path.py` for safe executable resolution |
-| VF0 normalized relation contract | None (new VF0 contract) | `new-residual` | `S2a` introduces `tools/vf0_contract.py` |
-| VF0 bounded observation execution | None (new VF0 execution) | `new-residual` | `S2b` introduces `tools/vf0_execution.py` |
-| Pre-candidate preparation receipt gate | `tools/candidate_prepare.py` | `extend` | Later slice extends D0090 preparation with VF0 evidence binding |
+| Responsibility | Existing owner | Existing implementation/contract | Disposition | Proof/falsifier |
+| --- | --- | --- | --- | --- |
+| Exact tree materialization and snapshotting | `tools/exact_tree.py` | Git-object tree capture and materialization into ephemeral gitless directories (`main` `a94b8346`) | `consume` | S2a/S2b tests verify `tools/exact_tree.py` is called rather than re-implemented |
+| Bounded process pipe draining and direct-child reaping | `tools/bounded_process.py` | Pipe-drain and direct-child-reap helper (`main` `a94b8346`) | `consume` | S2b tests verify `tools/bounded_process.py` handles pipe-drain/reap without duplicating it |
+| Trusted executable lookup | `tools/trusted_path.py` | Safe executable resolution outside repo worktree (`main` `a94b8346`) | `consume` | S2b tests verify `tools/trusted_path.py` resolves host/container executables |
+| VF0 normalized relation contract | None (new VF0 contract; existing `candidate_prepare.py` only checks D0090 normalization) | None on `main` (`a94b8346`); existing `candidate_prepare.py` lacks provider-neutral evidence-relation evaluation | `new-residual` | S2a introduces `tools/vf0_contract.py` with unit tests proving relation parity and negative rejections |
+| VF0 bounded observation execution | None (new VF0 execution; `bounded_process.py` only drains/reaps direct children) | None on `main` (`a94b8346`); `bounded_process.py` does not provide OCI isolation or gitless delta verification | `new-residual` | S2b introduces `tools/vf0_execution.py` and `tests/vf0_execution_oci_smoke.py` proving OCI isolation |
+| Pre-candidate preparation receipt gate | `tools/candidate_prepare.py` | D0090 exact-parent preparation and receipt verification (`main` `a94b8346`) | `extend` | Later slice extends D0090 preparation with VF0 evidence binding; existing D0090 tests remain green |
 
-*Note: Archival experiment and audit logs (`VF0-E2`–`VF0-E5`, `VF0-A7/A8`, `AUD14`–`AUD49`) from the superseded monolithic branch are omitted from this bounded S1 entrance plan.*
+*Note: Deferred Decision 0092 responsibilities (provider-backed artifact acquisition, independent check-only CI consumer, and authority evolution/bootstrap) are out of scope for S2a/S2b and will be disposed in their respective follow-up slices. Archival experiment and audit logs (`VF0-E2`–`VF0-E5`, `VF0-A7/A8`, `AUD14`–`AUD49`) from the superseded monolithic branch are omitted from this bounded S1 entrance plan.*

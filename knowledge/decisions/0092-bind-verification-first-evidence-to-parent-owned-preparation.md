@@ -174,11 +174,10 @@ mapping bound to the wrong subject without changing an otherwise valid approval'
 disposition. A missing UI link alone must not turn an otherwise valid approval
 into an authorization denial. Synthetic mappings demonstrate
 contract isolation, not live support for a second provider. These tests were
-**NOT RUN** at the records-only clarification checkpoint. The later
-[A7 relation-core implementation](../assessments/15-vf0-entrance-and-execution-plan.md#vf0-a7-normalized-relation-core)
-records its separate synthetic conformance evidence; it does not replace any
-original VF0 behavior-map obligation. Human handoffs follow the delivery runbook's
-[direct-action-link convention](../runbooks/deliver-bounded-self-hosted-slice.md#human-action-handoff).
+**NOT RUN** at the records-only clarification checkpoint. The planned
+S2a relation-core implementation will record its separate synthetic conformance
+evidence; it does not replace any original VF0 behavior-map obligation. Human
+handoffs follow the [delivery runbook](../runbooks/deliver-bounded-self-hosted-slice.md).
 
 ### 3. Prove a bounded provider-backed acquisition route first
 
@@ -216,15 +215,16 @@ do not introduce a signing service or a caller-owned signing key merely to make
 an envelope look authenticated. Offline downloaded files alone remain diagnostic.
 The core receipt/policy/candidate relation remains provider-neutral.
 
-#### Provider-neutral bounded execution component
+#### Provider-neutral bounded execution component (prospective S2b target)
 
-The private `tools/vf0_execution.py` component implements only the execution
-observation boundary above. Each call receives an explicit immutable Git commit
-and tree plus a bounded tests-only evidence delta; no process-global subject or
-provider identity is accepted. The controller reconstructs regular-file bytes and
-modes from Git objects into an ephemeral gitless materialization, verifies the
-complete material before execution and again afterwards, and rejects symlinks,
-special files, path escape, undeclared mutation and subject/tree mismatch.
+The prospective S2b `tools/vf0_execution.py` component (not yet present on
+`main`) will implement only the execution observation boundary above. Each call
+will receive an explicit immutable Git commit and tree plus a bounded tests-only
+evidence delta; no process-global subject or provider identity is accepted. The
+controller reconstructs regular-file bytes and modes from Git objects into an
+ephemeral gitless materialization, verifies the complete material before
+execution and again afterwards, and rejects symlinks, special files, path
+escape, undeclared mutation and subject/tree mismatch.
 
 Runtime mechanics remain behind a backend interface. The local subprocess backend
 is conformance support, **not** an isolation claim. The Docker specialization
@@ -236,28 +236,17 @@ text never becomes RED certification, approval, compliance or a preparation
 receipt. The attachment process is closed/reaped before owned-container removal,
 and container absence is independently verified even after client failure.
 
-Every top-level OCI cleanup path uses one 60-second monotonic deadline shared by
-container-ID removal, generated-name fallback, the read-only smoke probe and the
-final absence read-back. Each cleanup command is capped at 15 seconds and leaves
-up to five seconds of that same budget for process-group kill/reap. The short
-remove-retry settlement window begins after the first owned-reference inspection,
-so a slow initial inspection does not suppress the first removal attempt. When
-the shared budget is exhausted or absence cannot be verified, cleanup refuses;
-deadline/absence uncertainty is `OCI_CLEANUP_UNVERIFIED`, while an ownership
-mismatch remains `OCI_CLEANUP_OWNERSHIP`. Uncertain creation still has a separate
-finite two-second name-observation window; this does not prove cleanup if an
-object appears later or the daemon remains unavailable, and it adds no sweeper.
+Exact OCI cleanup deadlines, fallback windows, platform constraints, and
+verification error codes are deferred to the S2b implementation slice. Only an
+enforcing built-in backend may report subject immutability; a custom or local
+backend's declaration cannot substitute for the read-only execution boundary.
 
-The Docker specialization requests and verifies `linux/amd64` and checks the
-created container against the resolved image configuration. Only that enforcing
-built-in backend may report subject immutability; a custom or local backend's
-declaration cannot substitute for the read-only execution boundary.
-
-Unit doubles establish command/cleanup contracts only. Live OCI support requires
-the fixed `tests/vf0_execution_oci_smoke.py` against the **exact published and
-prepared component**, including isolation, forged-output, nonzero, descendant
-timeout, overflow, successive immutable-subject and wrong-tree controls. That
-smoke is component conformance evidence, not producer admission or VF0 activation.
+Unit doubles establish command/cleanup contracts only. Live OCI support will
+require the prospective S2b `tests/vf0_execution_oci_smoke.py` against the
+**exact published and prepared component**, including isolation, forged-output,
+nonzero, descendant timeout, overflow, successive immutable-subject and
+wrong-tree controls. That smoke is component conformance evidence, not producer
+admission or VF0 activation.
 
 The independent check-only CI consumer must repeat the admitted acquisition and
 candidate/evidence binding. It does not trust an agent's retained local digest
@@ -291,8 +280,8 @@ attribute human approval to the executor's diagnostic records.
 
 #### Attempt identity remains a separate proof obligation
 
-The [VF0-E3 result](../assessments/15-vf0-entrance-and-execution-plan.md#vf0-e3-attempt-attribution-and-a-rejected-timestamp-hypothesis)
-rejects the proposed strict upload-step timestamp relation for both genuine
+The archival VF0-E3 experiment
+rejected the proposed strict upload-step timestamp relation for both genuine
 attempts. Artifact metadata associates a run, not an attempt. A filename,
 payload attempt, timestamp window or matching caller digest cannot close that
 gap. Do not widen an interval after observing this failure or replace provenance
@@ -329,12 +318,17 @@ and admission relation, not trust the preparer's snapshot.
 
 ### 4. Keep bootstrap and activation explicit
 
-The owner has now [approved the bounded bootstrap-preparation method](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5823426881)
+*(Historical note: the PR #319 bootstrap-preparation approval and post-#315
+sequencing below are historical records from the earlier monolithic attempt;
+current delivery sequencing is governed by
+[Decision 0114](0114-admit-one-bounded-bootstrap-for-preparation-workspace-work-trees.md).)*
+
+The owner historically [approved the bounded bootstrap-preparation method](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5823426881)
 proposed in [5822958067](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5822958067).
-That historical approval permits authoring, bounded validation and publication
+That historical approval permitted authoring, bounded validation and publication
 only within the linked bootstrap proposal. It supplies no general Issue #15
-implementation admission, change to Issue #6's ownership, merge authority,
-producer-trust admission or activation. The introducing transition
+implementation admission, merge authority, producer-trust admission or
+activation. The introducing transition
 must freeze its exact parent, file set, patch and tool/runtime identities before
 execution. Validate it externally with the unmodified parent's tools; never have
 the modified preparer certify itself, invent a v1 receipt, disable an existing
@@ -352,39 +346,38 @@ RED and verify the new mechanisms before activation. The first trusted producer
 cannot attest itself as already integrated while still a mutable candidate.
 
 After an authorized bootstrap integration, prove a real producer/consumer round
-trip and its negative controls on that actual subject before declaring VF0 active
-or advancing #318. Failure leaves VF0 incomplete, not a successful documentation
+trip and its negative controls on that actual subject before declaring VF0 active.
+Failure leaves VF0 incomplete, not a successful documentation
 substitute. Existing v1 preparation receipts remain historical D0090 evidence;
 they are not silently upgraded to verification-first receipts.
 
-#### Separately selected inactive component integration
+#### Separately selected inactive component integration (prospective S2a/S2b)
 
-The owner subsequently selected [bounded inactive component integration](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5880532347)
+The owner historically selected [bounded inactive component integration](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5880532347)
 after the [exact-head dependency review](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5879777030).
-This disposition covers the existing private relation and execution components,
-their in-scope corrections, verification, review and protected source integration
-when exact-candidate reviews and required checks permit it. It does not admit
-the broad WI-DET-01 implementation, implement Issue #6 or activate VF0. The
-canonical multipart Work Item and its broad implementation gate remain intact;
-this separately admitted child is not a general waiver of that gate.
+In the current sliced delivery under Decision 0114, that disposition maps to
+prospective S2a/S2b private relation and execution components, their in-scope
+corrections, verification, review and protected source integration when
+exact-candidate reviews and required checks permit it. It does not admit broad
+implementation or activate VF0.
 
 Readiness, dependency, WIP and exception decisions remain external admission
-responsibilities. No such decision is added to the executor. The existing
-network-free relation seam can consume supplied observations but cannot establish
-their authority. Before activation, protected composition must bind the actual
-requested effect, exact Work Item/Decision/effective-policy revisions and current
-authenticated admission, including revocation and required source revalidation.
-The present private input does not yet establish these bindings; a protected
-external binding or a bounded private input-contract extension must be verified.
-Asserted guarantee flags alone do not satisfy them.
+responsibilities. No such decision is added to the executor. The prospective
+network-free relation seam will consume supplied observations but cannot
+establish their authority. Before activation, protected composition must bind
+the actual requested effect, exact Work Item/Decision/effective-policy revisions
+and current authenticated admission, including revocation and required source
+revalidation. The planned S2a private input contract will not yet establish
+these bindings; a protected external binding or a bounded private input-contract
+extension must be verified. Asserted guarantee flags alone do not satisfy them.
 
 Source integration retains reusable components without wiring them into the
 preparer, public CLI or production CI. The original VF0-01–VF0-10 obligations,
 critical classification, introducing-authority controls and actual integrated
-producer/consumer round trip remain required. Issue #15 stays open and #318's
-VF0 dependency is not satisfied by inactive component integration. The linked
-disposition is an agent-authored record of the owner's chat instruction, not a
-native provider approval or cryptographic human-presence proof.
+producer/consumer round trip remain required. Issue #15 stays open and is not
+satisfied by inactive component integration. The linked disposition is an
+agent-authored record of the owner's chat instruction, not a native provider
+approval or cryptographic human-presence proof.
 
 ## Alternatives, reuse and license boundary
 
