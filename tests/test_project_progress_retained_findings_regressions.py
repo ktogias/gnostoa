@@ -449,6 +449,82 @@ class CapturedClosedTargetTests(unittest.TestCase):
                     (Ref("pr", "600"),),
                 )
 
+    def test_conflicting_pr_reads_resolve_by_observed_at_and_fail_closed_when_unordered(
+        self,
+    ) -> None:
+        other_pull = "https://github.com/octo/repo/pull/600#alt"
+        self.assertEqual(
+            github.closed_reads(
+                {
+                    self.pull: {
+                        "kind": "pr",
+                        "number": 600,
+                        "state": "open",
+                        "observed_at": 100.0,
+                    },
+                    other_pull: {
+                        "kind": "pr",
+                        "number": 600,
+                        "state": "closed",
+                        "observed_at": 200.0,
+                    },
+                }
+            ),
+            (Ref("pr", "600"),),
+        )
+        self.assertEqual(
+            github.closed_reads(
+                {
+                    self.pull: {
+                        "kind": "pr",
+                        "number": 600,
+                        "state": "closed",
+                        "observed_at": 100.0,
+                    },
+                    other_pull: {
+                        "kind": "pr",
+                        "number": 600,
+                        "state": "open",
+                        "observed_at": 200.0,
+                    },
+                }
+            ),
+            (),
+        )
+        self.assertEqual(
+            github.closed_reads(
+                {
+                    self.pull: {"kind": "pr", "number": 600, "state": "open"},
+                    other_pull: {
+                        "kind": "pr",
+                        "number": 600,
+                        "state": "closed",
+                        "observed_at": 200.0,
+                    },
+                }
+            ),
+            (Ref("pr", "600"),),
+        )
+        self.assertEqual(
+            github.closed_reads(
+                {
+                    self.pull: {
+                        "kind": "pr",
+                        "number": 600,
+                        "state": "open",
+                        "observed_at": 200.0,
+                    },
+                    other_pull: {
+                        "kind": "pr",
+                        "number": 600,
+                        "state": "closed",
+                        "observed_at": 200.0,
+                    },
+                }
+            ),
+            (Ref("pr", "600"),),
+        )
+
     def test_a_retained_source_without_a_state_stays_assignable(self) -> None:
         self.assertEqual(github.closed_targets([{"kind": "pr", "pr_number": 600}]), ())
 

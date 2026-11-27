@@ -149,13 +149,23 @@ def closed_targets(sources: Any) -> tuple[Ref, ...]:
     )
 
 
+def _observed_time(held: Mapping[str, Any]) -> float | None:
+    observed = held.get("observed_at")
+    if type(observed) is int:
+        return float(observed)
+    if isinstance(observed, float) and math.isfinite(observed):
+        return observed
+    return None
+
+
 def closed_reads(context: Mapping[str, Any]) -> tuple[Ref, ...]:
     """A captured PR read closes its target unless it reports a state that is open.
 
     A read that carries no state proves nothing about the PR, so it fails closed.
+    When multiple reads target the same PR and disagree, resolve by comparable
+    observed_at order; if order is missing or tied, fail closed.
     """
-    open_refs: set[Ref] = set()
-    closed_candidates: list[Ref] = []
+    reads_by_ref: dict[Ref, list[tuple[bool, float | None]]] = {}
     for pointer, held in context.items():
         if (
             pointer.startswith("_")
@@ -167,12 +177,26 @@ def closed_reads(context: Mapping[str, Any]) -> tuple[Ref, ...]:
         if ref is None:
             continue
         state = held.get("state")
-        is_open = isinstance(state, str) and state.lower() == "open"
-        if is_open and not pr_closed(held):
-            open_refs.add(ref)
-        else:
-            closed_candidates.append(ref)
-    return tuple(r for r in closed_candidates if r not in open_refs)
+        is_open = (
+            isinstance(state, str) and state.lower() == "open" and not pr_closed(held)
+        )
+        reads_by_ref.setdefault(ref, []).append((is_open, _observed_time(held)))
+
+    closed: list[Ref] = []
+    for ref, entries in reads_by_ref.items():
+        if all(is_open for is_open, _ in entries):
+            continue
+        if all(not is_open for is_open, _ in entries):
+            closed.append(ref)
+            continue
+        if any(ts is None for _, ts in entries):
+            closed.append(ref)
+            continue
+        max_ts = max(ts for _, ts in entries if ts is not None)
+        latest_states = {is_open for is_open, ts in entries if ts == max_ts}
+        if latest_states != {True}:
+            closed.append(ref)
+    return tuple(closed)
 
 
 def valid_subject(subject: Mapping[str, Any]) -> bool:
