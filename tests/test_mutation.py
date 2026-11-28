@@ -263,6 +263,27 @@ class CheckTests(unittest.TestCase):
                 [problem.split(" (")[0] for problem in mutation.check(root, table)],
             )
 
+    def test_check_refuses_a_mutant_path_through_a_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            base = pathlib.Path(scratch)
+            root = _project(base)
+            outside = base / "outside.py"
+            outside.write_text(
+                "def double(x: int) -> int:\n    return x * 2\n", encoding="utf-8"
+            )
+            (root / "pkg" / "link.py").symlink_to(outside)
+            table = mutation.load_table(
+                _table(
+                    base,
+                    "  - name: symlinked\n    path: pkg/link.py\n"
+                    "    find: 'x * 2'\n    replace: 'x * 3'\n",
+                )
+            )
+            self.assertEqual(
+                ["symlinked: REFUSED"],
+                [problem.split(" (")[0] for problem in mutation.check(root, table)],
+            )
+
 
 class CommandTests(unittest.TestCase):
     def test_check_mode_exits_zero_only_when_every_anchor_applies(self) -> None:

@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Run targeted mutants from one owner, with tables that survive reformatting
-description: Replace about twenty hand-maintained, per-PR mutation scripts with one owner, tools/mutation.py (knowledge mutants), which runs named mutant tables kept as data under tests/mutants. Python anchors are located by AST and other anchors by token sequence, so formatting cannot break them, and a fast-profile test fails as soon as any table's anchor no longer applies.
+description: "Slice 1 of replacing about twenty hand-maintained, per-PR mutation scripts with one owner, tools/mutation.py (knowledge mutants): delivers the mutant table schema, AST/token anchor engine, and --check gate, while mutant execution (run, tests/mutants, tests/test_mutant_tables.py) is deferred to subsequent slices."
 status: draft
 generated:
   by: anthropic/claude-opus-5-5
@@ -56,8 +56,8 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
 
 ## Decision
 
-1. **One owner, `tools/mutation.py`, exposed as `knowledge mutants`.** Adding `knowledge mutants` to `tools/cli.py` is re-bound under Decision 0035 SB2/G3. It loads a mutant table (`load_table`) and either checks it (`check` / `--check`, delivered in slice 1) or runs it (`run`, deferred to a later slice).
-   - **Slice 1 (delivered):** `load_table`, `apply`, `check`, `knowledge mutants --check`, and 22 focused unit tests in `tests/test_mutation.py`. Every anchor must apply exactly once, and every mutated Python file must still compile. A mutant whose path passes through a symbolic link is `REFUSED`, and a table path with a backslash or a colon is refused when the table loads.
+1. **One owner, `tools/mutation.py`, exposed as `knowledge mutants`.** Adding `knowledge mutants` to `tools/cli.py` invalidates the prior Decision 0035 SB2/G3 binding for tools/cli.py and requires the smallest affected G3 replay before the next OCI publication candidate. It loads a mutant table (`load_table`) and either checks it (`check()` / `knowledge mutants --check`, delivered in slice 1) or runs it (`run`, deferred to a later slice).
+   - **Slice 1 (delivered):** `load_table`, `apply`, `check`, `knowledge mutants --check`, and 23 focused unit tests in `tests/test_mutation.py`. Every anchor must apply exactly once, and every mutated Python file must still compile. A mutant whose path passes through a symbolic link is `REFUSED`, and a table path with a backslash or a colon is refused when the table loads.
    - **Deferred slices (`run`, `--tree`, `tools/exact_tree.py`, `tests/mutants/*.yaml`, `tests/test_mutant_tables.py`):**
      - **Run:**
        - **The baseline comes first.** The table's tests first run unmutated, in isolated copies, as many at once as the mutants will run. Only if every copy passes does a failure say anything about a mutant. Otherwise no mutant runs, and each that applies is `NOT RUN`.
@@ -81,7 +81,7 @@ On #369, `ruff --fix` and ordinary refactors silently changed anchored text. Fiv
 
 ## Verification
 
-- **Slice 1 (verified):** `tests/test_mutation.py` runs 22 focused unit tests covering:
+- **Slice 1 (verified):** `tests/test_mutation.py` runs 23 focused unit tests covering:
   - an anchor found after reformatting;
   - a statement run;
   - an expression;

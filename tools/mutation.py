@@ -272,7 +272,7 @@ def apply(text: str, find: str, replace: str, *, python: bool) -> str:
     # The matched line's own ending, since a file may mix them (Codex on #374).
     ending = _LINE_END.search(text, start) or _LINE_END.search(text)
     eol = ending.group() if ending else "\n"
-    indent = re.match(r"[ \t]*", text[line_start:start]).group()  # type: ignore[union-attr]
+    indent = re.match(r"[ \t]*", text[line_start:start]).group()  # type: ignore[union-attr]  # [ \t]* always matches at start of string
     lines = textwrap.dedent(replace).strip("\n").splitlines()
     if statements and not lines:
         lines = ["pass"]
