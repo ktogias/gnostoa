@@ -1,0 +1,161 @@
+{
+ "collector_sha256": "781f946514d568aac99f467d50d247e74b20af2c6338567ff65bd6c14ae2b33a",
+ "collector_version": "s689-1",
+ "data_through": "2026-11-28T00:19:29.000Z",
+ "day": "2026-11-28",
+ "dropped": {},
+ "dropped_ids": {},
+ "files": {
+  "telemetry/v1/2026/11/28/config_changes.jsonl": {
+   "bytes": 9960,
+   "records": 21,
+   "sha256": "2a6aabc5831ff2bbb5b5ef279a4bc6fbf6f14fffafe88aa7657504aac5183eb4"
+  },
+  "telemetry/v1/2026/11/28/decisions.jsonl": {
+   "bytes": 57999,
+   "records": 110,
+   "sha256": "22c322eade16726e001d623a3877fc5191971c8cac2fb444d24bb7365a0487b2"
+  },
+  "telemetry/v1/2026/11/28/deliveries.jsonl": {
+   "bytes": 3250,
+   "records": 3,
+   "sha256": "438564fd7df47540750523a0c8355fff273963da450767191b790fac8138de94"
+  },
+  "telemetry/v1/2026/11/28/delivery.jsonl": {
+   "bytes": 58408,
+   "records": 83,
+   "sha256": "411cba72b98309460c5ec7b1f0c1f88f63b266598f3a92807409792e527927e0"
+  },
+  "telemetry/v1/2026/11/28/evaluations.jsonl": {
+   "bytes": 19400,
+   "records": 22,
+   "sha256": "be6b00159f73b2ea2cb1edfe4a298e20f135505073907e3d648a8411228a94fc"
+  },
+  "telemetry/v1/2026/11/28/quota_readings.jsonl": {
+   "bytes": 30865,
+   "records": 33,
+   "sha256": "5b46159e83c2a97467028da4695d32b424c282f4f889abf9964dd8de3614bc21"
+  },
+  "telemetry/v1/2026/11/28/snapshots.jsonl": {
+   "bytes": 17793,
+   "records": 9,
+   "sha256": "d0728475406eca5bd75cc9fddd9d270d3a6617d6e02fbe4c75346760edb16bff"
+  },
+  "telemetry/v1/2026/11/28/tool_events.jsonl": {
+   "bytes": 4780,
+   "records": 4,
+   "sha256": "b18ee9b4b5265e613ee70925043205cc02dcafdb5dd776da6cae2e513d7aa2f8"
+  },
+  "telemetry/v1/2026/11/28/turns.jsonl": {
+   "bytes": 4789,
+   "records": 3,
+   "sha256": "204e4dc7f148e7825762a11a3463db35c772aed89b46c4a5507490fd26db8ecd"
+  }
+ },
+ "gate": {
+  "data_files_scanned": 140,
+  "files": 9,
+  "hits": 0,
+  "result": "PASS",
+  "scan_body_sha256": "a635c8a7d4dfe578c180e570997b15857176fa7c9caf1731741df313bc4490da",
+  "scanner_sha256": "00cdd2ed53d0465b6f607fd2736f5a7c608a470a33bedef7471816fb40271f85"
+ },
+ "records": {
+  "config_changes": 21,
+  "decisions": 110,
+  "deliveries": 3,
+  "delivery": 83,
+  "evaluations": 22,
+  "quota_readings": 33,
+  "snapshots": 9,
+  "tool_events": 4,
+  "turns": 3
+ },
+ "report_sha256": "95a69d838d691db05db3906cdf2148b07185fb5f6f58482908ce3b6d1a475f58",
+ "rollup": {
+  "kinds": {
+   "config_changes": {
+    "INSTALL": 1,
+    "LEDGER_ROW": 20
+   },
+   "decisions": {
+    "CUSTODY": 1,
+    "DEPTH_TIER": 1,
+    "DISPOSITION_DEFERRED": 4,
+    "DISPOSITION_QUEUED": 4,
+    "IMPLEMENTER_GATE": 1,
+    "INGRESS_HELD": 54,
+    "LANE_ROTATION": 1,
+    "PR_INVENTORY_REFRESH": 4,
+    "ROUTER_DISPATCH": 1,
+    "ROUTER_JOB": 1,
+    "ROUTING": 3,
+    "SIGNAL": 29,
+    "STALL": 6
+   },
+   "deliveries": {
+    "IMPLEMENTER_TURN": 1,
+    "PEER_RESULT": 1
+   },
+   "delivery": {
+    "DELIVERY_COMMENT": 1,
+    "DELIVERY_ITEM": 1,
+    "DELIVERY_REGISTER": 20,
+    "DELIVERY_ROUTE": 61
+   },
+   "evaluations": {
+    "MEASURE_ROW": 2,
+    "QUOTA_WEIGHT": 18,
+    "ROLE_SCORECARD": 2
+   },
+   "flow": {},
+   "quota_readings": {
+    "QUOTA_READING": 33
+   },
+   "snapshots": {
+    "LIMITS": 1,
+    "POLICY": 1,
+    "QUOTA": 2,
+    "ROLE_CONFIG": 4,
+    "RUNTIME": 1
+   },
+   "tool_events": {
+    "GOVERNOR": 1,
+    "TURN_TOOLS": 3
+   },
+   "turns": {
+    "TURN": 3
+   }
+  },
+  "roles": {
+   "pao": {
+    "denials": 0,
+    "failed": 0,
+    "failed_tokens": 0,
+    "launched": 2,
+    "loop_flags": 0,
+    "stops": 0,
+    "success": 2,
+    "tokens": 252085,
+    "tokens_per_useful": null,
+    "turns": 2,
+    "useful": 0
+   },
+   "router": {
+    "denials": 0,
+    "failed": 0,
+    "failed_tokens": 0,
+    "launched": 1,
+    "loop_flags": 0,
+    "stops": 0,
+    "success": 1,
+    "tokens": 41690,
+    "tokens_per_useful": 41690,
+    "turns": 1,
+    "useful": 1
+   }
+  }
+ },
+ "schema_version": 1,
+ "total_records": 288
+}

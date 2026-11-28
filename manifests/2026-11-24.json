@@ -1,5 +1,5 @@
 {
- "collector_sha256": "685472e42f940c391239ed4351a300eca8ed4edd0dbfb1239a455e5c33dcfc53",
+ "collector_sha256": "781f946514d568aac99f467d50d247e74b20af2c6338567ff65bd6c14ae2b33a",
  "collector_version": "s689-1",
  "data_through": "2026-11-24T23:59:23.649Z",
  "day": "2026-11-24",
@@ -24,7 +24,12 @@
   "telemetry/v1/2026/11/24/evaluations.jsonl": {
    "bytes": 2353,
    "records": 4,
-   "sha256": "a326fb4565a16c5d30f8c493a65f97021c733cc2e7e2e4d461393a9a639d2320"
+   "sha256": "62547c27d5bbcb923a23a7f9f4fd96979f88bd7393217bbe625c961e940dcb5d"
+  },
+  "telemetry/v1/2026/11/24/snapshots.jsonl": {
+   "bytes": 380942,
+   "records": 184,
+   "sha256": "425c02ec540cdaf40b227d9608474623136a40171315d34d034ad728faee92f1"
   },
   "telemetry/v1/2026/11/24/tool_events.jsonl": {
    "bytes": 142039,
@@ -38,8 +43,8 @@
   }
  },
  "gate": {
-  "data_files_scanned": 116,
-  "files": 6,
+  "data_files_scanned": 140,
+  "files": 7,
   "hits": 0,
   "result": "PASS",
   "scan_body_sha256": "a635c8a7d4dfe578c180e570997b15857176fa7c9caf1731741df313bc4490da",
@@ -50,10 +55,11 @@
   "decisions": 207,
   "deliveries": 54,
   "evaluations": 4,
+  "snapshots": 184,
   "tool_events": 120,
   "turns": 110
  },
- "report_sha256": "7d44975da90128cfd283326a80ecc6824bf02ae4aa51a54e589a05072ae9d0d3",
+ "report_sha256": "95a69d838d691db05db3906cdf2148b07185fb5f6f58482908ce3b6d1a475f58",
  "rollup": {
   "kinds": {
    "config_changes": {
@@ -74,10 +80,16 @@
     "IMPLEMENTER_TURN": 46,
     "PEER_RESULT": 8
    },
+   "delivery": {},
    "evaluations": {
     "MEASURE_ROW": 4
    },
-   "snapshots": {},
+   "flow": {},
+   "quota_readings": {},
+   "snapshots": {
+    "LIMITS": 34,
+    "ROLE_CONFIG": 150
+   },
    "tool_events": {
     "DENIAL": 3,
     "TOOL_STOP": 20,
@@ -143,5 +155,5 @@
   }
  },
  "schema_version": 1,
- "total_records": 716
+ "total_records": 900
 }

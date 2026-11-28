@@ -16,11 +16,24 @@
    "description": "key of a mutable entity: keep the latest version (by ts, then record_id)",
    "type": "string"
   },
+  "group": {
+   "description": "quota group",
+   "type": "string"
+  },
   "kind": {
    "enum": [
     "MEASURE_ROW",
+    "QUOTA_WEIGHT",
     "ROLE_SCORECARD"
    ]
+  },
+  "limit_category": {
+   "description": "S700 quota category as the usage command prints it, as a slug",
+   "type": "string"
+  },
+  "limit_window": {
+   "description": "S700 window of the limit read from its kind (weekly, five_hour, daily, <n>_hour)",
+   "type": "string"
   },
   "metrics": {
    "additionalProperties": {
@@ -35,6 +48,10 @@
   },
   "model": {
    "description": "model id the turn ran on (requested model)",
+   "type": "string"
+  },
+  "profile": {
+   "description": "CLI credential profile alias of the lane (A, A2, B, C)",
    "type": "string"
   },
   "record_id": {
@@ -164,7 +181,7 @@
    "type": "object"
   },
   "window_days": {
-   "description": "window of the scorecard (unit: days)",
+   "description": "window of the scorecard (QUOTA_WEIGHT: of the readings and turns the estimate used; FLOW_DAILY: of the flow metrics) (unit: days)",
    "type": "integer"
   }
  },

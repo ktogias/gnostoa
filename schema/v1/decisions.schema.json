@@ -39,12 +39,24 @@
    "description": "attempts recorded",
    "type": "integer"
   },
+  "batch_action": {
+   "description": "S705 operation_action prefix of the route's one batched commit (the push freeze's typed exception)",
+   "type": "string"
+  },
+  "behind_ref": {
+   "description": "S705 what a refused operation waits behind (pr:N, DECISION, WIP_LIMIT, a held subject)",
+   "type": "string"
+  },
   "blocker_kind": {
    "description": "blocker kind",
    "type": "string"
   },
   "brake": {
    "description": "typed brake reason",
+   "type": "string"
+  },
+  "branch": {
+   "description": "S693 branch of the pilot namespace (agent/<work-item>-<slug>)",
    "type": "string"
   },
   "capacity_hold": {
@@ -55,6 +67,21 @@
    "description": "typed class of the source cause text",
    "type": "string"
   },
+  "chain_step": {
+   "description": "S692 typed newest step of an ended chain (JOURNAL_FAILED_RECORDED, ...)",
+   "type": "string"
+  },
+  "check_states": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "S693 check runs per state on the original head of a pure carry (opened without the local validation gate) (unit: checks)",
+   "type": "object"
+  },
+  "clear_basis": {
+   "description": "S705 the refusal predicate's basis: why it no longer applies (RULE_CHANGED, INPUTS_CHANGED, OPERATOR_NAMED, RETRY_DUE, PULL_CLOSED, WIP_ADMITTED, HOLD_RELEASED), or for REFUSAL_SEQUENCED why it still does (PULL_OPEN, ...)",
+   "type": "string"
+  },
   "completion": {
    "description": "completion criteria the dispatch names",
    "items": {
@@ -62,9 +89,17 @@
    },
    "type": "array"
   },
+  "confidence": {
+   "description": "S694 confidence of a disposition record or architecture check (HIGH, MEDIUM, LOW)",
+   "type": "string"
+  },
   "consumer": {
    "description": "consumer of the signal",
    "type": "string"
+  },
+  "contenders": {
+   "description": "S692 ready Work Items when the grant was decided",
+   "type": "integer"
   },
   "context_last_request": {
    "description": "context tokens of the lane last request at the gate (unit: tokens)",
@@ -93,6 +128,18 @@
    "description": "typed decision",
    "type": "string"
   },
+  "decision_basis": {
+   "description": "S701 how the decision reference verified: OWNER (the Owner's comment) or SUPERVISOR_RELAY (an operator-named relay record)",
+   "type": "string"
+  },
+  "decision_reason": {
+   "description": "S701 why a decision reference did not verify (decision_authority.REASONS)",
+   "type": "string"
+  },
+  "decision_source": {
+   "description": "S701 the operator data that names the decision reference (CONFIG, OPERATOR, COMMAND, POLICY)",
+   "type": "string"
+  },
   "derived": {
    "description": "computed from other records; replaced on recomputation",
    "type": "boolean"
@@ -101,12 +148,24 @@
    "description": "detector name",
    "type": "string"
   },
+  "draft": {
+   "description": "S693 the opened pull request read back as a draft",
+   "type": "boolean"
+  },
   "duration_s": {
    "description": "wall-clock duration (unit: s)",
    "type": "number"
   },
+  "effect": {
+   "description": "S701 effect of a remedy operation (OPEN, CLOSE, RECORD)",
+   "type": "string"
+  },
   "effort": {
    "description": "reasoning effort of the lane or turn (low, medium, high)",
+   "type": "string"
+  },
+  "end_class": {
+   "description": "S692 class of a chain end (INFRASTRUCTURE, MODEL_CAPACITY, DECISION)",
    "type": "string"
   },
   "entity": {
@@ -139,6 +198,10 @@
     "type": "string"
    },
    "type": "array"
+  },
+  "existing_pr": {
+   "description": "S701 the pull request an admitted open reconciles (the carrier already open)",
+   "type": "integer"
   },
   "explore": {
    "description": "the routing decision explored",
@@ -174,6 +237,10 @@
    "description": "lane key the routing decision chose",
    "type": "string"
   },
+  "freeze_release": {
+   "description": "S705 how a push freeze ended (BATCH_PUBLISHED, ROUTER_RELEASE, SUBJECT_CLOSED, EXPIRED)",
+   "type": "string"
+  },
   "from_family": {
    "description": "family before the switch",
    "type": "string"
@@ -181,6 +248,14 @@
   "frontier_exhausted": {
    "description": "the continuation frontier was exhausted",
    "type": "boolean"
+  },
+  "frozen_head": {
+   "description": "S705 head a push freeze holds (a FREEZE_VIOLATION observed another one)",
+   "type": "string"
+  },
+  "granted_item": {
+   "description": "S705 the Work Item granted instead of a skipped non-runnable contender (none: no runnable contender)",
+   "type": "string"
   },
   "group": {
    "description": "quota group",
@@ -194,6 +269,14 @@
    "description": "commit sha (public)",
    "type": "string"
   },
+  "held_s": {
+   "description": "S692 time a slot grant was held before it ended (unit: s)",
+   "type": "number"
+  },
+  "idle_s": {
+   "description": "S692 time an ACTIVE obligation had no live next step when its chain end was found (unit: s)",
+   "type": "number"
+  },
   "input_type": {
    "description": "typed input type",
    "type": "string"
@@ -206,20 +289,70 @@
    "enum": [
     "BLOCKER",
     "BREAKER",
+    "CAP_HELD",
+    "CHAIN_END",
+    "CONTINUATION",
+    "CONTINUATION_DEFERRED",
     "CUSTODY",
     "DEPTH_TIER",
+    "DISPOSITION_CANDIDATE",
+    "DISPOSITION_CLOSE",
+    "DISPOSITION_DECISION",
+    "DISPOSITION_DEFERRED",
+    "DISPOSITION_EVIDENCE",
+    "DISPOSITION_EXECUTION",
+    "DISPOSITION_FAILED",
+    "DISPOSITION_POLICY",
+    "DISPOSITION_QUEUED",
+    "DISPOSITION_RECORD",
+    "DISPOSITION_REQUEST",
+    "DISPOSITION_RETRY",
+    "DISPOSITION_WITHDRAWN",
     "ESCALATION",
+    "FINDING_THREADS_REFUSED",
+    "FREEZE_ADOPTED",
+    "FREEZE_EXCEPTION",
+    "FREEZE_REFUSED",
+    "FREEZE_RELEASED",
+    "FREEZE_VIOLATION",
+    "GOAL_ESCALATION",
+    "GRANT_SKIPPED",
+    "IDENTITY_REKEYED",
+    "IDENTITY_REKEY_EXHAUSTED",
     "IMPLEMENTER_GATE",
+    "INGRESS_HELD",
+    "INGRESS_RELEASED",
     "LANE_ROTATION",
     "LIMIT_PROBE",
     "MODEL_SWITCH",
+    "OBLIGATION",
     "OWNER_ESCALATION",
     "PROFILE_FAILOVER",
+    "PR_CARD_READ",
+    "PR_CARD_READ_FAILED",
+    "PR_INVENTORY_REFRESH",
+    "PUBLICATION_ADMITTED",
+    "PUBLICATION_CANDIDATE",
+    "PUBLICATION_CLOSE",
+    "PUBLICATION_EFFECT",
+    "PUBLICATION_OPEN",
+    "PUBLICATION_PUSH",
+    "PUBLICATION_REFUSAL",
     "REFUSAL",
+    "REFUSAL_CLEARED",
+    "REFUSAL_PAIR",
+    "REFUSAL_PAIR_CLEARED",
+    "REFUSAL_PAIR_STOP",
+    "REFUSAL_SEQUENCED",
+    "RESULT_HELD",
+    "RESUME_UNBOUND",
     "ROUTER_DISPATCH",
     "ROUTER_JOB",
     "ROUTING",
     "SAFEGUARD",
+    "SCHEDULE_GRANT",
+    "SCHEDULE_GRANT_END",
+    "SCHEDULE_REFUSAL",
     "SIGNAL",
     "STALL",
     "STALL_ALERT",
@@ -245,6 +378,10 @@
   },
   "limit_kind": {
    "description": "kind of provider limit (QUOTA, DAILY_CAP, OVERLOAD)",
+   "type": "string"
+  },
+  "link": {
+   "description": "S701 the Work Item link of a typed close (PRESENT, POSTED, UNCONFIRMED, FAILED)",
    "type": "string"
   },
   "marker": {
@@ -306,6 +443,14 @@
    "description": "typed outcome",
    "type": "string"
   },
+  "over_item": {
+   "description": "S692 Work Item whose consecutive operations triggered a FAIRNESS_RUN grant",
+   "type": "string"
+  },
+  "passed": {
+   "description": "S692 operations of other Work Items while the granted item waited",
+   "type": "integer"
+  },
   "plan_family": {
    "description": "transport family the gate planned",
    "type": "string"
@@ -318,12 +463,24 @@
    "description": "gate predicate",
    "type": "string"
   },
+  "prelaunch": {
+   "description": "S701 the refusal was known before the turn: no model ran",
+   "type": "boolean"
+  },
   "previous": {
    "description": "previous status",
    "type": "string"
   },
+  "priority": {
+   "description": "S692 aged priority of the granted item (weight x (1 + wait / aging))",
+   "type": "number"
+  },
   "profile": {
    "description": "CLI credential profile alias of the lane (A, A2, B, C)",
+   "type": "string"
+  },
+  "publication_mode": {
+   "description": "S693 open mode (WORK_ITEM: an admitted Work Item from main; CARRIER: an Owner-decided carrier)",
    "type": "string"
   },
   "publication_statuses": {
@@ -360,6 +517,10 @@
    "description": "publications per recipient role (unit: publications)",
    "type": "object"
   },
+  "recommendation": {
+   "description": "S694 recommendation of a disposition record (CARRY_OVER, RE_IMPLEMENT, CLOSE_SUPERSEDED)",
+   "type": "string"
+  },
   "record_id": {
    "description": "stable id: sha256 of the source pointer and the normalized content, or of an explicit identity for observations, snapshots and derived rows",
    "pattern": "^[0-9a-f]{32}$",
@@ -384,12 +545,20 @@
    "description": "refusals per class (unit: refusals)",
    "type": "object"
   },
+  "refusal_code": {
+   "description": "S705 typed code of the refusal whose predicate cleared (refusal_causes.PREDICATES)",
+   "type": "string"
+  },
   "refusals": {
    "description": "refusals of the job",
    "type": "integer"
   },
   "released_brake": {
    "description": "typed reason of a released brake",
+   "type": "string"
+  },
+  "remedy": {
+   "description": "S701 registered remedy of the item (CARRIER, RE_IMPLEMENT, CLOSE_SUPERSEDED)",
    "type": "string"
   },
   "reported_tokens": {
@@ -428,6 +597,10 @@
    "description": "why a dispatch was represented",
    "type": "string"
   },
+  "request_kind": {
+   "description": "S692 kind of a custody continuation (CHAIN_ENDED_UNDECIDED, SLOT_GRANTED)",
+   "type": "string"
+  },
   "required_approvers": {
    "description": "required approvers",
    "type": "integer"
@@ -440,17 +613,37 @@
    "description": "typed retry reason of a dispatch",
    "type": "string"
   },
+  "review_stage": {
+   "description": "S694 disposition stage of the transition (SAS_RECORD, PAO_ARCH_CHECK, REQUEST)",
+   "type": "string"
+  },
   "rotate_before_launch": {
    "description": "the gate rotated the conversation before launch",
    "type": "boolean"
+  },
+  "routing_floor": {
+   "description": "S694/S698 lane tier a disposition review turn starts from (0 = the base lane)",
+   "type": "integer"
   },
   "rule": {
    "description": "typed rule",
    "type": "string"
   },
+  "runnable_basis": {
+   "description": "S705 why a ready Work Item could not use the slot (ASK_BUDGET_SPENT, ASK_UNANSWERED, DECISION_STALE, HELD, NO_NEXT_STEP)",
+   "type": "string"
+  },
+  "running_item": {
+   "description": "S692 Work Item whose turn ran when the grant was decided",
+   "type": "string"
+  },
   "safeguard": {
    "description": "safeguard name",
    "type": "string"
+  },
+  "same_body": {
+   "description": "S698 a retried decision request renders the same body as the refused one",
+   "type": "boolean"
   },
   "schema_version": {
    "const": 1
@@ -485,6 +678,10 @@
    ],
    "type": "object"
   },
+  "source_pr": {
+   "description": "S693 original pull request a carrier carries",
+   "type": "integer"
+  },
   "source_role": {
    "description": "role that produced the input",
    "type": "string"
@@ -500,6 +697,10 @@
   "status": {
    "description": "status code of the source record",
    "type": "string"
+  },
+  "streak": {
+   "description": "S692 longest run of one other Work Item while the granted item waited",
+   "type": "integer"
   },
   "streak_max": {
    "description": "longest streak the tier rule saw",
@@ -606,6 +807,14 @@
    "description": "why the tier was chosen (BASE, ESCALATE_AFTER_STALL, ...)",
    "type": "string"
   },
+  "to_state": {
+   "description": "S692 obligation state after a transition (ACTIVE, WAITING, PARKED, DONE)",
+   "type": "string"
+  },
+  "tool_reads": {
+   "description": "S698 provider reads the disposition turn prompt allows (0 = answer with no tool call)",
+   "type": "integer"
+  },
   "transport": {
    "description": "transport of the turn (agy, claude-print, codex-exec, *-resume)",
    "type": "string"
@@ -636,6 +845,10 @@
   "version": {
    "description": "version of the deciding rule",
    "type": "string"
+  },
+  "wait_s": {
+   "description": "S692 time a Work Item has waited ready for the Implementer slot (unit: s)",
+   "type": "number"
   }
  },
  "required": [

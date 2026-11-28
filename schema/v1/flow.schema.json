@@ -1,0 +1,401 @@
+{
+ "$id": "pilot-telemetry/v1/flow",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "Schema v1 of the flow stream.",
+ "properties": {
+  "action": {
+   "description": "typed action",
+   "type": "string"
+  },
+  "active_s": {
+   "description": "S702 Implementer turn time on the unit in the history window (flow efficiency: active) (unit: s)",
+   "type": "number"
+  },
+  "admitted": {
+   "description": "S702 the operation was admitted",
+   "type": "boolean"
+  },
+  "aged_units": {
+   "description": "S702 units idle longer than their age expectation",
+   "type": "integer"
+  },
+  "already_closed": {
+   "description": "S702 the pull request was closed before the close ran",
+   "type": "boolean"
+  },
+  "author_class": {
+   "description": "S702 author of the pull request: OWNER, AGENT, OTHER, UNKNOWN",
+   "type": "string"
+  },
+  "authority": {
+   "description": "S702 who decides a close: OWNER (disposition) or PILOT (agent-authored with a Work Item)",
+   "type": "string"
+  },
+  "blocker": {
+   "description": "S702 first typed blocker: HOLD:<predicate>, DISPOSITION:<status>, REMEDY:<remedy>, CUSTODY:<state>:<reason>, GATE:<criteria>, NONE",
+   "type": "string"
+  },
+  "class_reason": {
+   "description": "S702 why the operation has its class (NEW_WORK_ITEM_PULL_REQUEST, UNSTARTED_WORK_ITEM, ...)",
+   "type": "string"
+  },
+  "closed": {
+   "description": "S702 the typed close read back closed",
+   "type": "boolean"
+  },
+  "closeness": {
+   "description": "S702 closeness to merge 0..1 (the scheduler aging term)",
+   "type": "number"
+  },
+  "condition": {
+   "description": "S702 the condition a transition entered or left (or LEFT_WIP)",
+   "type": "string"
+  },
+  "conditions": {
+   "description": "S702 AGED, HOLD_EXPIRED, DEADLINE_MISSED",
+   "items": {
+    "type": "string"
+   },
+   "type": "array"
+  },
+  "custody_state": {
+   "description": "S702 goal custody state:reason of the unit's Work Item",
+   "type": "string"
+  },
+  "deadline_ts": {
+   "description": "S702 the convergence deadline the pilot set (CONVERGE_ROUTE)",
+   "type": "string"
+  },
+  "decision": {
+   "description": "typed decision",
+   "type": "string"
+  },
+  "derived": {
+   "description": "computed from other records; replaced on recomputation",
+   "type": "boolean"
+  },
+  "disposition_status": {
+   "description": "S702 status of the unit's S694 disposition review",
+   "type": "string"
+  },
+  "enforcement_point": {
+   "description": "S702 OPEN_PR (publication_opener), DISPATCH, SCHEDULE (work_scheduler)",
+   "type": "string"
+  },
+  "entered": {
+   "description": "S702 the condition was entered (false: left)",
+   "type": "boolean"
+  },
+  "entity": {
+   "description": "key of a mutable entity: keep the latest version (by ts, then record_id)",
+   "type": "string"
+  },
+  "expectation_s": {
+   "description": "S702 the age expectation of the unit class without real progress (unit: s)",
+   "type": "number"
+  },
+  "failing_criteria": {
+   "description": "S702 merge-admission criteria failing at the latest verdict",
+   "items": {
+    "type": "string"
+   },
+   "type": "array"
+  },
+  "hold_expired_units": {
+   "description": "S702 units held longer than the hold expiry",
+   "type": "integer"
+  },
+  "hold_predicate": {
+   "description": "S702 the S685 hold predicate or OWNER_HOLD",
+   "type": "string"
+  },
+  "implementer_tokens": {
+   "description": "S702 Implementer tokens on the unit in the history window (unit: tokens)",
+   "type": "integer"
+  },
+  "implementer_turns": {
+   "description": "S702 launched Implementer turns on the unit in the history window",
+   "type": "integer"
+  },
+  "kind": {
+   "enum": [
+    "FLOW_DAILY",
+    "WIP_CLOSE",
+    "WIP_DECISION",
+    "WIP_SNAPSHOT",
+    "WIP_START",
+    "WIP_TRANSITION",
+    "WIP_UNIT"
+   ]
+  },
+  "last_progress_ts": {
+   "description": "S702 time of the last real progress",
+   "type": "string"
+  },
+  "link_status": {
+   "description": "S702 the Work Item link of the close (PRESENT, POSTED, UNCONFIRMED, FAILED)",
+   "type": "string"
+  },
+  "metrics": {
+   "additionalProperties": {
+    "type": [
+     "number",
+     "boolean",
+     "string"
+    ]
+   },
+   "description": "numeric measures (see the kind)",
+   "type": "object"
+  },
+  "op_class": {
+   "description": "S702 START, FINISH or REPLACE",
+   "type": "string"
+  },
+  "operation_action": {
+   "description": "operation action of a dispatch",
+   "type": "string"
+  },
+  "over_limit": {
+   "description": "S702 open pull requests above the limit",
+   "type": "integer"
+  },
+  "progress_kind": {
+   "description": "S702 the last real progress: CRITERION_GREEN, VERDICT_ALLOW, THREADS_DOWN, DECIDED, MERGED, OPENED, NONE_OBSERVED",
+   "type": "string"
+  },
+  "reason": {
+   "description": "typed reason (class of the source reason)",
+   "type": "string"
+  },
+  "record_id": {
+   "description": "stable id: sha256 of the source pointer and the normalized content, or of an explicit identity for observations, snapshots and derived rows",
+   "pattern": "^[0-9a-f]{32}$",
+   "type": "string"
+  },
+  "schema_version": {
+   "const": 1
+  },
+  "source": {
+   "additionalProperties": false,
+   "properties": {
+    "file": {
+     "type": "string"
+    },
+    "locator": {
+     "type": "string"
+    },
+    "root": {
+     "enum": [
+      "pilot",
+      "stages",
+      "supervisor_ledger",
+      "derived"
+     ]
+    },
+    "sha256": {
+     "pattern": "^[0-9a-f]{64}$",
+     "type": "string"
+    }
+   },
+   "required": [
+    "root",
+    "file",
+    "locator",
+    "sha256"
+   ],
+   "type": "object"
+  },
+  "stage_counts": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "S702 units per stage (STARTED, CONVERGING, MERGEABLE, MERGED, CLOSED)",
+   "type": "object"
+  },
+  "started_ts": {
+   "description": "S702 start of the unit (the pull request created_at; a Work Item: its first launched turn)",
+   "type": "string"
+  },
+  "stream": {
+   "const": "flow"
+  },
+  "subject": {
+   "additionalProperties": false,
+   "properties": {
+    "comment": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "conversation": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "input_key": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "issue": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "job": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "pr": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "receipt": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "role": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "stage": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "target": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "trend": {
+   "description": "S702 CONVERGING, DIVERGING, FLAT or UNKNOWN over the trend window",
+   "type": "string"
+  },
+  "trend_basis": {
+   "description": "S702 CRITERIA, THREADS or S697A_DIVERGENCE",
+   "type": "string"
+  },
+  "trend_counts": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "S702 pull request units per trend (CONVERGING, DIVERGING, FLAT, UNKNOWN)",
+   "type": "object"
+  },
+  "ts": {
+   "description": "UTC time of the fact; the partition day",
+   "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+   "type": "string"
+  },
+  "ts_basis": {
+   "description": "set when ts is not the record time itself",
+   "enum": [
+    "FILE_MTIME",
+    "DATE"
+   ]
+  },
+  "tune_metrics": {
+   "additionalProperties": {
+    "type": [
+     "number",
+     "boolean",
+     "string"
+    ]
+   },
+   "description": "S702 the expectations the data supports (p85 cycle time of merged pull requests)",
+   "type": "object"
+  },
+  "unit_age_s": {
+   "description": "S702 work item age: now minus the start (unit: s)",
+   "type": "number"
+  },
+  "unit_class": {
+   "description": "S702 OWNER_PR, AGENT_PR, OTHER_PR or WORK_ITEM (the age expectation class)",
+   "type": "string"
+  },
+  "unit_idle_s": {
+   "description": "S702 time since the last real progress (or the start) (unit: s)",
+   "type": "number"
+  },
+  "unit_kind": {
+   "description": "S702 PR or WORK_ITEM",
+   "type": "string"
+  },
+  "unit_remedy": {
+   "description": "S702 the registered remedy of the unit's Work Item",
+   "type": "string"
+  },
+  "unit_stage": {
+   "description": "S702 STARTED, CONVERGING (a DENY verdict), MERGEABLE (ALLOW at the head), MERGED, CLOSED",
+   "type": "string"
+  },
+  "units": {
+   "additionalProperties": {
+    "type": "string"
+   },
+   "description": "unit of every field of the record that has one",
+   "type": "object"
+  },
+  "unresolved_threads": {
+   "description": "S702 unresolved review threads at the latest exact read",
+   "type": "integer"
+  },
+  "verdict": {
+   "description": "S702 latest merge-admission verdict status (ALLOW, DENY)",
+   "type": "string"
+  },
+  "verdict_current": {
+   "description": "S702 the verdict is at the open head",
+   "type": "boolean"
+  },
+  "window_days": {
+   "description": "window of the scorecard (QUOTA_WEIGHT: of the readings and turns the estimate used; FLOW_DAILY: of the flow metrics) (unit: days)",
+   "type": "integer"
+  },
+  "wip": {
+   "description": "S702 open pull requests (the WIP the start limit counts)",
+   "type": "integer"
+  },
+  "wip_basis": {
+   "description": "S702 where the open set came from: OBSERVER_SCOPE (complete) or PORTFOLIO (last reads)",
+   "type": "string"
+  },
+  "wip_limit": {
+   "description": "S702 the limit for starting new work (supervision.wip.limit_open_prs)",
+   "type": "integer"
+  },
+  "work_items_started": {
+   "description": "S702 Work Items started (an open pull request or a launched Implementer turn)",
+   "type": "integer"
+  }
+ },
+ "required": [
+  "schema_version",
+  "stream",
+  "record_id",
+  "kind",
+  "ts",
+  "source"
+ ],
+ "title": "flow",
+ "type": "object"
+}

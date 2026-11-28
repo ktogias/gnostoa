@@ -1,0 +1,238 @@
+{
+ "$id": "pilot-telemetry/v1/quota_readings",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "Schema v1 of the quota_readings stream.",
+ "properties": {
+  "bracket": {
+   "description": "S700 id shared by the readings of one admission (before and after its turn)",
+   "type": "string"
+  },
+  "caller": {
+   "description": "S700 module that asked for the reading (pilot_core, implementer_transport, profile_failover, ...)",
+   "type": "string"
+  },
+  "derived": {
+   "description": "computed from other records; replaced on recomputation",
+   "type": "boolean"
+  },
+  "entity": {
+   "description": "key of a mutable entity: keep the latest version (by ts, then record_id)",
+   "type": "string"
+  },
+  "error_class": {
+   "description": "typed class of an error (code, exception name or TEXT_<digest>)",
+   "type": "string"
+  },
+  "group": {
+   "description": "quota group",
+   "type": "string"
+  },
+  "kind": {
+   "enum": [
+    "QUOTA_READING",
+    "QUOTA_READING_FAILED"
+   ]
+  },
+  "limit_category": {
+   "description": "S700 quota category as the usage command prints it, as a slug",
+   "type": "string"
+  },
+  "limit_label": {
+   "description": "S700 limit kind as the usage command prints it, as a slug",
+   "type": "string"
+  },
+  "limit_reset_at": {
+   "description": "S700 reset time of the limit window (UTC)",
+   "type": "string"
+  },
+  "limit_window": {
+   "description": "S700 window of the limit read from its kind (weekly, five_hour, daily, <n>_hour)",
+   "type": "string"
+  },
+  "previous_remaining_percent": {
+   "description": "S700 the value before this change (unit: percent)",
+   "type": "number"
+  },
+  "previous_reset_at": {
+   "description": "S700 the reset before this change, when it differs",
+   "type": "string"
+  },
+  "previous_seen_bracket": {
+   "description": "S700 bracket of that reading",
+   "type": "string"
+  },
+  "previous_seen_reader": {
+   "description": "S700 reader of that reading",
+   "type": "string"
+  },
+  "previous_seen_ts": {
+   "description": "S700 time of the last reading that still showed the previous value",
+   "type": "string"
+  },
+  "profile": {
+   "description": "CLI credential profile alias of the lane (A, A2, B, C)",
+   "type": "string"
+  },
+  "query_s": {
+   "description": "S700 duration of the usage command of the reading (unit: s)",
+   "type": "number"
+  },
+  "reader": {
+   "description": "S700 reading of an admission (admission:before, admission:after: around one turn under the profile lock) or of a held preparation (retry_hold)",
+   "type": "string"
+  },
+  "reading_id": {
+   "description": "S700 id of one reading (its limit rows share it)",
+   "type": "string"
+  },
+  "reading_source": {
+   "description": "S700 record the reading came from: LEDGER (receipts/quota), BUDGET_STATE (state/agy-budget-<profile>.json), SNAPSHOT_BACKFILL (a QUOTA snapshot of that file), FAILOVER_EVENT (a profile failover decision)",
+   "type": "string"
+  },
+  "record_id": {
+   "description": "stable id: sha256 of the source pointer and the normalized content, or of an explicit identity for observations, snapshots and derived rows",
+   "pattern": "^[0-9a-f]{32}$",
+   "type": "string"
+  },
+  "remaining_percent": {
+   "description": "S700 remaining share of the limit window as printed (whole points) (unit: percent)",
+   "type": "number"
+  },
+  "schema_version": {
+   "const": 1
+  },
+  "source": {
+   "additionalProperties": false,
+   "properties": {
+    "file": {
+     "type": "string"
+    },
+    "locator": {
+     "type": "string"
+    },
+    "root": {
+     "enum": [
+      "pilot",
+      "stages",
+      "supervisor_ledger",
+      "derived"
+     ]
+    },
+    "sha256": {
+     "pattern": "^[0-9a-f]{64}$",
+     "type": "string"
+    }
+   },
+   "required": [
+    "root",
+    "file",
+    "locator",
+    "sha256"
+   ],
+   "type": "object"
+  },
+  "stream": {
+   "const": "quota_readings"
+  },
+  "subject": {
+   "additionalProperties": false,
+   "properties": {
+    "comment": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "conversation": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "input_key": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "issue": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "job": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "pr": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "receipt": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "role": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "stage": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "target": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "ts": {
+   "description": "UTC time of the fact; the partition day",
+   "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+   "type": "string"
+  },
+  "ts_basis": {
+   "description": "set when ts is not the record time itself",
+   "enum": [
+    "FILE_MTIME",
+    "DATE"
+   ]
+  },
+  "unchanged_readings": {
+   "description": "S700 readings of the same value the ledger left out since its previous row of this limit",
+   "type": "integer"
+  },
+  "units": {
+   "additionalProperties": {
+    "type": "string"
+   },
+   "description": "unit of every field of the record that has one",
+   "type": "object"
+  }
+ },
+ "required": [
+  "schema_version",
+  "stream",
+  "record_id",
+  "kind",
+  "ts",
+  "source"
+ ],
+ "title": "quota_readings",
+ "type": "object"
+}

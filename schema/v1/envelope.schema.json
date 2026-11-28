@@ -61,7 +61,10 @@
     "deliveries",
     "config_changes",
     "snapshots",
-    "evaluations"
+    "evaluations",
+    "quota_readings",
+    "flow",
+    "delivery"
    ]
   },
   "subject": {

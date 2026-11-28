@@ -1,132 +1,244 @@
 {
- "collector_sha256": "685472e42f940c391239ed4351a300eca8ed4edd0dbfb1239a455e5c33dcfc53",
+ "collector_sha256": "781f946514d568aac99f467d50d247e74b20af2c6338567ff65bd6c14ae2b33a",
  "collector_version": "s689-1",
- "data_through": "2026-11-27T00:19:38.159Z",
+ "data_through": "2026-11-27T23:59:59.000Z",
  "day": "2026-11-27",
  "dropped": {},
  "dropped_ids": {},
  "files": {
   "telemetry/v1/2026/11/27/config_changes.jsonl": {
-   "bytes": 497,
-   "records": 1,
-   "sha256": "624a6ab443fb3cea95b86893802824fee37db2636cac55fad456b7bf6e34a70d"
+   "bytes": 96870,
+   "records": 131,
+   "sha256": "3265fda47e695a00f1a80be679fbd5b5846d8e104680daf8c8755a5b0e038506"
   },
   "telemetry/v1/2026/11/27/decisions.jsonl": {
-   "bytes": 35022,
-   "records": 49,
-   "sha256": "cd6ddbe724b40c4e73ebed6389efb7f2c30c2a0e7d4f17160d40c533af2c922c"
+   "bytes": 1263322,
+   "records": 2184,
+   "sha256": "4b86f173136265a244ccca98de885465d629c8b811d05f843d2535beb4bba97e"
   },
   "telemetry/v1/2026/11/27/deliveries.jsonl": {
-   "bytes": 6628,
-   "records": 6,
-   "sha256": "abfa62b8ae9de2edcf7973a4de3637b5daa174050e7827318b4b608e7352b565"
+   "bytes": 213898,
+   "records": 211,
+   "sha256": "81c7b7acb58519c9269ae0c7757a68215a7f9fa8f4100fd7a992d34aa20f5e77"
+  },
+  "telemetry/v1/2026/11/27/delivery.jsonl": {
+   "bytes": 2561289,
+   "records": 3801,
+   "sha256": "e927cf1aa2157853493a4c0d0491105b93da0b43e508522a7f91d4a93a1b01eb"
   },
   "telemetry/v1/2026/11/27/evaluations.jsonl": {
-   "bytes": 2572,
-   "records": 3,
-   "sha256": "ce784b814fc65de488cece2ebf38577951a8cbf411a92cdaf6a3c76e8a484201"
+   "bytes": 22974,
+   "records": 28,
+   "sha256": "5e8d9a371f26cf1e288d20947dcda2529b1e1d26dbe9ab402d260c1dda3bd5b2"
+  },
+  "telemetry/v1/2026/11/27/flow.jsonl": {
+   "bytes": 39092,
+   "records": 47,
+   "sha256": "b6f7b5cacca3b4bace04eb458b291a10a46104b3748b84ed71f70a16fbea864a"
+  },
+  "telemetry/v1/2026/11/27/quota_readings.jsonl": {
+   "bytes": 565762,
+   "records": 685,
+   "sha256": "548eada5ea0b67f92cd70326b37f53f11abdbbf46a553b31e6ffdc744f2cb49b"
   },
   "telemetry/v1/2026/11/27/snapshots.jsonl": {
-   "bytes": 16573,
-   "records": 9,
-   "sha256": "1d892c6731604f728a4cd89c37a8c1f70efc4f1502879dc8957557bd2d519587"
+   "bytes": 165573,
+   "records": 108,
+   "sha256": "f5f7632da29869833afe9f7ddfaf6029a06f5c8263065ef15a5ae627e508df31"
   },
   "telemetry/v1/2026/11/27/tool_events.jsonl": {
-   "bytes": 7543,
-   "records": 7,
-   "sha256": "ed266ff82df1d58c43f1ce96b3d1b6e6485cfbb5537f14ec8513ecdaeabe2ad9"
+   "bytes": 219173,
+   "records": 195,
+   "sha256": "c6791267d1c13be7194b36f3b3a7bc8efcdd08fa88ba75c3422a85deefcb5272"
   },
   "telemetry/v1/2026/11/27/turns.jsonl": {
-   "bytes": 7030,
-   "records": 5,
-   "sha256": "a7598adfad1f24307936e5899247a7d6945fa04ec633667b3c34c32225a57bde"
+   "bytes": 200253,
+   "records": 137,
+   "sha256": "54a595c9e6908e3db56aa109e09a60f1efdb32e9a41d99637734679e6c18d9d2"
   }
  },
  "gate": {
-  "data_files_scanned": 116,
-  "files": 7,
+  "data_files_scanned": 140,
+  "files": 10,
   "hits": 0,
   "result": "PASS",
   "scan_body_sha256": "a635c8a7d4dfe578c180e570997b15857176fa7c9caf1731741df313bc4490da",
   "scanner_sha256": "00cdd2ed53d0465b6f607fd2736f5a7c608a470a33bedef7471816fb40271f85"
  },
  "records": {
-  "config_changes": 1,
-  "decisions": 49,
-  "deliveries": 6,
-  "evaluations": 3,
-  "snapshots": 9,
-  "tool_events": 7,
-  "turns": 5
+  "config_changes": 131,
+  "decisions": 2184,
+  "deliveries": 211,
+  "delivery": 3801,
+  "evaluations": 28,
+  "flow": 47,
+  "quota_readings": 685,
+  "snapshots": 108,
+  "tool_events": 195,
+  "turns": 137
  },
- "report_sha256": "7d44975da90128cfd283326a80ecc6824bf02ae4aa51a54e589a05072ae9d0d3",
+ "report_sha256": "95a69d838d691db05db3906cdf2148b07185fb5f6f58482908ce3b6d1a475f58",
  "rollup": {
   "kinds": {
    "config_changes": {
-    "LEDGER_ROW": 1
+    "INSTALL": 39,
+    "LANECTL_OP": 7,
+    "LEDGER_ROW": 85
    },
    "decisions": {
-    "DEPTH_TIER": 3,
-    "IMPLEMENTER_GATE": 6,
-    "LANE_ROTATION": 3,
-    "REFUSAL": 2,
-    "ROUTER_DISPATCH": 4,
-    "ROUTER_JOB": 2,
-    "ROUTING": 5,
-    "SIGNAL": 15,
-    "WAKE_GATE": 5
+    "BLOCKER": 5,
+    "BREAKER": 1,
+    "CAP_HELD": 1,
+    "CHAIN_END": 24,
+    "CONTINUATION": 23,
+    "CUSTODY": 11,
+    "DEPTH_TIER": 85,
+    "DISPOSITION_CANDIDATE": 12,
+    "DISPOSITION_DECISION": 1,
+    "DISPOSITION_DEFERRED": 9,
+    "DISPOSITION_EVIDENCE": 12,
+    "DISPOSITION_EXECUTION": 2,
+    "DISPOSITION_FAILED": 4,
+    "DISPOSITION_POLICY": 2,
+    "DISPOSITION_QUEUED": 4,
+    "DISPOSITION_RECORD": 1,
+    "DISPOSITION_REQUEST": 1,
+    "DISPOSITION_RETRY": 1,
+    "DISPOSITION_WITHDRAWN": 1,
+    "ESCALATION": 2,
+    "GRANT_SKIPPED": 14,
+    "IMPLEMENTER_GATE": 136,
+    "INGRESS_HELD": 476,
+    "INGRESS_RELEASED": 3,
+    "LANE_ROTATION": 77,
+    "OBLIGATION": 32,
+    "OWNER_ESCALATION": 15,
+    "PROFILE_FAILOVER": 13,
+    "PR_CARD_READ": 8,
+    "PR_INVENTORY_REFRESH": 160,
+    "PUBLICATION_ADMITTED": 7,
+    "PUBLICATION_CLOSE": 7,
+    "PUBLICATION_OPEN": 6,
+    "PUBLICATION_PUSH": 6,
+    "PUBLICATION_REFUSAL": 6,
+    "REFUSAL": 26,
+    "REFUSAL_CLEARED": 3,
+    "REFUSAL_SEQUENCED": 1,
+    "RESULT_HELD": 1,
+    "ROUTER_DISPATCH": 97,
+    "ROUTER_JOB": 81,
+    "ROUTING": 139,
+    "SCHEDULE_GRANT": 148,
+    "SCHEDULE_GRANT_END": 34,
+    "SCHEDULE_REFUSAL": 4,
+    "SIGNAL": 179,
+    "STALL": 169,
+    "SUBJECT_HOLD": 2,
+    "WAKE_GATE": 55
    },
    "deliveries": {
-    "IMPLEMENTER_TURN": 6
+    "IMPLEMENTER_TURN": 122,
+    "PEER_RESULT": 23,
+    "PR_LEFT_OPEN": 1,
+    "PR_STATE": 8
+   },
+   "delivery": {
+    "DELIVERY_CLOSE": 60,
+    "DELIVERY_COMMENT": 12,
+    "DELIVERY_FINDING": 367,
+    "DELIVERY_ITEM": 427,
+    "DELIVERY_REGISTER": 793,
+    "DELIVERY_ROUTE": 2100,
+    "OWNER_QUEUE": 22,
+    "OWNER_QUEUE_ITEM": 20
    },
    "evaluations": {
-    "MEASURE_ROW": 2,
+    "MEASURE_ROW": 9,
+    "QUOTA_WEIGHT": 18,
     "ROLE_SCORECARD": 1
    },
+   "flow": {
+    "FLOW_DAILY": 1,
+    "WIP_SNAPSHOT": 16,
+    "WIP_TRANSITION": 7,
+    "WIP_UNIT": 23
+   },
+   "quota_readings": {
+    "QUOTA_READING": 684,
+    "QUOTA_READING_FAILED": 1
+   },
    "snapshots": {
-    "LIMITS": 1,
-    "POLICY": 1,
-    "QUOTA": 2,
-    "ROLE_CONFIG": 4,
-    "RUNTIME": 1
+    "LIMITS": 6,
+    "POLICY": 11,
+    "QUOTA": 71,
+    "ROLE_CONFIG": 18,
+    "RUNTIME": 2
    },
    "tool_events": {
-    "GOVERNOR": 3,
-    "TURN_TOOLS": 4
+    "DENIAL": 6,
+    "GOVERNOR": 60,
+    "TOOL_STOP": 2,
+    "TURN_TOOLS": 127
    },
    "turns": {
-    "TURN": 5
+    "TURN": 137
    }
   },
   "roles": {
    "implementer": {
-    "denials": 0,
-    "failed": 0,
-    "failed_tokens": 0,
-    "launched": 3,
+    "denials": 3,
+    "failed": 24,
+    "failed_tokens": 1834728,
+    "launched": 60,
     "loop_flags": 0,
     "stops": 0,
-    "success": 3,
-    "tokens": 173353,
-    "tokens_per_useful": 57784,
-    "turns": 3,
-    "useful": 3
+    "success": 36,
+    "tokens": 4004583,
+    "tokens_per_useful": 83429,
+    "turns": 60,
+    "useful": 48
    },
-   "router": {
+   "pao": {
     "denials": 0,
     "failed": 1,
-    "failed_tokens": 0,
-    "launched": 4,
+    "failed_tokens": 331774,
+    "launched": 13,
+    "loop_flags": 0,
+    "stops": 1,
+    "success": 12,
+    "tokens": 1755580,
+    "tokens_per_useful": null,
+    "turns": 13,
+    "useful": 0
+   },
+   "router": {
+    "denials": 1,
+    "failed": 11,
+    "failed_tokens": 43709,
+    "launched": 98,
     "loop_flags": 0,
     "stops": 0,
-    "success": 4,
-    "tokens": 180330,
-    "tokens_per_useful": 180330,
-    "turns": 5,
-    "useful": 1
+    "success": 97,
+    "tokens": 4111947,
+    "tokens_per_useful": 69694,
+    "turns": 108,
+    "useful": 59
+   },
+   "sas": {
+    "denials": 2,
+    "failed": 3,
+    "failed_tokens": 259543,
+    "launched": 16,
+    "loop_flags": 0,
+    "stops": 1,
+    "success": 13,
+    "tokens": 1118137,
+    "tokens_per_useful": null,
+    "turns": 16,
+    "useful": 0
    }
   }
  },
  "schema_version": 1,
- "total_records": 80
+ "total_records": 7527
 }

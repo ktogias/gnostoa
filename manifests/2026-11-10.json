@@ -1,5 +1,5 @@
 {
- "collector_sha256": "685472e42f940c391239ed4351a300eca8ed4edd0dbfb1239a455e5c33dcfc53",
+ "collector_sha256": "781f946514d568aac99f467d50d247e74b20af2c6338567ff65bd6c14ae2b33a",
  "collector_version": "s689-1",
  "data_through": "2026-11-10T23:50:59.679Z",
  "day": "2026-11-10",
@@ -33,7 +33,7 @@
   }
  },
  "gate": {
-  "data_files_scanned": 116,
+  "data_files_scanned": 140,
   "files": 5,
   "hits": 0,
   "result": "PASS",
@@ -47,7 +47,7 @@
   "tool_events": 15,
   "turns": 143
  },
- "report_sha256": "7d44975da90128cfd283326a80ecc6824bf02ae4aa51a54e589a05072ae9d0d3",
+ "report_sha256": "95a69d838d691db05db3906cdf2148b07185fb5f6f58482908ce3b6d1a475f58",
  "rollup": {
   "kinds": {
    "config_changes": {},
@@ -64,9 +64,12 @@
     "IMPLEMENTER_TURN": 28,
     "PEER_RESULT": 35
    },
+   "delivery": {},
    "evaluations": {
     "MEASURE_ROW": 4
    },
+   "flow": {},
+   "quota_readings": {},
    "snapshots": {},
    "tool_events": {
     "DENIAL": 15

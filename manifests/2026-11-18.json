@@ -1,5 +1,5 @@
 {
- "collector_sha256": "685472e42f940c391239ed4351a300eca8ed4edd0dbfb1239a455e5c33dcfc53",
+ "collector_sha256": "781f946514d568aac99f467d50d247e74b20af2c6338567ff65bd6c14ae2b33a",
  "collector_version": "s689-1",
  "data_through": "2026-11-18T23:58:50.658Z",
  "day": "2026-11-18",
@@ -24,7 +24,12 @@
   "telemetry/v1/2026/11/18/evaluations.jsonl": {
    "bytes": 7448,
    "records": 13,
-   "sha256": "6202eecec05478557a60d5f469329badec380c1bb302f282b765c2af166da8c0"
+   "sha256": "4945a61a5178f66666f9ee3818d85ef589fb56b635ef2e499e76f7a5e1b328b2"
+  },
+  "telemetry/v1/2026/11/18/snapshots.jsonl": {
+   "bytes": 114201,
+   "records": 47,
+   "sha256": "7887f7b1af1524874f34761eea9787e2443ebe1891e8898b92ba948f6073ea4b"
   },
   "telemetry/v1/2026/11/18/turns.jsonl": {
    "bytes": 781877,
@@ -33,8 +38,8 @@
   }
  },
  "gate": {
-  "data_files_scanned": 116,
-  "files": 5,
+  "data_files_scanned": 140,
+  "files": 6,
   "hits": 0,
   "result": "PASS",
   "scan_body_sha256": "a635c8a7d4dfe578c180e570997b15857176fa7c9caf1731741df313bc4490da",
@@ -45,9 +50,10 @@
   "decisions": 1462,
   "deliveries": 552,
   "evaluations": 13,
+  "snapshots": 47,
   "turns": 708
  },
- "report_sha256": "7d44975da90128cfd283326a80ecc6824bf02ae4aa51a54e589a05072ae9d0d3",
+ "report_sha256": "95a69d838d691db05db3906cdf2148b07185fb5f6f58482908ce3b6d1a475f58",
  "rollup": {
   "kinds": {
    "config_changes": {
@@ -70,10 +76,16 @@
     "IMPLEMENTER_TURN": 331,
     "PEER_RESULT": 221
    },
+   "delivery": {},
    "evaluations": {
     "MEASURE_ROW": 13
    },
-   "snapshots": {},
+   "flow": {},
+   "quota_readings": {},
+   "snapshots": {
+    "LIMITS": 7,
+    "ROLE_CONFIG": 40
+   },
    "tool_events": {},
    "turns": {
     "TURN": 708
@@ -148,5 +160,5 @@
   }
  },
  "schema_version": 1,
- "total_records": 2818
+ "total_records": 2865
 }

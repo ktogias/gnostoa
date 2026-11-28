@@ -1,7 +1,7 @@
 {
- "collector_sha256": "685472e42f940c391239ed4351a300eca8ed4edd0dbfb1239a455e5c33dcfc53",
+ "collector_sha256": "781f946514d568aac99f467d50d247e74b20af2c6338567ff65bd6c14ae2b33a",
  "collector_version": "s689-1",
- "data_through": "2026-11-26T23:57:29.867Z",
+ "data_through": "2026-11-26T23:59:59.000Z",
  "day": "2026-11-26",
  "dropped": {},
  "dropped_ids": {},
@@ -12,9 +12,9 @@
    "sha256": "b686815e2873441e5797f33980b6e7ad76a8be731caa232cd32093cabf333303"
   },
   "telemetry/v1/2026/11/26/decisions.jsonl": {
-   "bytes": 751666,
-   "records": 1112,
-   "sha256": "8d1274d84966a5ae774118a8acfc637ec7151b04e945cdda1083effd2123bbc8"
+   "bytes": 776616,
+   "records": 1162,
+   "sha256": "7b0cd55d4615fa20ab6aca5fd522ec11ff2f2c204e442f92435553ad24c4a2b5"
   },
   "telemetry/v1/2026/11/26/deliveries.jsonl": {
    "bytes": 163758,
@@ -24,12 +24,22 @@
   "telemetry/v1/2026/11/26/evaluations.jsonl": {
    "bytes": 5854,
    "records": 10,
-   "sha256": "cf6b19ac36df70c6f3979b9fe2e395e59bcddb8846eccea9571054913261fe14"
+   "sha256": "50af7f6b6296dd8aab3a6e8e7fdd1eef00634ca69af3caddf296c7fc8c2a5d0e"
+  },
+  "telemetry/v1/2026/11/26/flow.jsonl": {
+   "bytes": 1053,
+   "records": 1,
+   "sha256": "bb321e26cd3cdc845720a9f3f7035af5231ca2972a4aedab3b06ae3888193b57"
+  },
+  "telemetry/v1/2026/11/26/quota_readings.jsonl": {
+   "bytes": 33967,
+   "records": 61,
+   "sha256": "607bd1d32d4c3e232e2a18420af8397e6e92494b9a499c18d738f794e70de843"
   },
   "telemetry/v1/2026/11/26/snapshots.jsonl": {
-   "bytes": 37661,
-   "records": 29,
-   "sha256": "8af7c82ecc2b07a9681c684c57580b16465a83f53d4bd4e240d70464e235e88b"
+   "bytes": 186567,
+   "records": 103,
+   "sha256": "34d31ed0c3ab62e7a19ce0f9b5b01ddae735cd6a9a4e79cd8288e8c33d3cb8ca"
   },
   "telemetry/v1/2026/11/26/tool_events.jsonl": {
    "bytes": 162281,
@@ -43,8 +53,8 @@
   }
  },
  "gate": {
-  "data_files_scanned": 116,
-  "files": 7,
+  "data_files_scanned": 140,
+  "files": 9,
   "hits": 0,
   "result": "PASS",
   "scan_body_sha256": "a635c8a7d4dfe578c180e570997b15857176fa7c9caf1731741df313bc4490da",
@@ -52,14 +62,16 @@
  },
  "records": {
   "config_changes": 125,
-  "decisions": 1112,
+  "decisions": 1162,
   "deliveries": 162,
   "evaluations": 10,
-  "snapshots": 29,
+  "flow": 1,
+  "quota_readings": 61,
+  "snapshots": 103,
   "tool_events": 145,
   "turns": 142
  },
- "report_sha256": "7d44975da90128cfd283326a80ecc6824bf02ae4aa51a54e589a05072ae9d0d3",
+ "report_sha256": "95a69d838d691db05db3906cdf2148b07185fb5f6f58482908ce3b6d1a475f58",
  "rollup": {
   "kinds": {
    "config_changes": {
@@ -91,14 +103,22 @@
     "PEER_RESULT": 15,
     "PR_STATE": 11
    },
+   "delivery": {},
    "evaluations": {
     "MEASURE_ROW": 10
    },
+   "flow": {
+    "FLOW_DAILY": 1
+   },
+   "quota_readings": {
+    "QUOTA_READING": 60,
+    "QUOTA_READING_FAILED": 1
+   },
    "snapshots": {
-    "LIMITS": 2,
+    "LIMITS": 13,
     "POLICY": 1,
-    "QUOTA": 17,
-    "ROLE_CONFIG": 8,
+    "QUOTA": 18,
+    "ROLE_CONFIG": 70,
     "RUNTIME": 1
    },
    "tool_events": {
@@ -167,5 +187,5 @@
   }
  },
  "schema_version": 1,
- "total_records": 1725
+ "total_records": 1911
 }

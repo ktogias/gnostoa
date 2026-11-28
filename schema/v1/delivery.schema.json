@@ -1,0 +1,517 @@
+{
+ "$id": "pilot-telemetry/v1/delivery",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "Schema v1 of the delivery stream.",
+ "properties": {
+  "attempt_pulls": {
+   "description": "S704 pull requests of the Work Item closed without merge (never integrated)",
+   "items": {
+    "type": "integer"
+   },
+   "type": "array"
+  },
+  "author_role": {
+   "description": "S704 author of the closed pull request: OWNER, APP, AGENT, OTHER",
+   "type": "string"
+  },
+  "class_counts": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "S704 Work Items per class",
+   "type": "object"
+  },
+  "close_basis": {
+   "description": "S704 FACT, DERIVED or JUDGMENT",
+   "type": "string"
+  },
+  "close_by": {
+   "description": "S704 who recorded the class: OWNER, PILOT, AGENT, OTHER",
+   "type": "string"
+  },
+  "close_class": {
+   "description": "S704 the CloseRecord class: SUPERSEDED_FULL, SUPERSEDED_PARTIAL, REDIRECTED, SEQUENCED, CARRIED, PROBE (none: missing or invalid)",
+   "type": "string"
+  },
+  "close_counts": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "S704 pull requests closed without merge per CloseRecord class (MISSING: none valid)",
+   "type": "object"
+  },
+  "close_invalid": {
+   "description": "S704 why the CloseRecord is missing or invalid",
+   "type": "string"
+  },
+  "close_source": {
+   "description": "S704 S693_CARRIER, S701_DECIDED, S702_WIP, DISPOSITION_RECORD, OWNER_LINE, CLOSE_COMMENT, TITLE_DECLARATION",
+   "type": "string"
+  },
+  "close_valid": {
+   "description": "S704 the CloseRecord satisfies its class evidence rule",
+   "type": "boolean"
+  },
+  "closed_ts": {
+   "description": "S704 when the pull request closed",
+   "type": "string"
+  },
+  "closer_role": {
+   "description": "S704 who closed it: OWNER, APP, AGENT, OTHER",
+   "type": "string"
+  },
+  "comment_chars": {
+   "description": "S704 its size in characters",
+   "type": "integer"
+  },
+  "comment_id": {
+   "description": "S704 the maintained delivery-state comment on the Owner thread",
+   "type": "integer"
+  },
+  "comment_sha": {
+   "description": "S704 sha256 prefix of the comment body",
+   "type": "string"
+  },
+  "comment_status": {
+   "description": "S704 POSTED, PATCHED, UNCONFIRMED, FAILED or REFUSED_HOST_DETAIL",
+   "type": "string"
+  },
+  "comment_version": {
+   "description": "S704 its version (posts and edits that read back)",
+   "type": "integer"
+  },
+  "custody_word": {
+   "description": "S704 the goal custody state:reason of the Work Item",
+   "type": "string"
+  },
+  "delivery_class": {
+   "description": "S704 the Work Item problem class: SOLVED, IN_PROGRESS, DEFERRED, UNSOLVED_UNSCHEDULED, UNSOLVED, CLOSED_UNVERIFIED, NOT_PLANNED",
+   "type": "string"
+  },
+  "delivery_metrics": {
+   "additionalProperties": {
+    "type": [
+     "number",
+     "boolean",
+     "string"
+    ]
+   },
+   "description": "S704 unmerged closes, valid CloseRecords and their percent (target 100), orphaned follow-ups (target 0), close-to-successor latency p50/max, closes in the window",
+   "type": "object"
+  },
+  "delivery_rule": {
+   "description": "S704 the classification rule (R1..R8, delivery_register.classify)",
+   "type": "string"
+  },
+  "delivery_tag": {
+   "description": "S704 F (recorded fact), D (deterministic derivation) or J (human judgment)",
+   "type": "string"
+  },
+  "derived": {
+   "description": "computed from other records; replaced on recomputation",
+   "type": "boolean"
+  },
+  "digest_changed": {
+   "description": "S704 the digest changed (false: the hourly heartbeat)",
+   "type": "boolean"
+  },
+  "entity": {
+   "description": "key of a mutable entity: keep the latest version (by ts, then record_id)",
+   "type": "string"
+  },
+  "finding_counts": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "S704 findings per kind",
+   "type": "object"
+  },
+  "finding_entered": {
+   "description": "S704 the finding was entered (false: it left)",
+   "type": "boolean"
+  },
+  "finding_id": {
+   "description": "S704 the finding id (stable per kind, subject and key)",
+   "type": "string"
+  },
+  "finding_kind": {
+   "description": "S704 FALSE_SOLVED, UNEVIDENCED_CLOSE, STALE_RECORD, ATTEMPT_UNRECORDED, MISSING_CLOSE_RECORD, INVALID_CLOSE_RECORD, FALSE_SUPERSEDED, ORPHANED_FOLLOW_UP, SEQUENCED_BLOCKED, FORGOTTEN, RESUME_DUE, REVIEW_DUE, ATTEMPT_UNOWNED, FOLLOW_UP, TRIAGE",
+   "type": "string"
+  },
+  "follow_up": {
+   "description": "S704 the follow-up status per successor: SCHEDULED, PENDING, OPENED, MERGED, ORPHANED",
+   "items": {
+    "type": "string"
+   },
+   "type": "array"
+  },
+  "forgotten_tier": {
+   "description": "S704 ATTEMPT_DROPPED, CUSTODY_DONE_OPEN, INTEGRATED_OPEN or NEVER_ADMITTED",
+   "type": "string"
+  },
+  "in_window": {
+   "description": "S704 closed inside the attempt window (attempt_window_days)",
+   "type": "boolean"
+  },
+  "integrated_items": {
+   "description": "S704 Work Items with at least one merged pull request",
+   "type": "integer"
+  },
+  "integrated_pulls": {
+   "description": "S704 merged pull requests bound to the Work Item",
+   "items": {
+    "type": "integer"
+   },
+   "type": "array"
+  },
+  "integrated_total": {
+   "description": "S704 merged pull requests bound to Work Items",
+   "type": "integer"
+  },
+  "kind": {
+   "enum": [
+    "DELIVERY_CLOSE",
+    "DELIVERY_COMMENT",
+    "DELIVERY_FINDING",
+    "DELIVERY_ITEM",
+    "DELIVERY_REGISTER",
+    "DELIVERY_ROUTE",
+    "OWNER_QUEUE",
+    "OWNER_QUEUE_EFFECT",
+    "OWNER_QUEUE_ITEM"
+   ]
+  },
+  "mention_status": {
+   "description": "S704 what the record line says of the pull request: PENDING or LANDED",
+   "type": "string"
+  },
+  "open_pulls": {
+   "description": "S704 open pull requests bound to the Work Item",
+   "items": {
+    "type": "integer"
+   },
+   "type": "array"
+  },
+  "owner_queue_action": {
+   "description": "S708 DASHBOARD_CREATE, DASHBOARD_FOUND, DASHBOARD_EDIT, DASHBOARD_REOPEN, CONFIG_WRITE, PIN, LABEL_CREATE, LABEL_ADD, LABEL_REMOVE, ANSWER_RECORDED, REACTION, MENTION",
+   "type": "string"
+  },
+  "owner_queue_age_s": {
+   "description": "S708 the item age when it entered or left (unit: s)",
+   "type": "number"
+  },
+  "owner_queue_ages_s": {
+   "description": "S708 the age in seconds of every pending Owner decision, oldest first",
+   "items": {
+    "type": "integer"
+   },
+   "type": "array"
+  },
+  "owner_queue_changed": {
+   "description": "S708 the set digest changed (false: the hourly heartbeat)",
+   "type": "boolean"
+  },
+  "owner_queue_chars": {
+   "description": "S708 the dashboard body size in characters",
+   "type": "integer"
+  },
+  "owner_queue_comment": {
+   "description": "S708 the answer comment (an item that left) or the comment written (an effect)",
+   "type": "integer"
+  },
+  "owner_queue_critical": {
+   "description": "S708 pending Owner decisions on the critical path (Owner-ordered work items, S702 WIP units)",
+   "type": "integer"
+  },
+  "owner_queue_digest": {
+   "description": "S708 the set digest (sha256 prefix)",
+   "type": "string"
+  },
+  "owner_queue_effects": {
+   "description": "S708 provider effects enabled (false: the set is computed and recorded only)",
+   "type": "boolean"
+  },
+  "owner_queue_entered": {
+   "description": "S708 the item entered the set (false: it left, answered or resolved)",
+   "type": "boolean"
+  },
+  "owner_queue_item": {
+   "description": "S708 sha256 prefix of the pending item id (stable per decision)",
+   "type": "string"
+  },
+  "owner_queue_items": {
+   "description": "S708 items named by one mention",
+   "type": "integer"
+  },
+  "owner_queue_kind": {
+   "description": "S708 the kind of the pending item",
+   "type": "string"
+  },
+  "owner_queue_kinds": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "S708 pending Owner decisions per kind (DISPOSITION, TRIAGE, DELIVERY:<finding>, STARVATION, ...)",
+   "type": "object"
+  },
+  "owner_queue_n": {
+   "description": "S708 pending Owner decisions in the set (every one listed, no cap)",
+   "type": "integer"
+  },
+  "owner_queue_oldest_s": {
+   "description": "S708 age of the oldest pending Owner decision (unit: s)",
+   "type": "number"
+  },
+  "owner_queue_on_path": {
+   "description": "S708 the item is on the critical path",
+   "type": "boolean"
+  },
+  "owner_queue_sha": {
+   "description": "S708 sha256 prefix of the dashboard body",
+   "type": "string"
+  },
+  "owner_queue_source": {
+   "description": "S708 its producer source: disposition, triage, register, escalation, custody",
+   "type": "string"
+  },
+  "owner_queue_sources": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "S708 producer sources per read status (OK, or the error class of an unreadable one)",
+   "type": "object"
+  },
+  "owner_queue_status": {
+   "description": "S708 the effect outcome after its readback (CREATED, EDITED, CONFIRMED, UNCONFIRMED, REFUSED, PINNED, PIN_UNAVAILABLE, ...)",
+   "type": "string"
+  },
+  "owner_queue_subjects": {
+   "description": "S708 the issue and pull request numbers the item names (the labelled subjects)",
+   "items": {
+    "type": "integer"
+   },
+   "type": "array"
+  },
+  "owner_queue_tier": {
+   "description": "S708 the mention tier in days (3, then 7)",
+   "type": "integer"
+  },
+  "record_id": {
+   "description": "stable id: sha256 of the source pointer and the normalized content, or of an explicit identity for observations, snapshots and derived rows",
+   "pattern": "^[0-9a-f]{32}$",
+   "type": "string"
+  },
+  "record_line": {
+   "description": "S704 the line of that record",
+   "type": "integer"
+  },
+  "record_ref": {
+   "description": "S704 the knowledge record a STALE_RECORD names (decision:NNNN, runbook:<name>, orientation:<ext>, roadmap)",
+   "type": "string"
+  },
+  "register_digest": {
+   "description": "S704 the register digest (sha256 prefix, volatile fields excluded)",
+   "type": "string"
+  },
+  "register_status": {
+   "description": "S704 CURRENT, STALE or INCOMPLETE (a mandatory source missing or stale)",
+   "type": "string"
+  },
+  "resume_condition": {
+   "description": "S704 the first typed resume condition of a deferred Work Item",
+   "type": "string"
+  },
+  "resume_conditions": {
+   "description": "S704 every typed resume condition (AFTER_MERGE, AFTER_DATE, OWNER_ADMISSION, WIP_SLOT, HOLD_RELEASE, OWNER_DECISION, CAPABILITY, EXCLUDED)",
+   "items": {
+    "type": "string"
+   },
+   "type": "array"
+  },
+  "resume_satisfied": {
+   "description": "S704 every resume condition is satisfied",
+   "type": "boolean"
+  },
+  "review_ts": {
+   "description": "S704 the deferral review date (explicit or the fallback)",
+   "type": "string"
+  },
+  "roadmap_labels": {
+   "description": "S704 roadmap and lifecycle labels of the Work Item",
+   "items": {
+    "type": "string"
+   },
+   "type": "array"
+  },
+  "route": {
+   "description": "S704 CUSTODY_ADMISSION, ROUTER_REQUEST, ATTEMPT_LINE, DISPOSITION_REVIEW, OWNER_ESCALATION, OWNER_TRIAGE",
+   "type": "string"
+  },
+  "route_status": {
+   "description": "S704 the outcome of the routing effect (ADMITTED, DELIVERED, POSTED, PRESENT, QUEUED, RECORDED, BOUND, ...)",
+   "type": "string"
+  },
+  "schema_version": {
+   "const": 1
+  },
+  "source": {
+   "additionalProperties": false,
+   "properties": {
+    "file": {
+     "type": "string"
+    },
+    "locator": {
+     "type": "string"
+    },
+    "root": {
+     "enum": [
+      "pilot",
+      "stages",
+      "supervisor_ledger",
+      "derived"
+     ]
+    },
+    "sha256": {
+     "pattern": "^[0-9a-f]{64}$",
+     "type": "string"
+    }
+   },
+   "required": [
+    "root",
+    "file",
+    "locator",
+    "sha256"
+   ],
+   "type": "object"
+  },
+  "source_states": {
+   "additionalProperties": {
+    "type": "integer"
+   },
+   "description": "S704 sources per coverage state (COMPLETE, PARTIAL, STALE, MISSING)",
+   "type": "object"
+  },
+  "stream": {
+   "const": "delivery"
+  },
+  "subject": {
+   "additionalProperties": false,
+   "properties": {
+    "comment": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "conversation": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "input_key": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "issue": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "job": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "pr": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "receipt": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "role": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "stage": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "target": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "successor_latency_s": {
+   "description": "S704 time from the close to the first successor pull request (unit: s)",
+   "type": "number"
+  },
+  "successor_pulls": {
+   "description": "S704 the successor pull requests opened for the closed one",
+   "items": {
+    "type": "integer"
+   },
+   "type": "array"
+  },
+  "ts": {
+   "description": "UTC time of the fact; the partition day",
+   "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+   "type": "string"
+  },
+  "ts_basis": {
+   "description": "set when ts is not the record time itself",
+   "enum": [
+    "FILE_MTIME",
+    "DATE"
+   ]
+  },
+  "typed_close": {
+   "description": "S704 the pilot's typed close that closed it (S693_CARRIER, S701_DECIDED, S702_WIP)",
+   "type": "string"
+  },
+  "unbound_merged": {
+   "description": "S704 merged pull requests with no Work Item binding",
+   "type": "integer"
+  },
+  "units": {
+   "additionalProperties": {
+    "type": "string"
+   },
+   "description": "unit of every field of the record that has one",
+   "type": "object"
+  },
+  "work_item_state": {
+   "description": "S704 the provider state of the Work Item (open, closed)",
+   "type": "string"
+  }
+ },
+ "required": [
+  "schema_version",
+  "stream",
+  "record_id",
+  "kind",
+  "ts",
+  "source"
+ ],
+ "title": "delivery",
+ "type": "object"
+}
